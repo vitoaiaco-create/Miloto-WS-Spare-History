@@ -1,0 +1,72 @@
+---
+alwaysApply: true
+---
+
+# Authentication & Data Access Model
+
+Authentication is handled by [Clerk](https://clerk.com) via `@clerk/nextjs`, configured in
+[layout.tsx](mdc:src/app/layout.tsx) (`ClerkProvider`) and [proxy.ts](mdc:src/proxy.ts)
+(`clerkMiddleware`, the Next.js 16 replacement for the old `middleware.ts` file).
+
+This is an **internal operational fleet management tool** used by workshop/fleet staff, not a
+personal consumer app. Design decisions must reflect that.
+
+## Shared Fleet Visibility — Do NOT Silo Data
+
+- All authenticated staff share access to the same global fleet data. There are no "personal"
+  records.
+- Never add a `user_id` (or similar ownership) column to `assetsTable`, `mileageLogsTable`, or
+  `mechanicalSparesTable` in [schema.ts](mdc:src/db/schema.ts) for row-level isolation.
+- Never filter, scope, or `WHERE`-clause a query against these tables by the current Clerk
+  user/session. Any authenticated user should see and be able to act on the full fleet dataset.
+- It's fine to store *who did what* for audit purposes (e.g. a `createdBy`/`updatedBy` field), but
+  that must never be used to restrict which rows a user can read.
+
+```ts
+// ❌ BAD — silos data per user
+const spares = await db.query.mechanicalSparesTable.findMany({
+  where: (t, { eq }) => eq(t.userId, userId),
+});
+
+// ✅ GOOD — shared visibility across all staff
+const spares = await db.query.mechanicalSparesTable.findMany();
+```
+
+## Route Protection — Reject Unauthenticated Requests
+
+- Every Next.js App Router page and Server Action that reads or mutates the database must verify
+  there is an active Clerk session before touching `db`.
+- Use `auth()` from `@clerk/nextjs/server` (or `auth.protect()`) at the top of the page/Server
+  Action. Do not rely solely on UI-level checks (e.g. hiding buttons) or on `proxy.ts` alone —
+  guard the data access itself.
+- On a missing/invalid session, reject strictly: `redirect("/sign-in")` from a page, or `throw`/return
+  an error from a Server Action. Never fall through to a DB call for unauthenticated requests.
+
+```ts
+// ✅ GOOD — Server Action verifies session before mutating
+"use server";
+import { auth } from "@clerk/nextjs/server";
+import { db } from "@/db";
+
+export async function deleteSpare(id: number) {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  return db.delete(mechanicalSparesTable).where(eq(mechanicalSparesTable.id, id));
+}
+```
+
+```ts
+// ✅ GOOD — page verifies session before querying
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
+import { db } from "@/db";
+
+export default async function AssetsPage() {
+  const { userId } = await auth();
+  if (!userId) redirect("/sign-in");
+
+  const assets = await db.query.assetsTable.findMany();
+  // ...
+}
+```

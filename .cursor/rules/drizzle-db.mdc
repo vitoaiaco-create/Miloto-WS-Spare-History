@@ -1,0 +1,36 @@
+---
+alwaysApply: true
+---
+
+# Database Interactions
+
+All database interactions in this project must go through Drizzle ORM using
+the schema defined in [schema.ts](mdc:src/db/schema.ts). Never write raw SQL
+strings, use another ORM/query builder, or bypass this schema to talk to the
+database.
+
+- **Schema is the source of truth.** Tables, columns, types, constraints, and
+  indexes are defined in [schema.ts](mdc:src/db/schema.ts)
+  (`assetsTable`, `mileageLogsTable`, `mechanicalSparesTable`). If a query
+  needs a column or table that doesn't exist yet, add/update it in
+  `schema.ts` first, then generate a migration — don't work around the
+  schema with ad-hoc SQL.
+- **Relationships** between tables are defined in
+  [relations.ts](mdc:src/db/relations.ts) via `defineRelations`. Use these
+  relations with Drizzle's relational query API (e.g.
+  `db.query.assetsTable.findMany({ with: { mechanicalSpares: true } })`)
+  instead of writing manual joins where a relation already exists. Add new
+  relations here when adding new foreign keys to the schema.
+- **DB client.** Import the shared `db` instance from
+  [index.ts](mdc:src/db/index.ts) (`import { db } from "@/db"`) rather than
+  creating new Drizzle/Neon client instances elsewhere.
+- **Query style.** Prefer Drizzle's query builder (`db.select()`,
+  `db.insert()`, `db.update()`, `db.delete()`) or the relational query API
+  (`db.query.<table>.findMany/findFirst`) built on the schema/relations
+  above. Only drop to `sql\`...\`` for things Drizzle genuinely can't
+  express, and keep it minimal and well-commented.
+- **Schema changes.** Any change to the database shape must be made in
+  [schema.ts](mdc:src/db/schema.ts) (and `relations.ts` if it affects
+  relationships), then a migration generated via `npm run db:generate`
+  (config in [drizzle.config.ts](mdc:drizzle.config.ts)). Do not modify the
+  database directly outside of this schema + migration flow.

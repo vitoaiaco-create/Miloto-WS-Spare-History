@@ -1,0 +1,28 @@
+---
+alwaysApply: true
+---
+# shadcn/ui for UI Elements
+
+This project uses [shadcn/ui](https://ui.shadcn.com) for all UI elements. Do not hand-roll UI primitives (buttons, inputs, dialogs, etc.) or pull in another component library — use shadcn/ui components instead.
+
+## Initialization
+
+Check for a `components.json` file at the project root to determine whether shadcn/ui has been initialized.
+
+If it is **not** initialized, run this before adding any components:
+
+```bash
+npx shadcn@latest init
+```
+
+## Adding components
+
+Components live under `src/components/ui`. Before using a shadcn/ui component, check whether it already exists there.
+
+If the component is **not** yet installed, install it first. For example, to add the button component:
+
+```bash
+npx shadcn@latest add button
+```
+
+Then import it from `src/components/ui` (e.g. `@/components/ui/button`) rather than redefining it.

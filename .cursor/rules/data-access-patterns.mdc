@@ -1,0 +1,109 @@
+---
+alwaysApply: true
+---
+
+# Data Access Patterns: Server Components, Server Actions & Zod
+
+This project follows a strict split between **reading** and **writing** data, and all data
+crossing a Server Action boundary must be validated. This complements
+[drizzle-db.mdc](mdc:.cursor/rules/drizzle-db.mdc) (schema/query rules) and
+[clerk-auth.mdc](mdc:.cursor/rules/clerk-auth.mdc) (auth rules) — all three apply together.
+
+## 1. Data retrieval → Server Components only
+
+- All reads (`db.select()`, `db.query.<table>.findMany/findFirst`) must happen in **Server
+  Components** (`async function Page()`, `async function SomeComponent()` with no `"use client"`
+  directive).
+- Never fetch data with `useEffect`/`useState` in a Client Component, never add a `route.ts` API
+  endpoint just to read data for use within the app, and never call `db` from a Client Component.
+- Client Components may still receive data as **props** from a parent Server Component — they just
+  must not query the database themselves.
+
+```tsx
+// ❌ BAD — client-side fetching in a Client Component
+"use client";
+import { useEffect, useState } from "react";
+
+export function SpareList() {
+  const [spares, setSpares] = useState([]);
+  useEffect(() => {
+    fetch("/api/spares").then((r) => r.json()).then(setSpares);
+  }, []);
+  // ...
+}
+```
+
+```tsx
+// ✅ GOOD — Server Component reads directly via Drizzle
+import { db } from "@/db";
+
+export default async function SparesPage() {
+  const spares = await db.query.mechanicalSparesTable.findMany();
+  return <SpareList spares={spares} />; // Client Component just renders props
+}
+```
+
+## 2. Inserts / updates / deletes → Server Actions only
+
+- Every create, update, or delete against `assetsTable`, `mileageLogsTable`, or
+  `mechanicalSparesTable` must go through a Server Action (`"use server"`), never a Client
+  Component calling `db` directly, a `route.ts` API handler, or client-side SQL of any kind.
+- Server Actions must still follow [drizzle-db.mdc](mdc:.cursor/rules/drizzle-db.mdc) (use the
+  shared `db` from [index.ts](mdc:src/db/index.ts)) and
+  [clerk-auth.mdc](mdc:.cursor/rules/clerk-auth.mdc) (verify `auth()` before touching `db`).
+
+## 3. All validation → Zod
+
+- Any data that comes from outside the trusted server boundary (form input, Server Action
+  arguments, etc.) must be validated with a [Zod](https://zod.dev) schema before it is used or
+  passed to Drizzle. Do not hand-roll validation with manual `if` checks or trust the caller's
+  TypeScript types alone (types are erased at runtime).
+- Define the Zod schema next to (or above) the Server Action it validates, and derive the
+  TypeScript type from it with `z.infer` so the schema stays the single source of truth.
+
+## 4. Server Action parameters: typed input, validated by Zod — never `FormData`
+
+- Server Actions must accept a plain typed argument (an object, primitive, etc.), **not**
+  `FormData`. If a form needs to call the action, build the typed object on the client (e.g. via
+  `react-hook-form` + `zodResolver`, or by reading individual fields) and pass that in — do not
+  type the Server Action's parameter as `FormData` and parse it inside the action.
+- Every Server Action parameter must have both: (a) an explicit TypeScript type, and (b) a
+  `.parse()`/`.safeParse()` call against the matching Zod schema as the first thing the action
+  does.
+
+```ts
+// ❌ BAD — FormData typed param, no Zod validation
+"use server";
+import { db } from "@/db";
+import { mechanicalSparesTable } from "@/db/schema";
+
+export async function createSpare(formData: FormData) {
+  const name = formData.get("name") as string;
+  return db.insert(mechanicalSparesTable).values({ name });
+}
+```
+
+```ts
+// ✅ GOOD — typed input, validated with Zod, matches clerk-auth + drizzle-db rules
+"use server";
+import { z } from "zod";
+import { auth } from "@clerk/nextjs/server";
+import { db } from "@/db";
+import { mechanicalSparesTable } from "@/db/schema";
+
+const createSpareSchema = z.object({
+  name: z.string().min(1),
+  quantity: z.number().int().nonnegative(),
+  assetId: z.number().int(),
+});
+
+type CreateSpareInput = z.infer<typeof createSpareSchema>;
+
+export async function createSpare(input: CreateSpareInput) {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  const data = createSpareSchema.parse(input);
+  return db.insert(mechanicalSparesTable).values(data);
+}
+```
