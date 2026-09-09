@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { Poppins } from "next/font/google";
 
 import { SiteHeader } from "@/components/site-header";
+import { Toaster } from "@/components/ui/toast";
 
 import "./globals.css";
 
@@ -26,8 +27,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <ClerkProvider appearance={{ theme: shadcn }}>
-          <SiteHeader />
-          {children}
+          <Toaster>
+            <SiteHeader />
+            {children}
+          </Toaster>
         </ClerkProvider>
       </body>
     </html>

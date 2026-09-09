@@ -5,6 +5,7 @@ import { useState } from "react"
 import Papa from "papaparse"
 import * as XLSX from "xlsx"
 
+import { ingestMileage, ingestSpares } from "@/actions/ingestion"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -14,10 +15,35 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { toast } from "@/components/ui/toast"
 
 export function DataUploader() {
   const [file, setFile] = useState<File | null>(null)
   const [dataType, setDataType] = useState<string>("spares")
+
+  async function importParsedRows(parsedData: unknown[]) {
+    try {
+      const result =
+        dataType === "spares"
+          ? await ingestSpares(parsedData)
+          : await ingestMileage(parsedData)
+
+      toast.add({
+        title: "Import successful",
+        description: `Imported ${result.count} record${result.count === 1 ? "" : "s"}.`,
+        type: "success",
+      })
+    } catch (error) {
+      toast.add({
+        title: "Import failed",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while importing the file.",
+        type: "error",
+      })
+    }
+  }
 
   async function handleFileUpload() {
     if (!file) return
@@ -27,8 +53,7 @@ export function DataUploader() {
     if (fileName.endsWith(".csv")) {
       Papa.parse(file, {
         header: true,
-        complete: (results) =>
-          console.log(`[${dataType.toUpperCase()} DATA]:`, results.data),
+        complete: (results) => importParsedRows(results.data as unknown[]),
       })
     } else if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
       const arrayBuffer = await file.arrayBuffer()
@@ -36,7 +61,7 @@ export function DataUploader() {
       const firstSheetName = workbook.SheetNames[0]
       const worksheet = workbook.Sheets[firstSheetName]
       const parsedData = XLSX.utils.sheet_to_json(worksheet)
-      console.log(`[${dataType.toUpperCase()} DATA]:`, parsedData)
+      await importParsedRows(parsedData)
     }
   }
 
