@@ -1,8 +1,9 @@
-import { Show, SignInButton, SignUpButton } from "@clerk/nextjs";
-import { History, PackageSearch, ShieldCheck, Wrench } from "lucide-react";
+import { auth } from "@clerk/nextjs/server";
+import { BarChart3, Droplets, PackageSearch } from "lucide-react";
+import Link from "next/link";
+import { redirect } from "next/navigation";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Card,
   CardContent,
@@ -11,88 +12,104 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-const features = [
-  {
-    icon: PackageSearch,
-    title: "Spare parts catalog",
-    description:
-      "Search and browse every spare part used across the workshop, with full specs and stock context at a glance.",
-  },
-  {
-    icon: History,
-    title: "Full service history",
-    description:
-      "See exactly which part was replaced, when, on which job, and by whom — a complete audit trail over time.",
-  },
-  {
-    icon: Wrench,
-    title: "Faster diagnostics",
-    description:
-      "Cross-reference past repairs to spot recurring issues and speed up future troubleshooting.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Reliable records",
-    description:
-      "Centralized, access-controlled data so your team always works from a single source of truth.",
-  },
-];
+export default async function Home() {
+  const { userId, sessionClaims } = await auth();
 
-export default function Home() {
+  console.log("sessionClaims:", JSON.stringify(sessionClaims, null, 2));
+
+  if (!userId) {
+    redirect("/sign-in");
+  }
+
+  const allowedModules = (sessionClaims?.metadata as any)?.modules || [];
+
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
-      <section className="mx-auto flex w-full max-w-7xl flex-col items-start gap-6 px-6 py-20 sm:px-10 md:py-28 lg:px-16">
-        <Badge variant="secondary" className="text-xs">
-          Workshop Spare Parts Management
-        </Badge>
-        <h1 className="max-w-4xl text-4xl font-semibold leading-tight tracking-tight text-black sm:text-5xl md:text-6xl dark:text-zinc-50">
-          Track every spare part and every service, all in one place.
+      <section className="mx-auto flex w-full max-w-7xl flex-col items-start gap-4 px-6 py-16 sm:px-10 lg:px-16">
+        <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
+          Central Hub
         </h1>
-        <p className="max-w-2xl text-lg leading-8 text-zinc-600 sm:text-xl dark:text-zinc-400">
-          Miloto WS Spare History keeps a complete, searchable record of the
-          parts your workshop installs — so your team always knows what was
-          used, when, and why.
+        <p className="max-w-2xl text-base leading-7 text-zinc-600 dark:text-zinc-400">
+          Jump into the modules assigned to your account.
         </p>
-        <div className="mt-4 flex flex-col gap-4 sm:flex-row">
-          <Show when="signed-out">
-            <SignUpButton>
-              <Button size="lg" className="h-12 px-8 text-base">
-                Get started
-              </Button>
-            </SignUpButton>
-            <SignInButton>
-              <Button size="lg" variant="outline" className="h-12 px-8 text-base">
-                Sign in
-              </Button>
-            </SignInButton>
-          </Show>
-          <Show when="signed-in">
-            <Button size="lg" className="h-12 px-8 text-base">
-              Go to dashboard
-            </Button>
-          </Show>
-        </div>
       </section>
 
       <section className="mx-auto w-full max-w-7xl px-6 pb-24 sm:px-10 lg:px-16">
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {features.map((feature) => (
-            <Card key={feature.title} className="h-full">
-              <CardHeader>
-                <feature.icon
-                  className="mb-2 size-6 text-foreground"
-                  strokeWidth={1.75}
-                />
-                <CardTitle className="text-lg">{feature.title}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CardDescription className="text-sm leading-relaxed">
-                  {feature.description}
-                </CardDescription>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        {allowedModules.length === 0 ? (
+          <Alert>
+            <AlertTitle>No modules assigned</AlertTitle>
+            <AlertDescription>
+              You haven&apos;t been assigned any modules yet. Please contact
+              an administrator to get access.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {allowedModules.includes("spares_history") && (
+              <Link href="/spares-history">
+                <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                  <CardHeader>
+                    <PackageSearch
+                      className="mb-2 size-6 text-foreground"
+                      strokeWidth={1.75}
+                    />
+                    <CardTitle className="text-lg">Spares History</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription className="text-sm leading-relaxed">
+                      Search and browse the full spare parts catalog and
+                      service history for every asset in the fleet.
+                    </CardDescription>
+                  </CardContent>
+                </Card>
+              </Link>
+            )}
+
+            {allowedModules.includes("workshop_analytics") && (
+              <Link href="/workshop-analytics">
+                <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                  <CardHeader>
+                    <BarChart3
+                      className="mb-2 size-6 text-foreground"
+                      strokeWidth={1.75}
+                    />
+                    <CardTitle className="text-lg">
+                      Workshop Analytics
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription className="text-sm leading-relaxed">
+                      Explore trends, costs, and performance metrics across
+                      the workshop.
+                    </CardDescription>
+                  </CardContent>
+                </Card>
+              </Link>
+            )}
+
+            {allowedModules.includes("oils_servicing") && (
+              <Link href="/oils-and-servicing">
+                <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                  <CardHeader>
+                    <Droplets
+                      className="mb-2 size-6 text-foreground"
+                      strokeWidth={1.75}
+                    />
+                    <CardTitle className="text-lg">
+                      Oils &amp; Servicing
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription className="text-sm leading-relaxed">
+                      Track oil changes, servicing schedules, and maintenance
+                      intervals across the fleet.
+                    </CardDescription>
+                  </CardContent>
+                </Card>
+              </Link>
+            )}
+          </div>
+        )}
       </section>
     </main>
   );

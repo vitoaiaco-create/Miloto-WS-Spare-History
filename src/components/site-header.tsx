@@ -1,4 +1,4 @@
-import { SignInButton, SignUpButton, Show, UserButton } from "@clerk/nextjs";
+import { SignInButton, Show, UserButton } from "@clerk/nextjs";
 
 import { Button } from "@/components/ui/button";
 
@@ -12,13 +12,8 @@ export function SiteHeader() {
         <div className="flex items-center gap-3">
           <Show when="signed-out">
             <SignInButton>
-              <Button variant="ghost" size="sm">
-                Sign in
-              </Button>
+              <Button size="sm">Sign in</Button>
             </SignInButton>
-            <SignUpButton>
-              <Button size="sm">Sign up</Button>
-            </SignUpButton>
           </Show>
           <Show when="signed-in">
             <UserButton />
