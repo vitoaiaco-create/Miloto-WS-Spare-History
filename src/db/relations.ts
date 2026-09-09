@@ -15,15 +15,21 @@ export const relations = defineRelations(schema, (r) => ({
     }),
   },
   mileageLogsTable: {
+    // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so a
+    // mileage log can never exist without its asset.
     asset: r.one.assetsTable({
       from: r.mileageLogsTable.assetId,
       to: r.assetsTable.id,
+      optional: false,
     }),
   },
   mechanicalSparesTable: {
+    // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so a
+    // spare can never exist without its asset.
     asset: r.one.assetsTable({
       from: r.mechanicalSparesTable.assetId,
       to: r.assetsTable.id,
+      optional: false,
     }),
   },
 }));

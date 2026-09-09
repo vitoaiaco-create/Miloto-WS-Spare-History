@@ -39,22 +39,43 @@ export const mileageLogsTable = pgTable(
 // Workshop spares issued to the fleet (outward stock movements).
 // `assetId` is a foreign key to `assetsTable.id`, giving each asset a
 // one-to-many relationship with its mechanical spares history.
-export const mechanicalSparesTable = pgTable("mechanical_spares", {
-  id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  assetId: integer("asset_id")
-    .notNull()
-    .references(() => assetsTable.id, { onDelete: "cascade" }),
-  fitmentDate: date("fitment_date").notNull(),
-  partNumber: varchar("part_number", { length: 100 }).notNull(),
-  materialName: varchar("material_name", { length: 255 }).notNull(),
-  jobCardNo: varchar("job_card_no", { length: 50 }).notNull(),
-  quantity: numeric("quantity", { precision: 10, scale: 2 }).notNull(),
-  costKwacha: numeric("cost_kwacha", { precision: 12, scale: 2 }).notNull(),
-  tier1: varchar("tier_1", { length: 100 }).notNull(),
-  tier2: varchar("tier_2", { length: 100 }).notNull(),
-  tier3: varchar("tier_3", { length: 100 }).notNull(),
-  // Physical installation point on the asset (e.g. "Front Left", "Axle 2").
-  // Not present in the source CSV; captured for future part-lifespan
-  // calculations keyed to a specific fitment location.
-  installationPoint: varchar("installation_point", { length: 255 }),
-});
+export const mechanicalSparesTable = pgTable(
+  "mechanical_spares",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => assetsTable.id, { onDelete: "cascade" }),
+    fitmentDate: date("fitment_date").notNull(),
+    partNumber: varchar("part_number", { length: 100 }).notNull(),
+    materialName: varchar("material_name", { length: 255 }).notNull(),
+    jobCardNo: varchar("job_card_no", { length: 50 }).notNull(),
+    quantity: numeric("quantity", { precision: 10, scale: 2 }).notNull(),
+    costKwacha: numeric("cost_kwacha", { precision: 12, scale: 2 }).notNull(),
+    // The outward report's "Price ($)" and "Amount ($)" columns. These are
+    // what the Spares History table displays; `costKwacha` is retained as
+    // the local-currency figure for future reporting. Nullable because the
+    // report leaves the dollar cells blank on some lines, and a fitment
+    // record is still worth keeping without them.
+    priceUsd: numeric("price_usd", { precision: 12, scale: 2 }),
+    costUsd: numeric("cost_usd", { precision: 12, scale: 2 }),
+    tier1: varchar("tier_1", { length: 100 }).notNull(),
+    tier2: varchar("tier_2", { length: 100 }).notNull(),
+    tier3: varchar("tier_3", { length: 100 }).notNull(),
+    // Physical installation point on the asset (e.g. "Front Left", "Axle 2").
+    // Not present in the source CSV; captured for future part-lifespan
+    // calculations keyed to a specific fitment location.
+    installationPoint: varchar("installation_point", { length: 255 }),
+  },
+  (table) => [
+    // Identifies one line of the outward report, so re-importing a report
+    // tops up rather than duplicating what's already on file. Verified
+    // unique across all 465 rows of the 2026 master report — note the
+    // report's own "SNo" column is not unique and can't serve as the key.
+    uniqueIndex("mechanical_spares_job_card_part_date_idx").on(
+      table.jobCardNo,
+      table.partNumber,
+      table.fitmentDate
+    ),
+  ]
+);

@@ -21,7 +21,7 @@ export default async function Home() {
     redirect("/sign-in");
   }
 
-  const allowedModules = (sessionClaims?.metadata as any)?.modules || [];
+  const allowedModules = sessionClaims?.metadata?.modules || [];
 
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
