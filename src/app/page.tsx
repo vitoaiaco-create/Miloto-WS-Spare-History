@@ -3,6 +3,7 @@ import { BarChart3, Droplets, PackageSearch } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Card,
@@ -26,9 +27,12 @@ export default async function Home() {
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
       <section className="mx-auto flex w-full max-w-7xl flex-col items-start gap-4 px-6 py-16 sm:px-10 lg:px-16">
-        <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
-          Central Hub
-        </h1>
+        <div className="flex w-full items-start justify-between gap-4">
+          <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
+            Central Hub
+          </h1>
+          <ThemeToggle />
+        </div>
         <p className="max-w-2xl text-base leading-7 text-zinc-600 dark:text-zinc-400">
           Jump into the modules assigned to your account.
         </p>
