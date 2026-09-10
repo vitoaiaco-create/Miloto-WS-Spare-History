@@ -56,6 +56,7 @@ export default async function SparesHistoryPage({
           variant="ghost"
           size="sm"
           className="self-start"
+          nativeButton={false}
           render={<Link href="/" />}
         >
           <ArrowLeft data-icon="inline-start" />
