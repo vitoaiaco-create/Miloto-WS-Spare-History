@@ -4,6 +4,7 @@ import Link from "next/link"
 import { redirect } from "next/navigation"
 
 import { DataUploader } from "@/components/data-uploader"
+import { ExportTableMenu } from "@/components/export-table-menu"
 import { ShareTableButton } from "@/components/share-table-button"
 import { SparesFilterBar } from "@/components/spares-filter-bar"
 import { SparesTable } from "@/components/spares-table"
@@ -72,7 +73,8 @@ export default async function SparesHistoryPage({
 
         <SparesFilterBar initialFilters={filters} />
 
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-2">
+          <ExportTableMenu spares={spares} filters={filters} />
           <ShareTableButton spares={spares} filters={filters} />
         </div>
 
