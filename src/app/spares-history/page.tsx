@@ -4,6 +4,7 @@ import Link from "next/link"
 import { redirect } from "next/navigation"
 
 import { DataUploader } from "@/components/data-uploader"
+import { ShareTableButton } from "@/components/share-table-button"
 import { SparesFilterBar } from "@/components/spares-filter-bar"
 import { SparesTable } from "@/components/spares-table"
 import { Button } from "@/components/ui/button"
@@ -70,6 +71,10 @@ export default async function SparesHistoryPage({
         <DataUploader />
 
         <SparesFilterBar initialFilters={filters} />
+
+        <div className="flex items-center justify-end">
+          <ShareTableButton spares={spares} filters={filters} />
+        </div>
 
         <SparesTable spares={spares} isFiltered={hasActiveSparesFilters(filters)} />
       </section>
