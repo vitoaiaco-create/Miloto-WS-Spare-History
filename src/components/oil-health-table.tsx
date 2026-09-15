@@ -2,16 +2,9 @@
 
 import { useState } from "react"
 
-import { OilSampleForm } from "@/components/oil-sample-form"
+import { requestOilSample } from "@/actions/ingestion"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import {
   Table,
   TableBody,
@@ -25,6 +18,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { toast } from "@/components/ui/toast"
 import {
   oilComplianceStatusLabel,
   type OilComplianceEvent,
@@ -72,104 +66,105 @@ function kmSinceComplianceTooltip(kmSinceCompliance: number | null) {
 }
 
 export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
-  const [sampleAsset, setSampleAsset] = useState<OilHealthRow | null>(null)
+  const [pendingAssetId, setPendingAssetId] = useState<number | null>(null)
+
+  async function onRequestSample(row: OilHealthRow) {
+    setPendingAssetId(row.assetId)
+
+    try {
+      const result = await requestOilSample({ assetId: row.assetId })
+
+      toast.add({
+        title: "Sample requested",
+        description: `${result.fleetNumber} is now in the sampling pipeline.`,
+        type: "success",
+      })
+    } catch (error) {
+      toast.add({
+        title: "Could not request sample",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while requesting the oil sample.",
+        type: "error",
+      })
+    } finally {
+      setPendingAssetId(null)
+    }
+  }
 
   return (
-    <>
-      <Table>
-        <TableHeader>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Asset ID</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Last Event</TableHead>
+          <TableHead className="text-right">Burn Rate (L/1000km)</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.length === 0 ? (
           <TableRow>
-            <TableHead>Asset ID</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Last Event</TableHead>
-            <TableHead className="text-right">Burn Rate (L/1000km)</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
+            <TableCell
+              colSpan={5}
+              className="text-center text-muted-foreground"
+            >
+              No active Miloto assets found.
+            </TableCell>
           </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.length === 0 ? (
-            <TableRow>
-              <TableCell
-                colSpan={5}
-                className="text-center text-muted-foreground"
-              >
-                No active Miloto assets found.
+        ) : (
+          rows.map((row) => (
+            <TableRow key={row.assetId}>
+              <TableCell>{row.assetName}</TableCell>
+              <TableCell>
+                {row.status ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Badge
+                          variant={statusVariant(row.status)}
+                          className={statusClassName(row.status)}
+                        />
+                      }
+                    >
+                      {oilComplianceStatusLabel(row.status)}
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {kmSinceComplianceTooltip(row.kmSinceCompliance)}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  "—"
+                )}
+              </TableCell>
+              <TableCell>
+                {row.lastEvent ? lastEventLabel(row.lastEvent) : "—"}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {formatBurnRate(row.burnRate)}
+              </TableCell>
+              <TableCell className="text-right">
+                {needsSampleRequest(row.status) ? (
+                  <Button
+                    size="sm"
+                    variant={
+                      row.status === "overdue" ? "destructive" : "default"
+                    }
+                    disabled={pendingAssetId === row.assetId}
+                    onClick={() => onRequestSample(row)}
+                  >
+                    {pendingAssetId === row.assetId
+                      ? "Requesting…"
+                      : "Request Sample"}
+                  </Button>
+                ) : null}
               </TableCell>
             </TableRow>
-          ) : (
-            rows.map((row) => (
-              <TableRow key={row.assetId}>
-                <TableCell>{row.assetName}</TableCell>
-                <TableCell>
-                  {row.status ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Badge
-                            variant={statusVariant(row.status)}
-                            className={statusClassName(row.status)}
-                          />
-                        }
-                      >
-                        {oilComplianceStatusLabel(row.status)}
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {kmSinceComplianceTooltip(row.kmSinceCompliance)}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    "—"
-                  )}
-                </TableCell>
-                <TableCell>
-                  {row.lastEvent ? lastEventLabel(row.lastEvent) : "—"}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatBurnRate(row.burnRate)}
-                </TableCell>
-                <TableCell className="text-right">
-                  {needsSampleRequest(row.status) ? (
-                    <Button
-                      size="sm"
-                      variant={
-                        row.status === "overdue" ? "destructive" : "default"
-                      }
-                      onClick={() => setSampleAsset(row)}
-                    >
-                      Request Sample
-                    </Button>
-                  ) : null}
-                </TableCell>
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
-
-      <Dialog
-        open={sampleAsset !== null}
-        onOpenChange={(open) => {
-          if (!open) setSampleAsset(null)
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Request Oil Sample</DialogTitle>
-            <DialogDescription>
-              Log a lab sample for {sampleAsset?.assetName}. Enter the truck
-              odometer at draw time to reset the compliance clock.
-            </DialogDescription>
-          </DialogHeader>
-          {sampleAsset ? (
-            <OilSampleForm
-              key={sampleAsset.assetId}
-              defaultAssetId={sampleAsset.assetName}
-              mode="request"
-              onSuccess={() => setSampleAsset(null)}
-            />
-          ) : null}
-        </DialogContent>
-      </Dialog>
-    </>
+          ))
+        )}
+      </TableBody>
+    </Table>
   )
 }

@@ -45,16 +45,25 @@ export default async function OilsAndServicingPage() {
           Central Hub
         </Button>
 
-        <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
-            Oils &amp; Servicing
-          </h1>
-          <p className="max-w-2xl text-base leading-7 text-zinc-600 dark:text-zinc-400">
-            Dual-clock oil health for the active Miloto fleet. The
-            compliance clock resets on the most recent of a ≥35 L service
-            or a logged oil sample; burn rate still counts top-ups since
-            the last full service.
-          </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-2">
+            <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
+              Oils &amp; Servicing
+            </h1>
+            <p className="max-w-2xl text-base leading-7 text-zinc-600 dark:text-zinc-400">
+              Dual-clock oil health for the active Miloto fleet. The
+              compliance clock resets on the most recent of a ≥35 L service
+              or a logged oil sample; burn rate still counts top-ups since
+              the last full service.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link href="/oils-and-servicing/pipeline" />}
+          >
+            Sampling pipeline
+          </Button>
         </div>
 
         <FleetStatusDonut rows={rows} />

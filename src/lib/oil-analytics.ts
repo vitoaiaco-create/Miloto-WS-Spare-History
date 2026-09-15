@@ -1,4 +1,16 @@
-import { and, desc, eq, gt, gte, inArray, lt, lte, sql, sum } from "drizzle-orm"
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  lt,
+  lte,
+  sql,
+  sum,
+} from "drizzle-orm"
 
 import { db } from "@/db"
 import {
@@ -176,10 +188,19 @@ export async function calculateOilMetrics(
 ): Promise<OilMetrics> {
   const [currentMileage, lastSample, lastService] = await Promise.all([
     loadLatestMileageLog(assetId),
-    db.query.oilSamplesTable.findFirst({
-      where: { assetId },
-      orderBy: { drawnDate: "desc" },
-    }),
+    db
+      .select()
+      .from(oilSamplesTable)
+      .where(
+        and(
+          eq(oilSamplesTable.assetId, assetId),
+          isNotNull(oilSamplesTable.drawnDate),
+          isNotNull(oilSamplesTable.odometer)
+        )
+      )
+      .orderBy(desc(oilSamplesTable.drawnDate))
+      .limit(1)
+      .then((rows) => rows[0] ?? null),
     db
       .select()
       .from(oilConsumptionLogsTable)
@@ -221,12 +242,13 @@ export async function calculateOilMetrics(
           odometer: toOdometerKm(lastServiceMileage?.odometer),
         }
       : null,
-    lastSample: lastSample
-      ? {
-          drawnDate: lastSample.drawnDate,
-          odometer: lastSample.odometer,
-        }
-      : null,
+    lastSample:
+      lastSample?.drawnDate != null
+        ? {
+            drawnDate: lastSample.drawnDate,
+            odometer: lastSample.odometer,
+          }
+        : null,
     totalTopUpLiters: Number.isFinite(consumedOil) ? consumedOil : 0,
   })
 }
@@ -324,7 +346,13 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
           odometer: oilSamplesTable.odometer,
         })
         .from(oilSamplesTable)
-        .where(inArray(oilSamplesTable.assetId, assetIds))
+        .where(
+          and(
+            inArray(oilSamplesTable.assetId, assetIds),
+            isNotNull(oilSamplesTable.drawnDate),
+            isNotNull(oilSamplesTable.odometer)
+          )
+        )
         .orderBy(oilSamplesTable.assetId, desc(oilSamplesTable.drawnDate)),
       db
         .selectDistinctOn([oilConsumptionLogsTable.assetId], {
@@ -392,12 +420,13 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
       assetName: asset.assetName,
       ...toOilMetrics({
         currentOdometer: toOdometerKm(currentByAsset.get(asset.id)?.odometer),
-        lastSample: lastSample
-          ? {
-              drawnDate: lastSample.drawnDate,
-              odometer: lastSample.odometer,
-            }
-          : null,
+        lastSample:
+          lastSample?.drawnDate != null
+            ? {
+                drawnDate: lastSample.drawnDate,
+                odometer: lastSample.odometer,
+              }
+            : null,
         lastService: lastService
           ? {
               recordDate: lastService.recordDate,

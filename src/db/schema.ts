@@ -85,12 +85,12 @@ export const mechanicalSparesTable = pgTable(
   ]
 );
 
-// Lab-sample workflow for the Oils & Servicing module. A sample is logged
-// as `drawn` when workshop staff take it, then moves through processed /
-// sent / received as the lab handles it.
+// Lab-sample workflow for the Oils & Servicing module. A sample starts as
+// `requested` from the Oils dashboard, then moves drawn → sent → received
+// on the sampling pipeline board.
 export const sampleStatusEnum = pgEnum("sample_status", [
+  "requested",
   "drawn",
-  "processed",
   "sent",
   "received",
 ]);
@@ -121,20 +121,23 @@ export const oilConsumptionLogsTable = pgTable(
   ]
 );
 
-// Oil samples drawn from an asset for lab analysis. Status defaults to
-// `drawn` so a manual log is immediately on the workflow; `notes` is
-// optional. The Central Hub form captures fleet number, drawn date, and
-// the truck odometer at the moment the sample is taken.
+// Oil samples drawn from an asset for lab analysis. Dashboard "Request
+// Sample" inserts `requested` with no odometer; mileage is stamped when
+// the sample is marked `drawn`. `notes` is optional.
 export const oilSamplesTable = pgTable("oil_samples", {
   id: uuid().primaryKey().defaultRandom(),
   assetId: integer("asset_id")
     .notNull()
     .references(() => assetsTable.id, { onDelete: "cascade" }),
-  drawnDate: timestamp("drawn_date").notNull(),
-  // Truck kilometres at the moment the sample is physically drawn. Stored
-  // on the sample so the Oils & Servicing compliance clock is not affected
-  // by later mileage-log edits.
-  odometer: integer("odometer").notNull(),
-  status: sampleStatusEnum("status").notNull().default("drawn"),
+  // Set when the sample is physically drawn. Null while status is
+  // `requested`.
+  drawnDate: timestamp("drawn_date"),
+  // Truck kilometres at the moment the sample is physically drawn. Null
+  // until then; locked in so the compliance clock is not affected by later
+  // mileage-log edits.
+  odometer: integer("odometer"),
+  status: sampleStatusEnum("status").notNull().default("requested"),
   notes: text("notes"),
+  // Insert time — used by the pipeline board as "time since the request".
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });

@@ -1,7 +1,8 @@
 "use server"
 
 import { auth } from "@clerk/nextjs/server"
-import { inArray } from "drizzle-orm"
+import { format } from "date-fns"
+import { and, desc, eq, inArray, lte } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 
@@ -482,13 +483,18 @@ export type LogOilSampleResult = {
   fleetNumber: string
 }
 
-// Manual oil-sample log from Data Ingestion or the Oils & Servicing
-// dashboard. Status is always `drawn` here — later workflow steps
-// (processed / sent / received) will be updated elsewhere. The odometer is
-// the truck reading at draw time and becomes the sample's locked-in
-// compliance baseline. Unlike the bulk importers, an unknown fleet number
-// is rejected rather than registered, so a typo can't silently create a
-// junk asset.
+function revalidateOilSamplePaths() {
+  revalidatePath("/data-ingestion")
+  revalidatePath("/oils-and-servicing")
+  revalidatePath("/oils-and-servicing/pipeline")
+}
+
+// Manual oil-sample log from Data Ingestion. Status is always `drawn` here
+// — the Oils dashboard "Request Sample" path starts at `requested` instead.
+// The odometer is the truck reading at draw time and becomes the sample's
+// locked-in compliance baseline. Unlike the bulk importers, an unknown
+// fleet number is rejected rather than registered, so a typo can't
+// silently create a junk asset.
 export async function logOilSample(
   input: LogOilSampleInput
 ): Promise<LogOilSampleResult> {
@@ -519,8 +525,199 @@ export async function logOilSample(
     throw new Error("Failed to log oil sample")
   }
 
-  revalidatePath("/data-ingestion")
-  revalidatePath("/oils-and-servicing")
+  revalidateOilSamplePaths()
 
   return { id: inserted.id, fleetNumber }
+}
+
+const requestOilSampleSchema = z.object({
+  assetId: z.number({ error: "Asset is required" }).int().positive(),
+})
+
+export type RequestOilSampleInput = z.infer<typeof requestOilSampleSchema>
+
+export type RequestOilSampleResult = {
+  id: string
+  fleetNumber: string
+}
+
+// Zero-input request from the Oils & Servicing dashboard. Mileage is not
+// captured here — `advanceSampleStatus` stamps the latest odometer when
+// the sample is marked `drawn`.
+export async function requestOilSample(
+  input: RequestOilSampleInput
+): Promise<RequestOilSampleResult> {
+  await requireOilSampleAccess()
+
+  const data = requestOilSampleSchema.parse(input)
+
+  const [asset] = await db
+    .select({ id: assetsTable.id, assetName: assetsTable.assetName })
+    .from(assetsTable)
+    .where(eq(assetsTable.id, data.assetId))
+    .limit(1)
+
+  if (!asset) {
+    throw new Error("No fleet asset found for this sample request.")
+  }
+
+  const [inserted] = await db
+    .insert(oilSamplesTable)
+    .values({
+      assetId: asset.id,
+      status: "requested",
+      odometer: null,
+      drawnDate: null,
+    })
+    .returning({ id: oilSamplesTable.id })
+
+  if (!inserted) {
+    throw new Error("Failed to request oil sample")
+  }
+
+  revalidateOilSamplePaths()
+
+  return { id: inserted.id, fleetNumber: asset.assetName }
+}
+
+const SAMPLE_STATUSES = ["requested", "drawn", "sent", "received"] as const
+
+type SampleStatus = (typeof SAMPLE_STATUSES)[number]
+
+const NEXT_SAMPLE_STATUS: Record<
+  Exclude<SampleStatus, "received">,
+  Exclude<SampleStatus, "requested">
+> = {
+  requested: "drawn",
+  drawn: "sent",
+  sent: "received",
+}
+
+const advanceSampleStatusSchema = z.object({
+  sampleId: z.string().uuid("Sample id must be a valid UUID"),
+  assetId: z
+    .string()
+    .trim()
+    .min(1, "Asset is required")
+    .regex(/^\d+$/, "Asset id must be a number"),
+  currentStatus: z.enum(SAMPLE_STATUSES),
+})
+
+function toOdometerInteger(value: string) {
+  const km = Number(value)
+
+  if (!Number.isFinite(km)) {
+    throw new Error("Latest mileage reading is not a valid number")
+  }
+
+  return Math.round(km)
+}
+
+async function latestOdometerUpToToday(assetId: number) {
+  const today = format(new Date(), "yyyy-MM-dd")
+
+  const [reading] = await db
+    .select({ odometer: mileageLogsTable.odometer })
+    .from(mileageLogsTable)
+    .where(
+      and(eq(mileageLogsTable.assetId, assetId), lte(mileageLogsTable.date, today))
+    )
+    .orderBy(desc(mileageLogsTable.date))
+    .limit(1)
+
+  if (!reading) {
+    throw new Error(
+      "No mileage log found for this asset up to today. Import mileage before marking the sample as drawn."
+    )
+  }
+
+  return toOdometerInteger(reading.odometer)
+}
+
+export type AdvanceSampleStatusResult = {
+  id: string
+  status: SampleStatus
+  odometer: number | null
+}
+
+// Advances a pipeline card one step. Requested → drawn pulls the latest
+// mileage-log odometer for the asset (on or before today) and stamps
+// `drawnDate`. Later steps only update `status`.
+export async function advanceSampleStatus(
+  sampleId: string,
+  assetId: string,
+  currentStatus: string
+): Promise<AdvanceSampleStatusResult> {
+  await requireOilSampleAccess()
+
+  const data = advanceSampleStatusSchema.parse({
+    sampleId,
+    assetId,
+    currentStatus,
+  })
+  const parsedAssetId = Number(data.assetId)
+
+  if (data.currentStatus === "received") {
+    throw new Error("This sample already has results.")
+  }
+
+  const nextStatus = NEXT_SAMPLE_STATUS[data.currentStatus]
+
+  const [sample] = await db
+    .select({
+      id: oilSamplesTable.id,
+      assetId: oilSamplesTable.assetId,
+      status: oilSamplesTable.status,
+    })
+    .from(oilSamplesTable)
+    .where(eq(oilSamplesTable.id, data.sampleId))
+    .limit(1)
+
+  if (!sample) {
+    throw new Error("Oil sample not found.")
+  }
+
+  if (sample.assetId !== parsedAssetId) {
+    throw new Error("This sample does not belong to the given asset.")
+  }
+
+  if (sample.status !== data.currentStatus) {
+    throw new Error("This sample has already moved. Refresh the pipeline.")
+  }
+
+  const odometer =
+    data.currentStatus === "requested"
+      ? await latestOdometerUpToToday(parsedAssetId)
+      : null
+
+  const [updated] = await db
+    .update(oilSamplesTable)
+    .set(
+      data.currentStatus === "requested"
+        ? {
+            status: nextStatus,
+            drawnDate: new Date(),
+            odometer,
+          }
+        : { status: nextStatus }
+    )
+    .where(
+      and(
+        eq(oilSamplesTable.id, data.sampleId),
+        eq(oilSamplesTable.status, data.currentStatus)
+      )
+    )
+    .returning({
+      id: oilSamplesTable.id,
+      status: oilSamplesTable.status,
+      odometer: oilSamplesTable.odometer,
+    })
+
+  if (!updated) {
+    throw new Error("Failed to advance sample status.")
+  }
+
+  revalidateOilSamplePaths()
+
+  return updated
 }
