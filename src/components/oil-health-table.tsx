@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/tooltip"
 import { toast } from "@/components/ui/toast"
 import {
+  CRITICAL_BURN_RATE,
   oilComplianceStatusLabel,
   type OilComplianceEvent,
   type OilComplianceStatus,
@@ -142,8 +143,17 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
               <TableCell>
                 {row.lastEvent ? lastEventLabel(row.lastEvent) : "—"}
               </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {formatBurnRate(row.burnRate)}
+              <TableCell className="text-right">
+                {row.burnRate !== null &&
+                row.burnRate >= CRITICAL_BURN_RATE ? (
+                  <Badge variant="destructive" className="font-bold tabular-nums">
+                    {formatBurnRate(row.burnRate)}
+                  </Badge>
+                ) : (
+                  <span className="tabular-nums">
+                    {formatBurnRate(row.burnRate)}
+                  </span>
+                )}
               </TableCell>
               <TableCell className="text-right">
                 {needsSampleRequest(row.status) ? (

@@ -1,10 +1,11 @@
 import { auth } from "@clerk/nextjs/server"
-import { ArrowLeft } from "lucide-react"
+import { AlertTriangle, ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
 import { FleetStatusDonut } from "@/components/fleet-status-donut"
 import { OilHealthTable } from "@/components/oil-health-table"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -14,7 +15,10 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { getFleetOilHealth } from "@/lib/oil-analytics"
-import { sortOilHealthByPriority } from "@/lib/oil-status"
+import {
+  CRITICAL_BURN_RATE,
+  sortOilHealthByPriority,
+} from "@/lib/oil-status"
 
 export default async function OilsAndServicingPage() {
   const { userId, sessionClaims } = await auth()
@@ -30,6 +34,10 @@ export default async function OilsAndServicingPage() {
   }
 
   const rows = sortOilHealthByPriority(await getFleetOilHealth())
+  const criticalBurners = rows.filter(
+    (asset): asset is typeof asset & { burnRate: number } =>
+      asset.burnRate !== null && asset.burnRate >= CRITICAL_BURN_RATE
+  )
 
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
@@ -67,6 +75,25 @@ export default async function OilsAndServicingPage() {
         </div>
 
         <FleetStatusDonut rows={rows} />
+
+        {criticalBurners.length > 0 ? (
+          <Alert variant="destructive">
+            <AlertTriangle aria-hidden="true" />
+            <AlertTitle>CRITICAL: High Oil Consumption Detected</AlertTitle>
+            <AlertDescription>
+              {criticalBurners.map((asset) => (
+                <p key={asset.assetId}>
+                  {asset.assetName} is burning{" "}
+                  {asset.burnRate.toLocaleString("en-US", {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                  })}{" "}
+                  L / 1,000km
+                </p>
+              ))}
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         <Card>
           <CardHeader>

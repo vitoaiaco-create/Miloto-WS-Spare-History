@@ -1,6 +1,10 @@
 export type OilComplianceStatus = "overdue" | "due_soon" | "compliant"
 export type OilComplianceEvent = "service" | "sample"
 
+// Liters per 1,000 km. At or above this, the Oils & Servicing dashboard
+// treats the unit as a critical burner.
+export const CRITICAL_BURN_RATE = 3.0
+
 export type OilMetrics = {
   status: OilComplianceStatus | null
   kmSinceCompliance: number | null
