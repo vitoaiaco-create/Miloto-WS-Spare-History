@@ -24,10 +24,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "@/components/ui/toast"
-import {
-  looksLikeMileageExport,
-  looksLikeSparesExport,
-} from "@/lib/spreadsheet"
+import { looksLikeMileageExport } from "@/lib/spreadsheet"
 
 // Rows sent per Server Action call. A Server Action body is capped at 1 MB by
 // default, so a file is uploaded in batches instead of one request — see the
@@ -140,16 +137,6 @@ export function OilUploader() {
         return
       }
 
-      if (looksLikeSparesExport(rows)) {
-        toast.add({
-          title: "Use the Spares tab",
-          description:
-            "This file has an Identity No and Part Number, so it is a job cards report. Switch to the Spares tab and upload it there.",
-          type: "error",
-        })
-        return
-      }
-
       if (looksLikeMileageExport(rows)) {
         toast.add({
           title: "Use the Mileage tab",
@@ -173,9 +160,11 @@ export function OilUploader() {
       <CardHeader>
         <CardTitle>Import Oils</CardTitle>
         <CardDescription>
-          Upload oil consumption logs (Miloto / Identity No, Date, Quantity,
-          Job Card No) as a .csv, .xlsx or .xls file. Rows already on file for
-          the same asset, job card and date are left unchanged.
+          Upload the oil consumption export from the ERP (Identity No, Outward
+          Date, Quantity, Job Card No) as a .csv, .xlsx or .xls file. Extra
+          columns such as Material Name or Part Number are ignored. Rows
+          already on file for the same asset, job card and date are left
+          unchanged.
         </CardDescription>
       </CardHeader>
       <CardContent>

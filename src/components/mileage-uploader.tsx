@@ -150,7 +150,7 @@ export function MileageUploader() {
         toast.add({
           title: "Use the Spares tab",
           description:
-            "This file has an Identity No column, so it is a job cards report. Switch to the Spares tab and upload it there.",
+            "This file has Identity No, Part Number and Amount (K), so it is a job cards report. Switch to the Spares tab and upload it there.",
           type: "error",
         })
         return

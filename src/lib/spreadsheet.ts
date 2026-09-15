@@ -63,23 +63,43 @@ export function looksLikeMileageExport(rows: unknown[]) {
 
 export function looksLikeSparesExport(rows: unknown[]) {
   const headers = headerSetOf(rows)
-  return headers.has("identity no") && headers.has("part number")
+  // Identity No alone is not enough: oil consumption exports from the same
+  // ERP also carry that column. A job-cards report has a Part Number and
+  // the local-currency Amount (K) column; oil files typically don't need
+  // the latter to ingest.
+  return (
+    headers.has("identity no") &&
+    headers.has("part number") &&
+    (headers.has("amount (k)") || headers.has("sub equipment"))
+  )
 }
 
 export function looksLikeOilsExport(rows: unknown[]) {
   const headers = headerSetOf(rows)
-  const hasJobCard = headers.has("job card no") || headers.has("job card")
+  const hasIdentity =
+    headers.has("identity no") ||
+    headers.has("miloto_no") ||
+    headers.has("miloto no")
+  const hasOutwardDate =
+    headers.has("outward date") ||
+    headers.has("record date") ||
+    headers.has("date")
   const hasQuantity =
     headers.has("quantity") ||
     headers.has("qty") ||
     headers.has("litres") ||
     headers.has("liters")
 
+  // Used only to redirect a file dropped on Spares/Mileage. The full job-
+  // cards outward report also has Identity No / Quantity / Outward Date, so
+  // Amount (K) and Sub Equipment mark that shape as spares, not oil.
   return (
-    hasJobCard &&
+    hasIdentity &&
+    hasOutwardDate &&
     hasQuantity &&
-    !headers.has("part number") &&
-    !headers.has("metric")
+    !headers.has("metric") &&
+    !headers.has("amount (k)") &&
+    !headers.has("sub equipment")
   )
 }
 

@@ -172,10 +172,9 @@ export const assetRowSchema = z.preprocess((row) => {
 export type AssetRow = z.infer<typeof assetRowSchema>
 
 // A single row of an oil consumption report, mapped onto `oilConsumptionLogsTable`.
-// Fleet number, date, quantity and job card are required; extra columns are
-// ignored so a workshop export that also carries oil grade / cost still
-// imports. Header aliases cover the names used on the spares and mileage
-// files (Identity No / Miloto_No, Job Card No, Date / Record Date).
+// The file is the same ERP shape as the job-cards outward report, so the
+// fleet number and date come from "Identity No" and "Outward Date". Extra
+// columns (Material Name, Part Number, costs, …) are ignored.
 export const oilConsumptionRowSchema = z.preprocess((row) => {
   const cells = indexRowByHeader(row)
 
@@ -190,9 +189,9 @@ export const oilConsumptionRowSchema = z.preprocess((row) => {
       )
     ),
     recordDate: parseSpreadsheetDate(
-      cells.get("record date") ??
-        cells.get("date") ??
-        cells.get("outward date")
+      cells.get("outward date") ??
+        cells.get("record date") ??
+        cells.get("date")
     ),
     quantity: toNumber(
       cells.get("quantity") ??
@@ -207,8 +206,8 @@ export const oilConsumptionRowSchema = z.preprocess((row) => {
     ),
   }
 }, z.object({
-  fleetNumber: fleetNumberSchema("Miloto / Asset number"),
-  recordDate: z.date({ error: "Date must be a valid date (DD/MM/YYYY)" }),
+  fleetNumber: fleetNumberSchema("Identity No"),
+  recordDate: z.date({ error: "Outward Date must be a valid date (DD-MM-YYYY)" }),
   quantity: z
     .number("Quantity must be a number")
     .positive("Quantity must be greater than 0"),
