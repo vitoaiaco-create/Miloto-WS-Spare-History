@@ -59,7 +59,7 @@ const EMPTY_FILTERS: Filters = {
 
 // Debounce (ms) before free-text filter changes push a new URL, so the
 // server-rendered table doesn't re-fetch on every keystroke.
-const FILTER_DEBOUNCE_MS = 400
+const FILTER_DEBOUNCE_MS = 300
 
 function buildQueryString(filters: Filters) {
   const params = new URLSearchParams()
@@ -86,7 +86,18 @@ export function SparesFilterBar({
   })
 
   const isFirstRender = useRef(true)
+  const filtersRef = useRef(filters)
+  filtersRef.current = filters
 
+  function pushFiltersToUrl(next: Filters) {
+    const queryString = buildQueryString(next)
+    router.replace(queryString ? `${pathname}?${queryString}` : pathname, {
+      scroll: false,
+    })
+  }
+
+  // Text fields wait until the operator pauses so each keystroke doesn't
+  // hit the database. Sub-equipment and dates apply as soon as they change.
   useEffect(() => {
     if (isFirstRender.current) {
       isFirstRender.current = false
@@ -94,21 +105,29 @@ export function SparesFilterBar({
     }
 
     const timeout = setTimeout(() => {
-      const queryString = buildQueryString(filters)
-      router.replace(queryString ? `${pathname}?${queryString}` : pathname, {
-        scroll: false,
-      })
+      pushFiltersToUrl(filtersRef.current)
     }, FILTER_DEBOUNCE_MS)
 
     return () => clearTimeout(timeout)
-  }, [filters, pathname, router])
+  }, [filters.fleetNo, filters.partNumber, filters.materialName, pathname, router])
 
   function updateFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
     setFilters((current) => ({ ...current, [key]: value }))
   }
 
+  function updateDiscreteFilter<K extends "subEquipment" | "startDate" | "endDate">(
+    key: K,
+    value: Filters[K]
+  ) {
+    setFilters((current) => {
+      const next = { ...current, [key]: value }
+      pushFiltersToUrl(next)
+      return next
+    })
+  }
+
   // Clearing skips the debounce the effect above applies to typing, so the
-  // table empties on the click rather than 400ms later.
+  // table empties on the click rather than 300ms later.
   function clearFilters() {
     setFilters(EMPTY_FILTERS)
     router.replace(pathname, { scroll: false })
@@ -172,7 +191,7 @@ export function SparesFilterBar({
               items={SUB_EQUIPMENT_OPTIONS}
               value={filters.subEquipment || null}
               onValueChange={(value) =>
-                updateFilter("subEquipment", value ?? "")
+                updateDiscreteFilter("subEquipment", value ?? "")
               }
             >
               <ComboboxTrigger
@@ -209,7 +228,7 @@ export function SparesFilterBar({
               id="filter-start-date"
               type="date"
               value={filters.startDate}
-              onChange={(e) => updateFilter("startDate", e.target.value)}
+              onChange={(e) => updateDiscreteFilter("startDate", e.target.value)}
             />
           </div>
 
@@ -219,7 +238,7 @@ export function SparesFilterBar({
               id="filter-end-date"
               type="date"
               value={filters.endDate}
-              onChange={(e) => updateFilter("endDate", e.target.value)}
+              onChange={(e) => updateDiscreteFilter("endDate", e.target.value)}
             />
           </div>
         </div>
