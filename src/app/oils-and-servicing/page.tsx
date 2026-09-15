@@ -3,9 +3,18 @@ import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
+import { FleetStatusDonut } from "@/components/fleet-status-donut"
 import { OilHealthTable } from "@/components/oil-health-table"
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { getFleetOilHealth } from "@/lib/oil-analytics"
+import { sortOilHealthByPriority } from "@/lib/oil-status"
 
 export default async function OilsAndServicingPage() {
   const { userId, sessionClaims } = await auth()
@@ -20,7 +29,7 @@ export default async function OilsAndServicingPage() {
     redirect("/")
   }
 
-  const rows = await getFleetOilHealth()
+  const rows = sortOilHealthByPriority(await getFleetOilHealth())
 
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
@@ -41,13 +50,27 @@ export default async function OilsAndServicingPage() {
             Oils &amp; Servicing
           </h1>
           <p className="max-w-2xl text-base leading-7 text-zinc-600 dark:text-zinc-400">
-            Dual-clock oil health for the active Miloto fleet: kilometres
-            since the last ≥35 L service, top-up burn rate, and kilometres
-            since the last lab sample.
+            Dual-clock oil health for the active Miloto fleet. The
+            compliance clock resets on the most recent of a ≥35 L service
+            or a logged oil sample; burn rate still counts top-ups since
+            the last full service.
           </p>
         </div>
 
-        <OilHealthTable rows={rows} />
+        <FleetStatusDonut rows={rows} />
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Priority roster</CardTitle>
+            <CardDescription>
+              Overdue units first, then due soon. Compliant assets sit at the
+              bottom.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <OilHealthTable rows={rows} />
+          </CardContent>
+        </Card>
       </section>
     </main>
   )

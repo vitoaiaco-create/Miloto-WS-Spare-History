@@ -7,11 +7,29 @@ import {
   oilConsumptionLogsTable,
   oilSamplesTable,
 } from "@/db/schema"
+import type {
+  OilComplianceEvent,
+  OilComplianceStatus,
+  OilHealthRow,
+  OilMetrics,
+} from "@/lib/oil-status"
 import { toIsoDateString } from "@/lib/spreadsheet"
+
+export type {
+  OilComplianceEvent,
+  OilComplianceStatus,
+  OilHealthRow,
+  OilMetrics,
+} from "@/lib/oil-status"
 
 // Full oil services on this fleet land at ~35 L or more (sump fill on a
 // prime mover). Anything smaller is treated as a top-up for burn-rate.
 const SERVICE_QUANTITY_LITERS = 35
+
+// Dual-clock reset: a ≥35 L service or a logged sample keeps the unit
+// compliant below 13 000 km, due soon through 15 000 km, and overdue after.
+const COMPLIANT_KM_LIMIT = 13_000
+const OVERDUE_KM_LIMIT = 15_000
 
 // Engine-bearing units that consume engine oil. Trailers are left out of
 // the Oils & Servicing health table — they almost never appear on the
@@ -24,25 +42,11 @@ type MileageReading = {
   odometer: string
 }
 
-export type OilMetrics = {
-  kmSinceLastSample: number | null
-  kmSinceLastService: number | null
-  totalTopUpLiters: number
-  burnRate: number | null
-}
+function toOdometerKm(value: number | string | null | undefined) {
+  if (value === null || value === undefined) return null
 
-export type OilHealthRow = {
-  assetId: number
-  assetName: string
-} & OilMetrics
-
-function kmDelta(
-  currentOdometer: MileageReading | null | undefined,
-  baselineOdometer: MileageReading | null | undefined
-) {
-  if (!currentOdometer || !baselineOdometer) return null
-
-  return Number(currentOdometer.odometer) - Number(baselineOdometer.odometer)
+  const km = typeof value === "number" ? value : Number(value)
+  return Number.isFinite(km) ? km : null
 }
 
 function burnRateLPer1000Km(
@@ -54,27 +58,78 @@ function burnRateLPer1000Km(
   return (totalTopUpLiters / kmSinceLastService) * 1000
 }
 
-function toOilMetrics(input: {
-  currentOdometer: MileageReading | null | undefined
-  lastSampleOdometer: MileageReading | null | undefined
-  lastServiceOdometer: MileageReading | null | undefined
-  totalTopUpLiters: number
-}): OilMetrics {
-  const kmSinceLastSample = kmDelta(
-    input.currentOdometer,
-    input.lastSampleOdometer
-  )
-  const kmSinceLastService = kmDelta(
-    input.currentOdometer,
-    input.lastServiceOdometer
-  )
-  const totalTopUpLiters = input.totalTopUpLiters
+function complianceStatus(kmSinceCompliance: number): OilComplianceStatus {
+  if (kmSinceCompliance > OVERDUE_KM_LIMIT) return "overdue"
+  if (kmSinceCompliance >= COMPLIANT_KM_LIMIT) return "due_soon"
+  return "compliant"
+}
+
+function pickLastComplianceEvent(
+  latestService: { recordDate: Date; odometer: number | null } | null,
+  latestSample: { drawnDate: Date; odometer: number | null } | null
+): { lastEvent: OilComplianceEvent; odometer: number | null } | null {
+  if (!latestService && !latestSample) return null
+
+  if (!latestService) {
+    return {
+      lastEvent: "sample",
+      odometer: latestSample!.odometer,
+    }
+  }
+
+  if (!latestSample) {
+    return {
+      lastEvent: "service",
+      odometer: latestService.odometer,
+    }
+  }
+
+  // The more recent of a ≥35 L service and a logged sample resets the clock.
+  // Equal timestamps prefer the sample — its odometer was locked in at draw.
+  if (latestSample.drawnDate >= latestService.recordDate) {
+    return {
+      lastEvent: "sample",
+      odometer: latestSample.odometer,
+    }
+  }
 
   return {
-    kmSinceLastSample,
-    kmSinceLastService,
-    totalTopUpLiters,
-    burnRate: burnRateLPer1000Km(totalTopUpLiters, kmSinceLastService),
+    lastEvent: "service",
+    odometer: latestService.odometer,
+  }
+}
+
+function toOilMetrics(input: {
+  currentOdometer: number | null
+  lastService: { recordDate: Date; odometer: number | null } | null
+  lastSample: { drawnDate: Date; odometer: number | null } | null
+  totalTopUpLiters: number
+}): OilMetrics {
+  const lastComplianceEvent = pickLastComplianceEvent(
+    input.lastService,
+    input.lastSample
+  )
+
+  const kmSinceCompliance =
+    input.currentOdometer !== null &&
+    lastComplianceEvent !== null &&
+    lastComplianceEvent.odometer !== null
+      ? input.currentOdometer - lastComplianceEvent.odometer
+      : null
+
+  const kmSinceLastService =
+    input.currentOdometer !== null &&
+    input.lastService !== null &&
+    input.lastService.odometer !== null
+      ? input.currentOdometer - input.lastService.odometer
+      : null
+
+  return {
+    status:
+      kmSinceCompliance === null ? null : complianceStatus(kmSinceCompliance),
+    kmSinceCompliance,
+    burnRate: burnRateLPer1000Km(input.totalTopUpLiters, kmSinceLastService),
+    lastEvent: lastComplianceEvent?.lastEvent ?? null,
   }
 }
 
@@ -119,7 +174,7 @@ async function loadMileageOnOrBefore(assetId: number, at: Date) {
 export async function calculateOilMetrics(
   assetId: number
 ): Promise<OilMetrics> {
-  const [currentOdometer, lastSample, lastService] = await Promise.all([
+  const [currentMileage, lastSample, lastService] = await Promise.all([
     loadLatestMileageLog(assetId),
     db.query.oilSamplesTable.findFirst({
       where: { assetId },
@@ -139,36 +194,39 @@ export async function calculateOilMetrics(
       .then((rows) => rows[0] ?? null),
   ])
 
-  const [lastSampleOdometer, lastServiceOdometer, consumedOil] =
-    await Promise.all([
-      lastSample
-        ? loadMileageOnOrBefore(assetId, lastSample.drawnDate)
-        : Promise.resolve(null),
-      lastService
-        ? loadMileageOnOrBefore(assetId, lastService.recordDate)
-        : Promise.resolve(null),
-      lastService
-        ? db
-            .select({ total: sum(oilConsumptionLogsTable.quantity) })
-            .from(oilConsumptionLogsTable)
-            .where(
-              and(
-                eq(oilConsumptionLogsTable.assetId, assetId),
-                lt(oilConsumptionLogsTable.quantity, SERVICE_QUANTITY_LITERS),
-                gt(
-                  oilConsumptionLogsTable.recordDate,
-                  lastService.recordDate
-                )
-              )
+  const [lastServiceMileage, consumedOil] = await Promise.all([
+    lastService
+      ? loadMileageOnOrBefore(assetId, lastService.recordDate)
+      : Promise.resolve(null),
+    lastService
+      ? db
+          .select({ total: sum(oilConsumptionLogsTable.quantity) })
+          .from(oilConsumptionLogsTable)
+          .where(
+            and(
+              eq(oilConsumptionLogsTable.assetId, assetId),
+              lt(oilConsumptionLogsTable.quantity, SERVICE_QUANTITY_LITERS),
+              gt(oilConsumptionLogsTable.recordDate, lastService.recordDate)
             )
-            .then((rows) => Number(rows[0]?.total ?? 0))
-        : Promise.resolve(0),
-    ])
+          )
+          .then((rows) => Number(rows[0]?.total ?? 0))
+      : Promise.resolve(0),
+  ])
 
   return toOilMetrics({
-    currentOdometer,
-    lastSampleOdometer,
-    lastServiceOdometer,
+    currentOdometer: toOdometerKm(currentMileage?.odometer),
+    lastService: lastService
+      ? {
+          recordDate: lastService.recordDate,
+          odometer: toOdometerKm(lastServiceMileage?.odometer),
+        }
+      : null,
+    lastSample: lastSample
+      ? {
+          drawnDate: lastSample.drawnDate,
+          odometer: lastSample.odometer,
+        }
+      : null,
     totalTopUpLiters: Number.isFinite(consumedOil) ? consumedOil : 0,
   })
 }
@@ -263,6 +321,7 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
         .selectDistinctOn([oilSamplesTable.assetId], {
           assetId: oilSamplesTable.assetId,
           drawnDate: oilSamplesTable.drawnDate,
+          odometer: oilSamplesTable.odometer,
         })
         .from(oilSamplesTable)
         .where(inArray(oilSamplesTable.assetId, assetIds))
@@ -306,25 +365,12 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
     lastServices.map((service) => [service.assetId, service] as const)
   )
 
-  const mileagePairs = new Map<string, { assetId: number; onDate: string }>()
-  for (const sample of lastSamples) {
-    const onDate = toIsoDateString(sample.drawnDate)
-    mileagePairs.set(`${sample.assetId}:${onDate}`, {
-      assetId: sample.assetId,
-      onDate,
-    })
-  }
-  for (const service of lastServices) {
-    const onDate = toIsoDateString(service.recordDate)
-    mileagePairs.set(`${service.assetId}:${onDate}`, {
-      assetId: service.assetId,
-      onDate,
-    })
-  }
+  const mileagePairs = lastServices.map((service) => ({
+    assetId: service.assetId,
+    onDate: toIsoDateString(service.recordDate),
+  }))
 
-  const mileageByPair = await loadMileageOnOrBeforeDates([
-    ...mileagePairs.values(),
-  ])
+  const mileageByPair = await loadMileageOnOrBeforeDates(mileagePairs)
 
   const topUpByAsset = new Map<number, number>()
   for (const topUp of topUps) {
@@ -345,17 +391,23 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
       assetId: asset.id,
       assetName: asset.assetName,
       ...toOilMetrics({
-        currentOdometer: currentByAsset.get(asset.id),
-        lastSampleOdometer: lastSample
-          ? mileageByPair.get(
-              `${asset.id}:${toIsoDateString(lastSample.drawnDate)}`
-            )
-          : undefined,
-        lastServiceOdometer: lastService
-          ? mileageByPair.get(
-              `${asset.id}:${toIsoDateString(lastService.recordDate)}`
-            )
-          : undefined,
+        currentOdometer: toOdometerKm(currentByAsset.get(asset.id)?.odometer),
+        lastSample: lastSample
+          ? {
+              drawnDate: lastSample.drawnDate,
+              odometer: lastSample.odometer,
+            }
+          : null,
+        lastService: lastService
+          ? {
+              recordDate: lastService.recordDate,
+              odometer: toOdometerKm(
+                mileageByPair.get(
+                  `${asset.id}:${toIsoDateString(lastService.recordDate)}`
+                )?.odometer
+              ),
+            }
+          : null,
         totalTopUpLiters: topUpByAsset.get(asset.id) ?? 0,
       }),
     }

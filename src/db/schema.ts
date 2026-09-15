@@ -123,14 +123,18 @@ export const oilConsumptionLogsTable = pgTable(
 
 // Oil samples drawn from an asset for lab analysis. Status defaults to
 // `drawn` so a manual log is immediately on the workflow; `notes` is
-// optional because the Central Hub form only captures the fleet number and
-// the date the sample was taken.
+// optional. The Central Hub form captures fleet number, drawn date, and
+// the truck odometer at the moment the sample is taken.
 export const oilSamplesTable = pgTable("oil_samples", {
   id: uuid().primaryKey().defaultRandom(),
   assetId: integer("asset_id")
     .notNull()
     .references(() => assetsTable.id, { onDelete: "cascade" }),
   drawnDate: timestamp("drawn_date").notNull(),
+  // Truck kilometres at the moment the sample is physically drawn. Stored
+  // on the sample so the Oils & Servicing compliance clock is not affected
+  // by later mileage-log edits.
+  odometer: integer("odometer").notNull(),
   status: sampleStatusEnum("status").notNull().default("drawn"),
   notes: text("notes"),
 });

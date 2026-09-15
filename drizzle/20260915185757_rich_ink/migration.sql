@@ -1,0 +1,1 @@
+ALTER TABLE "oil_samples" ADD COLUMN "odometer" integer NOT NULL;

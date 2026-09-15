@@ -6,6 +6,7 @@ import { Poppins } from "next/font/google";
 import { SiteHeader } from "@/components/site-header";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/toast";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 import "./globals.css";
 
@@ -35,10 +36,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           disableTransitionOnChange
         >
           <ClerkProvider appearance={{ theme: shadcn }}>
-            <Toaster>
-              <SiteHeader />
-              {children}
-            </Toaster>
+            <TooltipProvider>
+              <Toaster>
+                <SiteHeader />
+                {children}
+              </Toaster>
+            </TooltipProvider>
           </ClerkProvider>
         </ThemeProvider>
       </body>

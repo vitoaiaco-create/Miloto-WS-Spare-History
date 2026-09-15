@@ -72,6 +72,24 @@ async function requireAdmin() {
   }
 }
 
+// Sample logging is used both by admins on Data Ingestion and by workshop
+// staff on Oils & Servicing. Bulk importers stay admin-only.
+async function requireOilSampleAccess() {
+  const { userId, sessionClaims } = await auth()
+
+  if (!userId) {
+    throw new Error("Unauthorized")
+  }
+
+  const isAdmin = sessionClaims?.metadata?.role === "admin"
+  const hasOilsModule =
+    sessionClaims?.metadata?.modules?.includes("oils_servicing") ?? false
+
+  if (!isAdmin && !hasOilsModule) {
+    throw new Error("Unauthorized")
+  }
+}
+
 function chunk<T>(items: T[], size: number) {
   const chunks: T[][] = []
   for (let index = 0; index < items.length; index += size) {
@@ -451,6 +469,10 @@ const logOilSampleSchema = z.object({
     .min(1, "Miloto / Asset number is required")
     .max(255, "Miloto / Asset number must be 255 characters or fewer"),
   drawnDate: z.coerce.date({ error: "Drawn date must be a valid date" }),
+  odometer: z
+    .number({ error: "Odometer is required" })
+    .int("Odometer must be a whole number of kilometres")
+    .nonnegative("Odometer cannot be negative"),
 })
 
 export type LogOilSampleInput = z.infer<typeof logOilSampleSchema>
@@ -460,14 +482,17 @@ export type LogOilSampleResult = {
   fleetNumber: string
 }
 
-// Manual oil-sample log from the Central Hub. Status is always `drawn` here
-// — later workflow steps (processed / sent / received) will be updated
-// elsewhere. Unlike the bulk importers, an unknown fleet number is rejected
-// rather than registered, so a typo can't silently create a junk asset.
+// Manual oil-sample log from Data Ingestion or the Oils & Servicing
+// dashboard. Status is always `drawn` here — later workflow steps
+// (processed / sent / received) will be updated elsewhere. The odometer is
+// the truck reading at draw time and becomes the sample's locked-in
+// compliance baseline. Unlike the bulk importers, an unknown fleet number
+// is rejected rather than registered, so a typo can't silently create a
+// junk asset.
 export async function logOilSample(
   input: LogOilSampleInput
 ): Promise<LogOilSampleResult> {
-  await requireAdmin()
+  await requireOilSampleAccess()
 
   const data = logOilSampleSchema.parse(input)
   const fleetNumber = toCanonicalFleetNumber(data.assetId)
@@ -485,6 +510,7 @@ export async function logOilSample(
     .values({
       assetId: asset.id,
       drawnDate: data.drawnDate,
+      odometer: data.odometer,
       status: "drawn",
     })
     .returning({ id: oilSamplesTable.id })
