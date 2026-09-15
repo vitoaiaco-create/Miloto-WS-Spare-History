@@ -2,8 +2,13 @@ import {
   date,
   integer,
   numeric,
+  pgEnum,
   pgTable,
+  real,
+  text,
+  timestamp,
   uniqueIndex,
+  uuid,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -79,3 +84,41 @@ export const mechanicalSparesTable = pgTable(
     ),
   ]
 );
+
+// Lab-sample workflow for the Oils & Servicing module. A sample is logged
+// as `drawn` when workshop staff take it, then moves through processed /
+// sent / received as the lab handles it.
+export const sampleStatusEnum = pgEnum("sample_status", [
+  "drawn",
+  "processed",
+  "sent",
+  "received",
+]);
+
+// Litres (or other units) of oil issued against a job card. `assetId` is a
+// foreign key to `assetsTable.id` — the same normalized identifier used by
+// mileage logs and mechanical spares — even though staff enter a fleet
+// number (varchar) in the UI.
+export const oilConsumptionLogsTable = pgTable("oil_consumption_logs", {
+  id: uuid().primaryKey().defaultRandom(),
+  assetId: integer("asset_id")
+    .notNull()
+    .references(() => assetsTable.id, { onDelete: "cascade" }),
+  recordDate: timestamp("record_date").notNull(),
+  quantity: real("quantity").notNull(),
+  jobCardNo: varchar("job_card_no", { length: 50 }).notNull(),
+});
+
+// Oil samples drawn from an asset for lab analysis. Status defaults to
+// `drawn` so a manual log is immediately on the workflow; `notes` is
+// optional because the Central Hub form only captures the fleet number and
+// the date the sample was taken.
+export const oilSamplesTable = pgTable("oil_samples", {
+  id: uuid().primaryKey().defaultRandom(),
+  assetId: integer("asset_id")
+    .notNull()
+    .references(() => assetsTable.id, { onDelete: "cascade" }),
+  drawnDate: timestamp("drawn_date").notNull(),
+  status: sampleStatusEnum("status").notNull().default("drawn"),
+  notes: text("notes"),
+});

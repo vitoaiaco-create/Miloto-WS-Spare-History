@@ -13,6 +13,14 @@ export const relations = defineRelations(schema, (r) => ({
       from: r.assetsTable.id,
       to: r.mechanicalSparesTable.assetId,
     }),
+    oilConsumptionLogs: r.many.oilConsumptionLogsTable({
+      from: r.assetsTable.id,
+      to: r.oilConsumptionLogsTable.assetId,
+    }),
+    oilSamples: r.many.oilSamplesTable({
+      from: r.assetsTable.id,
+      to: r.oilSamplesTable.assetId,
+    }),
   },
   mileageLogsTable: {
     // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so a
@@ -28,6 +36,24 @@ export const relations = defineRelations(schema, (r) => ({
     // spare can never exist without its asset.
     asset: r.one.assetsTable({
       from: r.mechanicalSparesTable.assetId,
+      to: r.assetsTable.id,
+      optional: false,
+    }),
+  },
+  oilConsumptionLogsTable: {
+    // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so an
+    // oil consumption log can never exist without its asset.
+    asset: r.one.assetsTable({
+      from: r.oilConsumptionLogsTable.assetId,
+      to: r.assetsTable.id,
+      optional: false,
+    }),
+  },
+  oilSamplesTable: {
+    // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so an
+    // oil sample can never exist without its asset.
+    asset: r.one.assetsTable({
+      from: r.oilSamplesTable.assetId,
       to: r.assetsTable.id,
       optional: false,
     }),

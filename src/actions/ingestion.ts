@@ -6,7 +6,12 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 
 import { db } from "@/db"
-import { assetsTable, mechanicalSparesTable, mileageLogsTable } from "@/db/schema"
+import {
+  assetsTable,
+  mechanicalSparesTable,
+  mileageLogsTable,
+  oilSamplesTable,
+} from "@/db/schema"
 import {
   indexRowByHeader,
   inferAssetType,
@@ -365,4 +370,58 @@ export async function ingestMileage(input: IngestInput): Promise<IngestResult> {
     skipped,
     createdAssets: createdFleetNumbers,
   }
+}
+
+const logOilSampleSchema = z.object({
+  assetId: z
+    .string()
+    .trim()
+    .min(1, "Miloto / Asset number is required")
+    .max(255, "Miloto / Asset number must be 255 characters or fewer"),
+  drawnDate: z.coerce.date({ error: "Drawn date must be a valid date" }),
+})
+
+export type LogOilSampleInput = z.infer<typeof logOilSampleSchema>
+
+export type LogOilSampleResult = {
+  id: string
+  fleetNumber: string
+}
+
+// Manual oil-sample log from the Central Hub. Status is always `drawn` here
+// — later workflow steps (processed / sent / received) will be updated
+// elsewhere. Unlike the bulk importers, an unknown fleet number is rejected
+// rather than registered, so a typo can't silently create a junk asset.
+export async function logOilSample(
+  input: LogOilSampleInput
+): Promise<LogOilSampleResult> {
+  await requireAdmin()
+
+  const data = logOilSampleSchema.parse(input)
+  const fleetNumber = toCanonicalFleetNumber(data.assetId)
+
+  const [asset] = await selectAssetsByName([fleetNumber])
+
+  if (!asset) {
+    throw new Error(
+      `No fleet asset found for "${fleetNumber}". Check the Miloto number and try again.`
+    )
+  }
+
+  const [inserted] = await db
+    .insert(oilSamplesTable)
+    .values({
+      assetId: asset.id,
+      drawnDate: data.drawnDate,
+      status: "drawn",
+    })
+    .returning({ id: oilSamplesTable.id })
+
+  if (!inserted) {
+    throw new Error("Failed to log oil sample")
+  }
+
+  revalidatePath("/data-ingestion")
+
+  return { id: inserted.id, fleetNumber }
 }
