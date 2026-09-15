@@ -170,3 +170,52 @@ export const assetRowSchema = z.preprocess((row) => {
 }))
 
 export type AssetRow = z.infer<typeof assetRowSchema>
+
+// A single row of an oil consumption report, mapped onto `oilConsumptionLogsTable`.
+// Fleet number, date, quantity and job card are required; extra columns are
+// ignored so a workshop export that also carries oil grade / cost still
+// imports. Header aliases cover the names used on the spares and mileage
+// files (Identity No / Miloto_No, Job Card No, Date / Record Date).
+export const oilConsumptionRowSchema = z.preprocess((row) => {
+  const cells = indexRowByHeader(row)
+
+  return {
+    fleetNumber: toCanonicalFleetNumber(
+      toTrimmedString(
+        cells.get("identity no") ??
+          cells.get("miloto_no") ??
+          cells.get("miloto no") ??
+          cells.get("asset id") ??
+          cells.get("asset number")
+      )
+    ),
+    recordDate: parseSpreadsheetDate(
+      cells.get("record date") ??
+        cells.get("date") ??
+        cells.get("outward date")
+    ),
+    quantity: toNumber(
+      cells.get("quantity") ??
+        cells.get("qty") ??
+        cells.get("litres") ??
+        cells.get("liters")
+    ),
+    jobCardNo: toTrimmedString(
+      cells.get("job card no") ??
+        cells.get("job card") ??
+        cells.get("jobcard no")
+    ),
+  }
+}, z.object({
+  fleetNumber: fleetNumberSchema("Miloto / Asset number"),
+  recordDate: z.date({ error: "Date must be a valid date (DD/MM/YYYY)" }),
+  quantity: z
+    .number("Quantity must be a number")
+    .positive("Quantity must be greater than 0"),
+  jobCardNo: z
+    .string()
+    .min(1, "Job Card No is required")
+    .max(MAX_JOB_CARD_NO, `Job Card No must be ${MAX_JOB_CARD_NO} characters or fewer`),
+}))
+
+export type OilConsumptionRow = z.infer<typeof oilConsumptionRowSchema>

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import Papa from "papaparse"
 import * as XLSX from "xlsx"
 
-import { ingestMileage, type IngestResult } from "@/actions/ingestion"
+import { ingestOils, type IngestResult } from "@/actions/ingestion"
 import {
   IngestResultDialog,
   buildIngestDialogResult,
@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "@/components/ui/toast"
 import {
-  looksLikeOilsExport,
+  looksLikeMileageExport,
   looksLikeSparesExport,
 } from "@/lib/spreadsheet"
 
@@ -62,13 +62,9 @@ async function parseWorkbook(file: File) {
   return XLSX.utils.sheet_to_json(worksheet) as unknown[]
 }
 
-// Dedicated uploader for the mileage/telemetry export ("Miloto_No", "Date",
-// "Metric", "Value"), mirroring `src/components/data-uploader.tsx`. It's a
-// separate component rather than a third branch of that one because the
-// mileage export always has this one shape — there's no "Data Type" picker
-// to share — and `ingestMileage` (see `src/actions/ingestion.ts`) already
-// filters the file down to its "KM" rows server-side.
-export function MileageUploader() {
+// Dedicated uploader for oil consumption reports (fleet number, date,
+// quantity, job card), mirroring `src/components/mileage-uploader.tsx`.
+export function OilUploader() {
   const router = useRouter()
   const [file, setFile] = useState<File | null>(null)
   const [isImporting, setIsImporting] = useState(false)
@@ -85,7 +81,7 @@ export function MileageUploader() {
     for (let start = 0; start < rows.length; start += IMPORT_BATCH_SIZE) {
       const batch = rows.slice(start, start + IMPORT_BATCH_SIZE)
 
-      const result: IngestResult = await ingestMileage({
+      const result: IngestResult = await ingestOils({
         // Strips the values that can't cross the Server Action boundary —
         // `xlsx` hands back `Date` objects for real date cells.
         rows: JSON.parse(JSON.stringify(batch)),
@@ -110,8 +106,6 @@ export function MileageUploader() {
       })
     )
 
-    // The table is rendered by a Server Component, so it only picks up the
-    // new rows once the route re-renders.
     router.refresh()
   }
 
@@ -150,17 +144,17 @@ export function MileageUploader() {
         toast.add({
           title: "Use the Spares tab",
           description:
-            "This file has an Identity No column, so it is a job cards report. Switch to the Spares tab and upload it there.",
+            "This file has an Identity No and Part Number, so it is a job cards report. Switch to the Spares tab and upload it there.",
           type: "error",
         })
         return
       }
 
-      if (looksLikeOilsExport(rows)) {
+      if (looksLikeMileageExport(rows)) {
         toast.add({
-          title: "Use the Oils Ingestion tab",
+          title: "Use the Mileage tab",
           description:
-            "This file looks like an oil consumption report. Switch to the Oils Ingestion tab and upload it there.",
+            "This file has a Miloto_No and Metric column, so it is a mileage export. Switch to the Mileage tab and upload it there.",
           type: "error",
         })
         return
@@ -177,19 +171,19 @@ export function MileageUploader() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Import Mileage</CardTitle>
+        <CardTitle>Import Oils</CardTitle>
         <CardDescription>
-          Upload the mileage/telemetry export (Miloto_No, Date, Metric,
-          Value) as a .csv, .xlsx or .xls file. Only rows whose Metric starts
-          with &quot;KM&quot; are imported as odometer readings.
+          Upload oil consumption logs (Miloto / Identity No, Date, Quantity,
+          Job Card No) as a .csv, .xlsx or .xls file. Rows already on file for
+          the same asset, job card and date are left unchanged.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="upload-mileage-file">File</Label>
+            <Label htmlFor="upload-oils-file">File</Label>
             <Input
-              id="upload-mileage-file"
+              id="upload-oils-file"
               type="file"
               accept=".csv, .xlsx, .xls"
               disabled={isImporting}

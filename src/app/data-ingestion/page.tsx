@@ -6,14 +6,9 @@ import { redirect } from "next/navigation"
 import { DataUploader } from "@/components/data-uploader"
 import { MileageUploader } from "@/components/mileage-uploader"
 import { OilSampleForm } from "@/components/oil-sample-form"
+import { OilUploader } from "@/components/oil-uploader"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default async function DataIngestionPage() {
@@ -58,14 +53,7 @@ export default async function DataIngestionPage() {
               <MileageUploader />
             </TabsContent>
             <TabsContent value="oils">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Oils Ingestion</CardTitle>
-                  <CardDescription>
-                    CSV upload for oil consumption logs will be available here.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
+              <OilUploader />
             </TabsContent>
             <TabsContent value="oil-sample">
               <OilSampleForm />

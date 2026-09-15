@@ -35,7 +35,10 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/toast"
-import { spreadsheetHeadersOf } from "@/lib/spreadsheet"
+import {
+  looksLikeMileageExport,
+  looksLikeOilsExport,
+} from "@/lib/spreadsheet"
 
 const INGEST_ACTIONS = {
   assets: ingestAssets,
@@ -80,11 +83,6 @@ async function parseWorkbook(file: File) {
   const workbook = XLSX.read(await file.arrayBuffer())
   const worksheet = workbook.Sheets[workbook.SheetNames[0]]
   return XLSX.utils.sheet_to_json(worksheet) as unknown[]
-}
-
-function looksLikeMileageExport(rows: unknown[]) {
-  const headers = new Set(spreadsheetHeadersOf(rows[0]))
-  return headers.has("miloto_no") || headers.has("miloto no")
 }
 
 export function DataUploader() {
@@ -173,6 +171,16 @@ export function DataUploader() {
           title: "Use the Mileage tab",
           description:
             "This file has a Miloto_No column, so it is a mileage export. Switch to the Mileage tab and upload it there.",
+          type: "error",
+        })
+        return
+      }
+
+      if (looksLikeOilsExport(rows)) {
+        toast.add({
+          title: "Use the Oils Ingestion tab",
+          description:
+            "This file looks like an oil consumption report. Switch to the Oils Ingestion tab and upload it there.",
           type: "error",
         })
         return

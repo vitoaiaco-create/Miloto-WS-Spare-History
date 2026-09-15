@@ -99,15 +99,27 @@ export const sampleStatusEnum = pgEnum("sample_status", [
 // foreign key to `assetsTable.id` — the same normalized identifier used by
 // mileage logs and mechanical spares — even though staff enter a fleet
 // number (varchar) in the UI.
-export const oilConsumptionLogsTable = pgTable("oil_consumption_logs", {
-  id: uuid().primaryKey().defaultRandom(),
-  assetId: integer("asset_id")
-    .notNull()
-    .references(() => assetsTable.id, { onDelete: "cascade" }),
-  recordDate: timestamp("record_date").notNull(),
-  quantity: real("quantity").notNull(),
-  jobCardNo: varchar("job_card_no", { length: 50 }).notNull(),
-});
+export const oilConsumptionLogsTable = pgTable(
+  "oil_consumption_logs",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => assetsTable.id, { onDelete: "cascade" }),
+    recordDate: timestamp("record_date").notNull(),
+    quantity: real("quantity").notNull(),
+    jobCardNo: varchar("job_card_no", { length: 50 }).notNull(),
+  },
+  (table) => [
+    // One oil issue per asset / job card / date, so re-importing a
+    // consumption report tops up rather than duplicating what's on file.
+    uniqueIndex("oil_consumption_logs_asset_job_date_idx").on(
+      table.assetId,
+      table.jobCardNo,
+      table.recordDate
+    ),
+  ]
+);
 
 // Oil samples drawn from an asset for lab analysis. Status defaults to
 // `drawn` so a manual log is immediately on the workflow; `notes` is

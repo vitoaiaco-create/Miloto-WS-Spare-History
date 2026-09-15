@@ -10,6 +10,7 @@ import {
   assetsTable,
   mechanicalSparesTable,
   mileageLogsTable,
+  oilConsumptionLogsTable,
   oilSamplesTable,
 } from "@/db/schema"
 import {
@@ -21,7 +22,13 @@ import {
   toNumber,
   toTrimmedString,
 } from "@/lib/spreadsheet"
-import { assetRowSchema, sparesRowSchema, type SparesRow } from "@/lib/validations"
+import {
+  assetRowSchema,
+  oilConsumptionRowSchema,
+  sparesRowSchema,
+  type OilConsumptionRow,
+  type SparesRow,
+} from "@/lib/validations"
 
 // Postgres caps a statement at 65535 bound parameters, and the mileage log
 // runs to ~36k rows, so inserts are issued in chunks rather than as one
@@ -53,8 +60,8 @@ export type IngestResult = {
   createdAssets: string[]
 }
 
-// The data ingestion tools write directly into the fleet's asset, spares
-// and mileage tables, so every action here is gated to admins only — see
+// The data ingestion tools write directly into the fleet's asset, spares,
+// mileage and oil tables, so every action here is gated to admins only — see
 // src/app/data-ingestion/page.tsx for the matching UI-level gate and
 // src/proxy.ts for the route-level gate.
 async function requireAdmin() {
@@ -112,10 +119,10 @@ function selectAssetsByName(fleetNumbers: string[]) {
 }
 
 // Spreadsheet rows identify an asset by its fleet number (e.g. "MTL25"), but
-// `mechanicalSparesTable`/`mileageLogsTable` reference it via the numeric
-// `assetsTable.id` foreign key. This resolves every fleet number in a batch
-// to its `assetId`, registering any that isn't on file yet with the type
-// implied by its code.
+// `mechanicalSparesTable`/`mileageLogsTable`/`oilConsumptionLogsTable`
+// reference it via the numeric `assetsTable.id` foreign key. This resolves
+// every fleet number in a batch to its `assetId`, registering any that isn't
+// on file yet with the type implied by its code.
 //
 // Assets are created rather than rejected because the outward report covers
 // trailers, cranes and the tow truck, none of which appear in the
@@ -363,6 +370,70 @@ export async function ingestMileage(input: IngestInput): Promise<IngestResult> {
   }
 
   revalidatePath("/spares-history")
+
+  return {
+    imported,
+    duplicates: valid.length - imported,
+    skipped,
+    createdAssets: createdFleetNumbers,
+  }
+}
+
+function toOilConsumptionInsertValues(
+  row: OilConsumptionRow,
+  assetIdByFleetNumber: Map<string, number>
+) {
+  return {
+    assetId: assetIdByFleetNumber.get(row.fleetNumber)!,
+    recordDate: row.recordDate,
+    quantity: row.quantity,
+    jobCardNo: row.jobCardNo,
+  }
+}
+
+// Bulk-imports oil consumption rows into `oilConsumptionLogsTable`. Lines
+// already on file for the same asset, job card and date are skipped, per the
+// unique index in `src/db/schema.ts`, so a re-run tops up rather than failing.
+export async function ingestOils(input: IngestInput): Promise<IngestResult> {
+  await requireAdmin()
+
+  const { rows, firstRowNumber } = ingestInputSchema.parse(input)
+  const { valid, skipped } = partitionRows(
+    rows,
+    oilConsumptionRowSchema,
+    firstRowNumber
+  )
+
+  if (valid.length === 0) {
+    return { imported: 0, duplicates: 0, skipped, createdAssets: [] }
+  }
+
+  const { assetIdByFleetNumber, createdFleetNumbers } =
+    await resolveAssetIdsByFleetNumber(valid.map((row) => row.fleetNumber))
+
+  let imported = 0
+
+  for (const batch of chunk(valid, INSERT_CHUNK_SIZE)) {
+    const inserted = await db
+      .insert(oilConsumptionLogsTable)
+      .values(
+        batch.map((row) =>
+          toOilConsumptionInsertValues(row, assetIdByFleetNumber)
+        )
+      )
+      .onConflictDoNothing({
+        target: [
+          oilConsumptionLogsTable.assetId,
+          oilConsumptionLogsTable.jobCardNo,
+          oilConsumptionLogsTable.recordDate,
+        ],
+      })
+      .returning({ id: oilConsumptionLogsTable.id })
+
+    imported += inserted.length
+  }
+
+  revalidatePath("/data-ingestion")
 
   return {
     imported,

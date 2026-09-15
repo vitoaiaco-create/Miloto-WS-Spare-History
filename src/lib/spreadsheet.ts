@@ -46,6 +46,43 @@ export function spreadsheetHeadersOf(row: unknown) {
   return Object.keys(row).map(normalizeSpreadsheetHeader)
 }
 
+function headerSetOf(rows: unknown[]) {
+  return new Set(spreadsheetHeadersOf(rows[0]))
+}
+
+// The three Data Ingestion uploaders peek at the first row's headers so a
+// file dropped on the wrong tab can be redirected instead of failing
+// validation on every column.
+export function looksLikeMileageExport(rows: unknown[]) {
+  const headers = headerSetOf(rows)
+  return (
+    (headers.has("miloto_no") || headers.has("miloto no")) &&
+    headers.has("metric")
+  )
+}
+
+export function looksLikeSparesExport(rows: unknown[]) {
+  const headers = headerSetOf(rows)
+  return headers.has("identity no") && headers.has("part number")
+}
+
+export function looksLikeOilsExport(rows: unknown[]) {
+  const headers = headerSetOf(rows)
+  const hasJobCard = headers.has("job card no") || headers.has("job card")
+  const hasQuantity =
+    headers.has("quantity") ||
+    headers.has("qty") ||
+    headers.has("litres") ||
+    headers.has("liters")
+
+  return (
+    hasJobCard &&
+    hasQuantity &&
+    !headers.has("part number") &&
+    !headers.has("metric")
+  )
+}
+
 export function indexRowByHeader(row: unknown) {
   const cells = new Map<string, unknown>()
 

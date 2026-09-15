@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "oil_consumption_logs_asset_job_date_idx" ON "oil_consumption_logs" ("asset_id","job_card_no","record_date");
