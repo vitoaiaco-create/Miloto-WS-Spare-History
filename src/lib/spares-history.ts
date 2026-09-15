@@ -1,5 +1,8 @@
+import { and, desc, eq, lte } from "drizzle-orm"
+
 import { db } from "@/db"
-import { normalizeSubEquipment } from "@/lib/spreadsheet"
+import { mileageLogsTable } from "@/db/schema"
+import { normalizeSubEquipment, toIsoDateString } from "@/lib/spreadsheet"
 
 // The set of filters the Spares History page can be queried with. All
 // fields are optional strings straight out of URL search params — empty
@@ -20,6 +23,11 @@ export function hasActiveSparesFilters(filters: SparesHistoryFilters) {
   return Object.values(filters).some((value) => Boolean(value?.trim()))
 }
 
+export type RunningKm = {
+  distance: number
+  latestDate: string
+}
+
 // A single row as rendered by `SparesTable`, already shaped/derived for
 // display (dates formatted upstream isn't done here — components format —
 // this just resolves the joined/derived values).
@@ -33,13 +41,55 @@ export type SparesHistoryRow = {
   quantity: number
   priceUsd: number | null
   amountUsd: number | null
-  runningKm: number | null
+  distance: number | null
+  latestDate: string | null
+}
+
+// KM the asset has covered since the spare was fitted: newest odometer
+// reading minus the reading on (or just before) the outward date. Returns
+// null when either log is missing, so the table can render an em dash
+// rather than inventing a figure.
+//
+// `assetId` is the integer FK on `mileageLogsTable` (the spare's already-
+// resolved `mechanicalSparesTable.assetId`), not the fleet-number string.
+export async function calculateRunningKm(
+  assetId: number,
+  outwardDate: Date
+): Promise<RunningKm | null> {
+  const outwardDateIso = toIsoDateString(outwardDate)
+
+  const [[latestLog], [baselineLog]] = await Promise.all([
+    db
+      .select()
+      .from(mileageLogsTable)
+      .where(eq(mileageLogsTable.assetId, assetId))
+      .orderBy(desc(mileageLogsTable.date))
+      .limit(1),
+    db
+      .select()
+      .from(mileageLogsTable)
+      .where(
+        and(
+          eq(mileageLogsTable.assetId, assetId),
+          lte(mileageLogsTable.date, outwardDateIso)
+        )
+      )
+      .orderBy(desc(mileageLogsTable.date))
+      .limit(1),
+  ])
+
+  if (!latestLog || !baselineLog) return null
+
+  return {
+    distance: Number(latestLog.odometer) - Number(baselineLog.odometer),
+    latestDate: latestLog.date,
+  }
 }
 
 // Reads `mechanicalSparesTable` (joined to `assetsTable` via the `asset`
 // relation from `src/db/relations.ts`) filtered per the Spares History
-// filter bar, and enriches each row with the fleet's running KM at the
-// time of fitment (derived from `mileageLogsTable`).
+// filter bar, and enriches each row with the KM covered since fitment
+// (`calculateRunningKm` against `mileageLogsTable`).
 //
 // Ingestion pins the outward report's "Sub Equipment" column to `tier1`
 // (see `src/lib/validations.ts`), which is also the value the table
@@ -78,43 +128,19 @@ export async function getSparesHistory(
     orderBy: { fitmentDate: "desc" },
   })
 
-  const assetIds = [...new Set(spares.map((spare) => spare.assetId))]
+  // Many lines share an asset and outward date, so identical lookups reuse
+  // the in-flight `calculateRunningKm` promise instead of hitting the DB
+  // twice for the same pair.
+  const runningKmByKey = new Map<string, Promise<RunningKm | null>>()
 
-  const mileageLogs =
-    assetIds.length > 0
-      ? await db.query.mileageLogsTable.findMany({
-          where: { assetId: { in: assetIds } },
-          orderBy: { date: "asc" },
-        })
-      : []
+  function runningKmFor(assetId: number, outwardDate: Date) {
+    const key = `${assetId}:${toIsoDateString(outwardDate)}`
+    const existing = runningKmByKey.get(key)
+    if (existing) return existing
 
-  const mileageLogsByAsset = new Map<
-    number,
-    { date: string; odometer: string }[]
-  >()
-  for (const log of mileageLogs) {
-    const existing = mileageLogsByAsset.get(log.assetId)
-    if (existing) {
-      existing.push(log)
-    } else {
-      mileageLogsByAsset.set(log.assetId, [log])
-    }
-  }
-
-  // Mileage logs are ordered ascending by date, so the running KM at
-  // fitment time is the odometer reading from the latest log dated at or
-  // before the fitment date.
-  function findRunningKm(assetId: number, fitmentDate: string) {
-    const logs = mileageLogsByAsset.get(assetId)
-    if (!logs) return null
-
-    let closest: { date: string; odometer: string } | null = null
-    for (const log of logs) {
-      if (log.date > fitmentDate) break
-      closest = log
-    }
-
-    return closest ? Number(closest.odometer) : null
+    const pending = calculateRunningKm(assetId, outwardDate)
+    runningKmByKey.set(key, pending)
+    return pending
   }
 
   // `numeric()` columns come back as strings, and the dollar columns are
@@ -124,16 +150,26 @@ export async function getSparesHistory(
     return value === null ? null : Number(value)
   }
 
-  return spares.map((spare) => ({
-    id: spare.id,
-    fitmentDate: spare.fitmentDate,
-    materialName: spare.materialName,
-    identityNo: spare.asset.assetName,
-    partNumber: spare.partNumber,
-    subEquipment: spare.tier1,
-    quantity: Number(spare.quantity),
-    priceUsd: toNullableNumber(spare.priceUsd),
-    amountUsd: toNullableNumber(spare.costUsd),
-    runningKm: findRunningKm(spare.assetId, spare.fitmentDate),
-  }))
+  return Promise.all(
+    spares.map(async (spare) => {
+      const runningKm = await runningKmFor(
+        spare.assetId,
+        new Date(`${spare.fitmentDate}T00:00:00.000Z`)
+      )
+
+      return {
+        id: spare.id,
+        fitmentDate: spare.fitmentDate,
+        materialName: spare.materialName,
+        identityNo: spare.asset.assetName,
+        partNumber: spare.partNumber,
+        subEquipment: spare.tier1,
+        quantity: Number(spare.quantity),
+        priceUsd: toNullableNumber(spare.priceUsd),
+        amountUsd: toNullableNumber(spare.costUsd),
+        distance: runningKm?.distance ?? null,
+        latestDate: runningKm?.latestDate ?? null,
+      }
+    })
+  )
 }

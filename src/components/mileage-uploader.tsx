@@ -6,7 +6,13 @@ import { useRouter } from "next/navigation"
 import Papa from "papaparse"
 import * as XLSX from "xlsx"
 
-import { ingestMileage, type IngestResult, type SkippedRow } from "@/actions/ingestion"
+import { ingestMileage, type IngestResult } from "@/actions/ingestion"
+import {
+  IngestResultDialog,
+  buildIngestDialogResult,
+  ingestErrorDialogResult,
+  type IngestDialogResult,
+} from "@/components/ingest-result-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -24,11 +30,6 @@ import { spreadsheetHeadersOf } from "@/lib/spreadsheet"
 // default, so a file is uploaded in batches instead of one request — see the
 // matching constant in `src/components/data-uploader.tsx`.
 const IMPORT_BATCH_SIZE = 500
-
-// How many created fleet numbers / rejected rows a toast names before it
-// summarizes the rest.
-const MAX_LISTED_ASSETS = 8
-const MAX_LISTED_SKIPPED_ROWS = 3
 
 // Excel and Papa Parse both emit a trailing all-empty row for a file that
 // ends in a blank line; importing it would fail validation on every column.
@@ -58,31 +59,6 @@ async function parseWorkbook(file: File) {
   return XLSX.utils.sheet_to_json(worksheet) as unknown[]
 }
 
-function describeCreatedAssets(createdAssets: string[]) {
-  if (createdAssets.length === 0) return ""
-
-  const listed = createdAssets.slice(0, MAX_LISTED_ASSETS).join(", ")
-  const unlisted = createdAssets.length - MAX_LISTED_ASSETS
-
-  return ` Registered ${createdAssets.length} new asset${
-    createdAssets.length === 1 ? "" : "s"
-  }: ${listed}${unlisted > 0 ? `, and ${unlisted} more` : ""}.`
-}
-
-function describeSkippedRows(skipped: SkippedRow[]) {
-  if (skipped.length === 0) return ""
-
-  const listed = skipped
-    .slice(0, MAX_LISTED_SKIPPED_ROWS)
-    .map(({ rowNumber, error }) => `row ${rowNumber} — ${error}`)
-    .join("; ")
-  const unlisted = skipped.length - MAX_LISTED_SKIPPED_ROWS
-
-  return ` Skipped ${skipped.length} row${
-    skipped.length === 1 ? "" : "s"
-  }: ${listed}${unlisted > 0 ? `; and ${unlisted} more` : ""}.`
-}
-
 function looksLikeSparesExport(rows: unknown[]) {
   const headers = new Set(spreadsheetHeadersOf(rows[0]))
   return headers.has("identity no")
@@ -98,11 +74,14 @@ export function MileageUploader() {
   const router = useRouter()
   const [file, setFile] = useState<File | null>(null)
   const [isImporting, setIsImporting] = useState(false)
+  const [ingestResult, setIngestResult] = useState<IngestDialogResult | null>(
+    null
+  )
 
   async function importRows(rows: unknown[]) {
     let imported = 0
     let duplicates = 0
-    const skipped: SkippedRow[] = []
+    const skipped: IngestResult["skipped"] = []
     const createdAssets = new Set<string>()
 
     for (let start = 0; start < rows.length; start += IMPORT_BATCH_SIZE) {
@@ -124,30 +103,14 @@ export function MileageUploader() {
       }
     }
 
-    const description = [
-      `Imported ${imported} record${imported === 1 ? "" : "s"}.`,
-      duplicates > 0
-        ? ` ${duplicates} record${
-            duplicates === 1 ? " was" : "s were"
-          } already on file and left unchanged.`
-        : "",
-      describeCreatedAssets([...createdAssets]),
-      describeSkippedRows(skipped),
-    ].join("")
-
-    // Nothing written and nothing already on file means the whole batch was
-    // rejected, which is a failure rather than a no-op.
-    const isFailure = imported === 0 && duplicates === 0
-
-    toast.add({
-      title: isFailure
-        ? "Nothing imported"
-        : skipped.length > 0
-          ? "Imported with skipped rows"
-          : "Import successful",
-      description,
-      type: isFailure ? "error" : skipped.length > 0 ? "warning" : "success",
-    })
+    setIngestResult(
+      buildIngestDialogResult({
+        imported,
+        duplicates,
+        skipped,
+        createdAssets: [...createdAssets],
+      })
+    )
 
     // The table is rendered by a Server Component, so it only picks up the
     // new rows once the route re-renders.
@@ -197,14 +160,7 @@ export function MileageUploader() {
 
       await importRows(rows)
     } catch (error) {
-      toast.add({
-        title: "Import failed",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Something went wrong while importing the file.",
-        type: "error",
-      })
+      setIngestResult(ingestErrorDialogResult(error))
     } finally {
       setIsImporting(false)
     }
@@ -238,6 +194,10 @@ export function MileageUploader() {
           </Button>
         </div>
       </CardContent>
+      <IngestResultDialog
+        result={ingestResult}
+        onClose={() => setIngestResult(null)}
+      />
     </Card>
   )
 }

@@ -34,8 +34,8 @@ function formatUsd(value: number | null) {
   return value === null ? "—" : `$${value.toFixed(2)}`
 }
 
-function formatRunningKm(runningKm: number | null) {
-  return runningKm === null ? "—" : runningKm.toLocaleString()
+function formatRunningKm(distance: number | null) {
+  return distance === null ? "—" : distance.toLocaleString("en-US")
 }
 
 // These reports can land with people who have no Miloto account (and no
@@ -90,7 +90,7 @@ function sparesToCsvRows(spares: SparesHistoryRow[]) {
     spare.quantity,
     spare.priceUsd,
     spare.amountUsd,
-    spare.runningKm,
+    spare.distance,
   ])
 }
 
@@ -104,7 +104,7 @@ function sparesToPdfRows(spares: SparesHistoryRow[]) {
     String(spare.quantity),
     formatUsd(spare.priceUsd),
     formatUsd(spare.amountUsd),
-    formatRunningKm(spare.runningKm),
+    formatRunningKm(spare.distance),
   ])
 }
 

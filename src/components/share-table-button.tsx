@@ -23,8 +23,8 @@ function formatUsd(value: number | null) {
   return value === null ? "—" : `$${value.toFixed(2)}`
 }
 
-function formatRunningKm(runningKm: number | null) {
-  return runningKm === null ? "—" : runningKm.toLocaleString()
+function formatRunningKm(distance: number | null) {
+  return distance === null ? "—" : distance.toLocaleString("en-US")
 }
 
 // The exported image can land in front of people with no Miloto account
@@ -212,7 +212,7 @@ export function ShareTableButton({
                   <td className="p-2">{spare.quantity}</td>
                   <td className="p-2">{formatUsd(spare.priceUsd)}</td>
                   <td className="p-2">{formatUsd(spare.amountUsd)}</td>
-                  <td className="p-2">{formatRunningKm(spare.runningKm)}</td>
+                  <td className="p-2">{formatRunningKm(spare.distance)}</td>
                 </tr>
               ))}
             </tbody>
