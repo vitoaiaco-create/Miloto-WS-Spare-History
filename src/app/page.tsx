@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { BarChart3, Droplets, PackageSearch } from "lucide-react";
+import { BarChart3, Droplets, PackageSearch, UploadCloud } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -23,6 +23,10 @@ export default async function Home() {
   }
 
   const allowedModules = sessionClaims?.metadata?.modules || [];
+  // Data Ingestion isn't a module grant like the others — it's gated by the
+  // "admin" role (see src/actions/ingestion.ts and
+  // src/app/data-ingestion/page.tsx), so it's kept out of `allowedModules`.
+  const isAdmin = sessionClaims?.metadata?.role === "admin";
 
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
@@ -39,7 +43,7 @@ export default async function Home() {
       </section>
 
       <section className="mx-auto w-full max-w-7xl px-6 pb-24 sm:px-10 lg:px-16">
-        {allowedModules.length === 0 ? (
+        {allowedModules.length === 0 && !isAdmin ? (
           <Alert>
             <AlertTitle>No modules assigned</AlertTitle>
             <AlertDescription>
@@ -107,6 +111,26 @@ export default async function Home() {
                     <CardDescription className="text-sm leading-relaxed">
                       Track oil changes, servicing schedules, and maintenance
                       intervals across the fleet.
+                    </CardDescription>
+                  </CardContent>
+                </Card>
+              </Link>
+            )}
+
+            {isAdmin && (
+              <Link href="/data-ingestion">
+                <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                  <CardHeader>
+                    <UploadCloud
+                      className="mb-2 size-6 text-foreground"
+                      strokeWidth={1.75}
+                    />
+                    <CardTitle className="text-lg">Data Ingestion</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription className="text-sm leading-relaxed">
+                      Import fleet asset lists, job card reports, and mileage
+                      logs into the database. Admins only.
                     </CardDescription>
                   </CardContent>
                 </Card>

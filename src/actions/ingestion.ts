@@ -46,6 +46,18 @@ export type IngestResult = {
   createdAssets: string[]
 }
 
+// The data ingestion tools write directly into the fleet's asset, spares
+// and mileage tables, so every action here is gated to admins only — see
+// src/app/data-ingestion/page.tsx for the matching UI-level gate and
+// src/proxy.ts for the route-level gate.
+async function requireAdmin() {
+  const { userId, sessionClaims } = await auth()
+
+  if (!userId || sessionClaims?.metadata?.role !== "admin") {
+    throw new Error("Unauthorized: Admin access required")
+  }
+}
+
 function chunk<T>(items: T[], size: number) {
   const chunks: T[][] = []
   for (let index = 0; index < items.length; index += size) {
@@ -190,8 +202,7 @@ function toMileageInsertValues(
 // Bulk-imports the fleet asset list into `assetsTable`. Re-importing is safe:
 // existing fleet numbers are left untouched.
 export async function ingestAssets(input: IngestInput): Promise<IngestResult> {
-  const { userId } = await auth()
-  if (!userId) throw new Error("Unauthorized")
+  await requireAdmin()
 
   const { rows, firstRowNumber } = ingestInputSchema.parse(input)
   const { valid, skipped } = partitionRows(rows, assetRowSchema, firstRowNumber)
@@ -220,8 +231,7 @@ export async function ingestAssets(input: IngestInput): Promise<IngestResult> {
 
 // Bulk-imports the "Job Cards OutWard Report" into `mechanicalSparesTable`.
 export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
-  const { userId } = await auth()
-  if (!userId) throw new Error("Unauthorized")
+  await requireAdmin()
 
   const { rows, firstRowNumber } = ingestInputSchema.parse(input)
   const { valid, skipped } = partitionRows(rows, sparesRowSchema, firstRowNumber)
@@ -269,8 +279,7 @@ export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
 // already on file for an asset/date are skipped, per the unique index in
 // `src/db/schema.ts`, so a re-run tops up rather than failing.
 export async function ingestMileage(input: IngestInput): Promise<IngestResult> {
-  const { userId } = await auth()
-  if (!userId) throw new Error("Unauthorized")
+  await requireAdmin()
 
   const { rows, firstRowNumber } = ingestInputSchema.parse(input)
   const { valid, skipped } = partitionRows(rows, mileageRowSchema, firstRowNumber)

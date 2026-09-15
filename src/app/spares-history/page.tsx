@@ -3,7 +3,6 @@ import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
-import { DataUploader } from "@/components/data-uploader"
 import { ExportTableMenu } from "@/components/export-table-menu"
 import { ShareTableButton } from "@/components/share-table-button"
 import { SparesFilterBar } from "@/components/spares-filter-bar"
@@ -68,8 +67,6 @@ export default async function SparesHistoryPage({
         <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
           Spares History
         </h1>
-
-        <DataUploader />
 
         <SparesFilterBar initialFilters={filters} />
 
