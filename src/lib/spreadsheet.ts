@@ -34,14 +34,24 @@ export function toOptionalNumber(value: unknown) {
   return cleaned === "" ? null : Number(cleaned)
 }
 
-// Header names pick up stray whitespace and change case between report runs,
-// so rows are indexed by a normalized header rather than read by exact key.
+// Header names pick up stray whitespace, a leading UTF-8 BOM (Excel CSVs),
+// and change case between report runs, so rows are indexed by a normalized
+// header rather than read by exact key.
+export function normalizeSpreadsheetHeader(header: string) {
+  return header.replace(/^\uFEFF/, "").trim().toLowerCase()
+}
+
+export function spreadsheetHeadersOf(row: unknown) {
+  if (!row || typeof row !== "object") return []
+  return Object.keys(row).map(normalizeSpreadsheetHeader)
+}
+
 export function indexRowByHeader(row: unknown) {
   const cells = new Map<string, unknown>()
 
   if (row && typeof row === "object") {
     for (const [header, value] of Object.entries(row)) {
-      cells.set(header.trim().toLowerCase(), value)
+      cells.set(normalizeSpreadsheetHeader(header), value)
     }
   }
 

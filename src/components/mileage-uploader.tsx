@@ -6,12 +6,7 @@ import { useRouter } from "next/navigation"
 import Papa from "papaparse"
 import * as XLSX from "xlsx"
 
-import {
-  ingestAssets,
-  ingestSpares,
-  type IngestResult,
-  type SkippedRow,
-} from "@/actions/ingestion"
+import { ingestMileage, type IngestResult, type SkippedRow } from "@/actions/ingestion"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -22,31 +17,12 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { toast } from "@/components/ui/toast"
 import { spreadsheetHeadersOf } from "@/lib/spreadsheet"
 
-const INGEST_ACTIONS = {
-  assets: ingestAssets,
-  spares: ingestSpares,
-} as const
-
-type DataType = keyof typeof INGEST_ACTIONS
-
-const DATA_TYPE_LABELS: Record<DataType, string> = {
-  assets: "Fleet Asset List",
-  spares: "Job Cards Outward Report",
-}
-
 // Rows sent per Server Action call. A Server Action body is capped at 1 MB by
-// default and the mileage log runs to ~36k rows, so a file is uploaded in
-// batches instead of one request.
+// default, so a file is uploaded in batches instead of one request — see the
+// matching constant in `src/components/data-uploader.tsx`.
 const IMPORT_BATCH_SIZE = 500
 
 // How many created fleet numbers / rejected rows a toast names before it
@@ -107,20 +83,23 @@ function describeSkippedRows(skipped: SkippedRow[]) {
   }: ${listed}${unlisted > 0 ? `; and ${unlisted} more` : ""}.`
 }
 
-function looksLikeMileageExport(rows: unknown[]) {
+function looksLikeSparesExport(rows: unknown[]) {
   const headers = new Set(spreadsheetHeadersOf(rows[0]))
-  return headers.has("miloto_no") || headers.has("miloto no")
+  return headers.has("identity no")
 }
 
-export function DataUploader() {
+// Dedicated uploader for the mileage/telemetry export ("Miloto_No", "Date",
+// "Metric", "Value"), mirroring `src/components/data-uploader.tsx`. It's a
+// separate component rather than a third branch of that one because the
+// mileage export always has this one shape — there's no "Data Type" picker
+// to share — and `ingestMileage` (see `src/actions/ingestion.ts`) already
+// filters the file down to its "KM" rows server-side.
+export function MileageUploader() {
   const router = useRouter()
   const [file, setFile] = useState<File | null>(null)
-  const [dataType, setDataType] = useState<DataType>("spares")
   const [isImporting, setIsImporting] = useState(false)
 
   async function importRows(rows: unknown[]) {
-    const ingest = INGEST_ACTIONS[dataType]
-
     let imported = 0
     let duplicates = 0
     const skipped: SkippedRow[] = []
@@ -129,7 +108,7 @@ export function DataUploader() {
     for (let start = 0; start < rows.length; start += IMPORT_BATCH_SIZE) {
       const batch = rows.slice(start, start + IMPORT_BATCH_SIZE)
 
-      const result: IngestResult = await ingest({
+      const result: IngestResult = await ingestMileage({
         // Strips the values that can't cross the Server Action boundary —
         // `xlsx` hands back `Date` objects for real date cells.
         rows: JSON.parse(JSON.stringify(batch)),
@@ -206,11 +185,11 @@ export function DataUploader() {
         return
       }
 
-      if (looksLikeMileageExport(rows)) {
+      if (looksLikeSparesExport(rows)) {
         toast.add({
-          title: "Use the Mileage tab",
+          title: "Use the Spares tab",
           description:
-            "This file has a Miloto_No column, so it is a mileage export. Switch to the Mileage tab and upload it there.",
+            "This file has an Identity No column, so it is a job cards report. Switch to the Spares tab and upload it there.",
           type: "error",
         })
         return
@@ -234,41 +213,19 @@ export function DataUploader() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Import Data</CardTitle>
+        <CardTitle>Import Mileage</CardTitle>
         <CardDescription>
-          Pick the fleet list or job cards report you are uploading, choose a
-          .csv, .xlsx or .xls file, then parse it into the database. Mileage
-          logs belong on the Mileage tab.
+          Upload the mileage/telemetry export (Miloto_No, Date, Metric,
+          Value) as a .csv, .xlsx or .xls file. Only rows whose Metric starts
+          with &quot;KM&quot; are imported as odometer readings.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-[220px_minmax(0,1fr)_auto]">
+        <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="upload-data-type">Data Type</Label>
-            <Select
-              value={dataType}
-              onValueChange={(value) => {
-                if (value) setDataType(value as DataType)
-              }}
-              disabled={isImporting}
-            >
-              <SelectTrigger id="upload-data-type" className="w-full">
-                <SelectValue placeholder="Select data type" />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(DATA_TYPE_LABELS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="upload-file">File</Label>
+            <Label htmlFor="upload-mileage-file">File</Label>
             <Input
-              id="upload-file"
+              id="upload-mileage-file"
               type="file"
               accept=".csv, .xlsx, .xls"
               disabled={isImporting}

@@ -142,27 +142,11 @@ export const sparesRowSchema = z.preprocess((row) => {
 
 export type SparesRow = z.infer<typeof sparesRowSchema>
 
-// A single row of the "Daily Mileage Log", mapped onto the columns of
-// `mileageLogsTable`. The source file's own `asset_id` column is ignored:
-// `assetsTable.id` is `generatedAlwaysAsIdentity`, so assets are matched by
-// name instead of by a number that means nothing outside that export.
-export const mileageRowSchema = z.preprocess((row) => {
-  const cells = indexRowByHeader(row)
-
-  return {
-    fleetNumber: toCanonicalFleetNumber(toTrimmedString(cells.get("asset_name"))),
-    date: parseSpreadsheetDate(cells.get("date")),
-    odometer: toNumber(cells.get("odometer")),
-  }
-}, z.object({
-  fleetNumber: fleetNumberSchema("asset_name"),
-  date: z.date({ error: "Date must be a valid date (DD-MM-YYYY or YYYY-MM-DD)" }),
-  odometer: z
-    .number("Odometer must be a number")
-    .nonnegative("Odometer reading cannot be negative"),
-}))
-
-export type MileageRow = z.infer<typeof mileageRowSchema>
+// The mileage/telemetry export's row schema (`mileageSchema`) lives in
+// `src/actions/ingestion.ts` next to `ingestMileage`, the only place it's
+// used — see that file for why the export needs different handling than the
+// other two schemas here (it's a "tall" report with a Metric/Value pair per
+// row rather than one column per field).
 
 // A single row of the fleet asset list, mapped onto the columns of
 // `assetsTable`. As above, the export's `id` column is ignored.

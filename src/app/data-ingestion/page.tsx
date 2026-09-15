@@ -4,8 +4,10 @@ import Link from "next/link"
 import { redirect } from "next/navigation"
 
 import { DataUploader } from "@/components/data-uploader"
+import { MileageUploader } from "@/components/mileage-uploader"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default async function DataIngestionPage() {
   const { userId, sessionClaims } = await auth()
@@ -35,7 +37,18 @@ export default async function DataIngestionPage() {
         </h1>
 
         {isAdmin ? (
-          <DataUploader />
+          <Tabs defaultValue="spares" className="gap-4">
+            <TabsList>
+              <TabsTrigger value="spares">Spares</TabsTrigger>
+              <TabsTrigger value="mileage">Mileage</TabsTrigger>
+            </TabsList>
+            <TabsContent value="spares">
+              <DataUploader />
+            </TabsContent>
+            <TabsContent value="mileage">
+              <MileageUploader />
+            </TabsContent>
+          </Tabs>
         ) : (
           <Alert variant="destructive">
             <AlertTitle>Access denied</AlertTitle>

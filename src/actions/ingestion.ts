@@ -7,14 +7,16 @@ import { z } from "zod"
 
 import { db } from "@/db"
 import { assetsTable, mechanicalSparesTable, mileageLogsTable } from "@/db/schema"
-import { inferAssetType, toIsoDateString } from "@/lib/spreadsheet"
 import {
-  assetRowSchema,
-  mileageRowSchema,
-  sparesRowSchema,
-  type MileageRow,
-  type SparesRow,
-} from "@/lib/validations"
+  indexRowByHeader,
+  inferAssetType,
+  parseSpreadsheetDate,
+  toCanonicalFleetNumber,
+  toIsoDateString,
+  toNumber,
+  toTrimmedString,
+} from "@/lib/spreadsheet"
+import { assetRowSchema, sparesRowSchema, type SparesRow } from "@/lib/validations"
 
 // Postgres caps a statement at 65535 bound parameters, and the mileage log
 // runs to ~36k rows, so inserts are issued in chunks rather than as one
@@ -188,14 +190,49 @@ function toSpareInsertValues(
   }
 }
 
+// The mileage/telemetry export is a "tall" report: each row is a single
+// metric reading for one asset on one date ("Miloto_No", "Date", "Metric",
+// "Value") rather than one row per odometer reading, and carries metrics
+// `ingestMileage` doesn't care about (engine hours, fuel level, …) alongside
+// the "KM" ones that belong in `mileageLogsTable`. This only validates the
+// row's shape; `ingestMileage` filters down to the "KM" rows afterwards, so
+// a mistyped Miloto_No on an engine-hours row would otherwise register an
+// asset that's never actually used.
+const mileageSchema = z.preprocess((row) => {
+  const cells = indexRowByHeader(row)
+
+  return {
+    // Same canonicalization the "Identity No" column goes through for
+    // spares (see `sparesRowSchema`), so a Miloto_No here resolves to the
+    // same `assetsTable.assetName` those imports create.
+    fleetNumber: toCanonicalFleetNumber(
+      toTrimmedString(cells.get("miloto_no") ?? cells.get("miloto no"))
+    ),
+    date: parseSpreadsheetDate(cells.get("date")),
+    metric: toTrimmedString(cells.get("metric")),
+    value: toNumber(cells.get("value")),
+  }
+}, z.object({
+  fleetNumber: z
+    .string()
+    .min(1, "Miloto_No is required")
+    // Mirrors the `asset_name` varchar width in `src/db/schema.ts`.
+    .max(255, "Miloto_No must be 255 characters or fewer"),
+  date: z.date({ error: "Date must be a valid date (DD/MM/YYYY)" }),
+  metric: z.string().min(1, "Metric is required"),
+  value: z.number("Value must be a number"),
+}))
+
+type MileageCsvRow = z.infer<typeof mileageSchema>
+
 function toMileageInsertValues(
-  row: MileageRow,
+  row: MileageCsvRow,
   assetIdByFleetNumber: Map<string, number>
 ) {
   return {
     assetId: assetIdByFleetNumber.get(row.fleetNumber)!,
     date: toIsoDateString(row.date),
-    odometer: row.odometer.toString(),
+    odometer: row.value.toString(),
   }
 }
 
@@ -275,14 +312,27 @@ export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
   }
 }
 
-// Bulk-imports the "Daily Mileage Log" into `mileageLogsTable`. Readings
-// already on file for an asset/date are skipped, per the unique index in
-// `src/db/schema.ts`, so a re-run tops up rather than failing.
+// Bulk-imports the mileage/telemetry export into `mileageLogsTable`.
+// Readings already on file for an asset/date are skipped, per the unique
+// index in `src/db/schema.ts`, so a re-run tops up rather than failing.
 export async function ingestMileage(input: IngestInput): Promise<IngestResult> {
   await requireAdmin()
 
   const { rows, firstRowNumber } = ingestInputSchema.parse(input)
-  const { valid, skipped } = partitionRows(rows, mileageRowSchema, firstRowNumber)
+  const { valid: parsedRows, skipped } = partitionRows(
+    rows,
+    mileageSchema,
+    firstRowNumber
+  )
+
+  // The export carries one row per metric per asset/date, not one row per
+  // odometer reading — only the "KM" rows (e.g. "KM Reading") are mileage.
+  // The rest (engine hours, fuel level, …) are well-formed rows that just
+  // don't belong in `mileageLogsTable`, so they're dropped here rather than
+  // reported as skipped, which is reserved for rows that failed validation.
+  const valid = parsedRows.filter((row) =>
+    row.metric.toUpperCase().startsWith("KM")
+  )
 
   if (valid.length === 0) {
     return { imported: 0, duplicates: 0, skipped, createdAssets: [] }
