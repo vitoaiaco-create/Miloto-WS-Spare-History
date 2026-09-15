@@ -434,6 +434,7 @@ export async function ingestOils(input: IngestInput): Promise<IngestResult> {
   }
 
   revalidatePath("/data-ingestion")
+  revalidatePath("/oils-and-servicing")
 
   return {
     imported,
@@ -493,6 +494,7 @@ export async function logOilSample(
   }
 
   revalidatePath("/data-ingestion")
+  revalidatePath("/oils-and-servicing")
 
   return { id: inserted.id, fleetNumber }
 }
