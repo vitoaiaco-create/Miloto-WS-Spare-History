@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" /> 
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="brand" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" /> 
+      <stop offset="100%" stop-color="#3b82f6" /> 
+    </linearGradient>
+  </defs>
+  <!-- Dark Slate Background -->
+  <rect width="512" height="512" fill="url(#bg)" />
+  <!-- Outer Hexagon (Mechanical / Workshop / Spares) -->
+  <polygon points="256,86 403,171 403,341 256,426 109,341 109,171" fill="none" stroke="url(#brand)" stroke-width="36" stroke-linejoin="round" />
+  <!-- Inner 'M' (Miloto / Data Intel / Oil) -->
+  <polyline points="160,310 216,210 256,260 306,170 352,280" fill="none" stroke="#fbbf24" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" />
+  <!-- Alert Indicator Dot -->
+  <circle cx="306" cy="170" r="18" fill="#ef4444" />
+</svg>
