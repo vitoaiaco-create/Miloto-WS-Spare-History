@@ -73,8 +73,8 @@ async function requireAdmin() {
   }
 }
 
-// Sample logging is used both by admins on Data Ingestion and by workshop
-// staff on Oils & Servicing. Bulk importers stay admin-only.
+// Sample lifecycle actions are used by workshop staff on Oils & Servicing.
+// Bulk importers stay admin-only.
 async function requireOilSampleAccess() {
   const { userId, sessionClaims } = await auth()
 
@@ -463,71 +463,10 @@ export async function ingestOils(input: IngestInput): Promise<IngestResult> {
   }
 }
 
-const logOilSampleSchema = z.object({
-  assetId: z
-    .string()
-    .trim()
-    .min(1, "Miloto / Asset number is required")
-    .max(255, "Miloto / Asset number must be 255 characters or fewer"),
-  drawnDate: z.coerce.date({ error: "Drawn date must be a valid date" }),
-  odometer: z
-    .number({ error: "Odometer is required" })
-    .int("Odometer must be a whole number of kilometres")
-    .nonnegative("Odometer cannot be negative"),
-})
-
-export type LogOilSampleInput = z.infer<typeof logOilSampleSchema>
-
-export type LogOilSampleResult = {
-  id: string
-  fleetNumber: string
-}
-
 function revalidateOilSamplePaths() {
   revalidatePath("/data-ingestion")
   revalidatePath("/oils-and-servicing")
   revalidatePath("/oils-and-servicing/pipeline")
-}
-
-// Manual oil-sample log from Data Ingestion. Status is always `drawn` here
-// — the Oils dashboard "Request Sample" path starts at `requested` instead.
-// The odometer is the truck reading at draw time and becomes the sample's
-// locked-in compliance baseline. Unlike the bulk importers, an unknown
-// fleet number is rejected rather than registered, so a typo can't
-// silently create a junk asset.
-export async function logOilSample(
-  input: LogOilSampleInput
-): Promise<LogOilSampleResult> {
-  await requireOilSampleAccess()
-
-  const data = logOilSampleSchema.parse(input)
-  const fleetNumber = toCanonicalFleetNumber(data.assetId)
-
-  const [asset] = await selectAssetsByName([fleetNumber])
-
-  if (!asset) {
-    throw new Error(
-      `No fleet asset found for "${fleetNumber}". Check the Miloto number and try again.`
-    )
-  }
-
-  const [inserted] = await db
-    .insert(oilSamplesTable)
-    .values({
-      assetId: asset.id,
-      drawnDate: data.drawnDate,
-      odometer: data.odometer,
-      status: "drawn",
-    })
-    .returning({ id: oilSamplesTable.id })
-
-  if (!inserted) {
-    throw new Error("Failed to log oil sample")
-  }
-
-  revalidateOilSamplePaths()
-
-  return { id: inserted.id, fleetNumber }
 }
 
 const requestOilSampleSchema = z.object({

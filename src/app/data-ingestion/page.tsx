@@ -5,7 +5,6 @@ import { redirect } from "next/navigation"
 
 import { DataUploader } from "@/components/data-uploader"
 import { MileageUploader } from "@/components/mileage-uploader"
-import { OilSampleForm } from "@/components/oil-sample-form"
 import { OilUploader } from "@/components/oil-uploader"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -44,7 +43,6 @@ export default async function DataIngestionPage() {
               <TabsTrigger value="spares">Spares</TabsTrigger>
               <TabsTrigger value="mileage">Mileage</TabsTrigger>
               <TabsTrigger value="oils">Oils Ingestion</TabsTrigger>
-              <TabsTrigger value="oil-sample">Log Oil Sample</TabsTrigger>
             </TabsList>
             <TabsContent value="spares">
               <DataUploader />
@@ -54,9 +52,6 @@ export default async function DataIngestionPage() {
             </TabsContent>
             <TabsContent value="oils">
               <OilUploader />
-            </TabsContent>
-            <TabsContent value="oil-sample">
-              <OilSampleForm />
             </TabsContent>
           </Tabs>
         ) : (
