@@ -38,11 +38,17 @@ export default async function DataIngestionPage() {
         </h1>
 
         {isAdmin ? (
-          <Tabs defaultValue="spares" className="gap-4">
-            <TabsList className="h-auto flex-wrap">
-              <TabsTrigger value="spares">Spares</TabsTrigger>
-              <TabsTrigger value="mileage">Mileage</TabsTrigger>
-              <TabsTrigger value="oils">Oils Ingestion</TabsTrigger>
+          <Tabs defaultValue="spares" className="gap-6">
+            <TabsList className="mx-auto h-12 w-full max-w-2xl group-data-horizontal/tabs:h-12">
+              <TabsTrigger className="px-6 text-base" value="spares">
+                Spares
+              </TabsTrigger>
+              <TabsTrigger className="px-6 text-base" value="mileage">
+                Mileage
+              </TabsTrigger>
+              <TabsTrigger className="px-6 text-base" value="oils">
+                Oils Ingestion
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="spares">
               <DataUploader />

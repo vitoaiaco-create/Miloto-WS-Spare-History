@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   DownloadIcon,
   FileSpreadsheetIcon,
@@ -180,17 +180,91 @@ function csvField(value: string | number | null) {
   return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str
 }
 
-function downloadBlob(blob: Blob, fileName: string) {
+function isShareAbort(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError"
+}
+
+function isIOSLike() {
+  const ua = navigator.userAgent
+  if (/iPhone|iPod|iPad/i.test(ua)) return true
+  // iPadOS 13+ spoofs Macintosh in the UA string.
+  return navigator.maxTouchPoints > 1 && /Macintosh/i.test(ua)
+}
+
+function prefersNativeShare() {
+  return isIOSLike() || /Android/i.test(navigator.userAgent)
+}
+
+async function saveBlob(blob: Blob, fileName: string, mimeType: string) {
+  const file = new File([blob], fileName, { type: mimeType })
+
+  // Phones (especially iOS Safari) ignore programmatic `<a download>` clicks
+  // for blob URLs. The native share sheet is the path that actually delivers
+  // a file the user can save or send.
+  try {
+    if (
+      prefersNativeShare() &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare({ files: [file] })
+    ) {
+      await navigator.share({ files: [file], title: fileName })
+      return
+    }
+  } catch (error) {
+    if (isShareAbort(error)) throw error
+  }
+
   const url = URL.createObjectURL(blob)
+
+  // iOS still ignores `download` when Web Share isn't available; open the
+  // blob as a document so the user can share/save it from Safari.
+  if (isIOSLike()) {
+    window.open(url, "_blank", "noopener")
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    return
+  }
+
   const link = document.createElement("a")
   link.href = url
   link.download = fileName
+  link.rel = "noopener"
+  document.body.appendChild(link)
   link.click()
-  URL.revokeObjectURL(url)
+  link.remove()
+  // Revoking in the same tick cancels the download on some mobile browsers.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500)
 }
 
 function exportFileName(prefix: string, extension: string) {
   return `${prefix}-${new Date().toISOString().slice(0, 10)}.${extension}`
+}
+
+type PdfLibs = {
+  jsPDF: typeof import("jspdf").jsPDF
+  autoTable: typeof import("jspdf-autotable").default
+}
+
+// Cached across every Export menu on the page so opening one column on the
+// pipeline preloads jsPDF for the others. iOS only allows share/download
+// inside a user gesture — awaiting `import()` in the click handler itself
+// would drop that gesture.
+let pdfLibs: PdfLibs | null = null
+let pdfLibsPromise: Promise<PdfLibs> | null = null
+
+function preloadPdfLibs() {
+  if (!pdfLibsPromise) {
+    pdfLibsPromise = Promise.all([import("jspdf"), import("jspdf-autotable")]).then(
+      ([jspdf, autotable]) => {
+        pdfLibs = {
+          jsPDF: jspdf.jsPDF,
+          autoTable: autotable.default,
+        }
+        return pdfLibs
+      }
+    )
+  }
+
+  return pdfLibsPromise
 }
 
 function ExportMenu<T>({
@@ -209,10 +283,15 @@ function ExportMenu<T>({
   compact?: boolean
 }) {
   const [isExporting, setIsExporting] = useState<"csv" | "pdf" | null>(null)
+  const [pdfReady, setPdfReady] = useState(() => pdfLibs !== null)
   const disabled = rows.length === 0 || isExporting !== null
   const headers = columns.map((column) => column.header)
 
-  function exportCsv() {
+  useEffect(() => {
+    void preloadPdfLibs().then(() => setPdfReady(true))
+  }, [])
+
+  async function exportCsv() {
     setIsExporting("csv")
     try {
       const dataRows = rows.map((row) => columns.map((column) => column.csv(row)))
@@ -224,8 +303,14 @@ function ExportMenu<T>({
       const blob = new Blob(["\uFEFF" + lines.join("\r\n")], {
         type: "text/csv;charset=utf-8",
       })
-      downloadBlob(blob, exportFileName(fileNamePrefix, "csv"))
+      await saveBlob(
+        blob,
+        exportFileName(fileNamePrefix, "csv"),
+        "text/csv"
+      )
     } catch (error) {
+      if (isShareAbort(error)) return
+
       toast.add({
         title: "Export failed",
         description:
@@ -243,11 +328,7 @@ function ExportMenu<T>({
     setIsExporting("pdf")
 
     try {
-      // Loaded dynamically so these (fairly large) PDF-rendering libraries
-      // only ship to the client when someone actually exports, rather than
-      // bloating the initial page bundle.
-      const { jsPDF } = await import("jspdf")
-      const { default: autoTable } = await import("jspdf-autotable")
+      const { jsPDF, autoTable } = pdfLibs ?? (await preloadPdfLibs())
 
       const doc = new jsPDF({ orientation: "landscape" })
 
@@ -275,8 +356,14 @@ function ExportMenu<T>({
         headStyles: { fillColor: [39, 39, 42] },
       })
 
-      doc.save(exportFileName(fileNamePrefix, "pdf"))
+      await saveBlob(
+        doc.output("blob"),
+        exportFileName(fileNamePrefix, "pdf"),
+        "application/pdf"
+      )
     } catch (error) {
+      if (isShareAbort(error)) return
+
       toast.add({
         title: "Export failed",
         description:
@@ -322,9 +409,9 @@ function ExportMenu<T>({
           <FileSpreadsheetIcon data-icon="inline-start" />
           Export as CSV
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={exportPdf} disabled={disabled}>
+        <DropdownMenuItem onClick={exportPdf} disabled={disabled || !pdfReady}>
           <FileTextIcon data-icon="inline-start" />
-          Export as PDF
+          {pdfReady ? "Export as PDF" : "Preparing PDF…"}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
