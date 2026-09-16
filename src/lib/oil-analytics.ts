@@ -19,11 +19,12 @@ import {
   oilConsumptionLogsTable,
   oilSamplesTable,
 } from "@/db/schema"
-import type {
-  OilComplianceEvent,
-  OilComplianceStatus,
-  OilHealthRow,
-  OilMetrics,
+import {
+  CRITICAL_SERVICE_INTERVAL,
+  type OilComplianceEvent,
+  type OilComplianceStatus,
+  type OilHealthRow,
+  type OilMetrics,
 } from "@/lib/oil-status"
 import { toIsoDateString } from "@/lib/spreadsheet"
 
@@ -41,7 +42,7 @@ const SERVICE_QUANTITY_LITERS = 35
 // Dual-clock reset: a ≥35 L service or a logged sample keeps the unit
 // compliant below 13 000 km, due soon through 15 000 km, and overdue after.
 const COMPLIANT_KM_LIMIT = 13_000
-const OVERDUE_KM_LIMIT = 15_000
+const OVERDUE_KM_LIMIT = CRITICAL_SERVICE_INTERVAL
 
 // Engine-bearing units that consume engine oil. Trailers are left out of
 // the Oils & Servicing health table — they almost never appear on the
@@ -136,10 +137,17 @@ function toOilMetrics(input: {
       ? input.currentOdometer - input.lastService.odometer
       : null
 
+  const overdueKilometers =
+    kmSinceCompliance === null
+      ? 0
+      : Math.max(0, kmSinceCompliance - CRITICAL_SERVICE_INTERVAL)
+
   return {
     status:
       kmSinceCompliance === null ? null : complianceStatus(kmSinceCompliance),
     kmSinceCompliance,
+    overdueKilometers,
+    totalTopUpLiters: input.totalTopUpLiters,
     burnRate: burnRateLPer1000Km(input.totalTopUpLiters, kmSinceLastService),
     lastEvent: lastComplianceEvent?.lastEvent ?? null,
   }

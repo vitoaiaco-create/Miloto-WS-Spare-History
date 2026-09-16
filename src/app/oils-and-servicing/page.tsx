@@ -3,12 +3,14 @@ import { AlertTriangle, ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
+import { ExportOilHealthMenu } from "@/components/export-table-menu"
 import { FleetStatusDonut } from "@/components/fleet-status-donut"
 import { OilHealthTable } from "@/components/oil-health-table"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -99,9 +101,12 @@ export default async function OilsAndServicingPage() {
           <CardHeader>
             <CardTitle>Priority roster</CardTitle>
             <CardDescription>
-              Overdue units first, then due soon. Compliant assets sit at the
-              bottom.
+              Sorted by overdue kilometres, high to low. Click a column header
+              to change the order.
             </CardDescription>
+            <CardAction>
+              <ExportOilHealthMenu rows={rows} />
+            </CardAction>
           </CardHeader>
           <CardContent>
             <OilHealthTable rows={rows} />

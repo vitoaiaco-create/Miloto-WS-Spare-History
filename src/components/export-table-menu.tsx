@@ -16,6 +16,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { toast } from "@/components/ui/toast"
+import {
+  oilComplianceStatusLabel,
+  type OilHealthRow,
+} from "@/lib/oil-status"
 import type {
   SparesHistoryFilters,
   SparesHistoryRow,
@@ -38,6 +42,25 @@ function formatRunningKm(distance: number | null) {
   return distance === null ? "—" : distance.toLocaleString("en-US")
 }
 
+function formatInteger(value: number) {
+  return Math.round(value).toLocaleString("en-US")
+}
+
+function formatBurnRate(value: number | null) {
+  return value === null
+    ? "—"
+    : value.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })
+}
+
+function lastEventLabel(lastEvent: OilHealthRow["lastEvent"]) {
+  if (lastEvent === "sample") return "Sample"
+  if (lastEvent === "service") return "Service"
+  return "—"
+}
+
 // These reports can land with people who have no Miloto account (and no
 // way to see the filter bar), so — same as the Share image export — the
 // active filters get baked into the document itself.
@@ -58,16 +81,92 @@ function describeFilters(filters: SparesHistoryFilters) {
   return parts.join("   •   ")
 }
 
-const COLUMN_HEADERS = [
-  "Outward Date",
-  "Material Name",
-  "Identity No",
-  "Part Number",
-  "Sub Equipment",
-  "Quantity",
-  "Price ($)",
-  "Amount ($)",
-  "Running KM",
+type ExportColumn<T> = {
+  header: string
+  csv: (row: T) => string | number | null
+  pdf: (row: T) => string
+}
+
+const SPARES_COLUMNS: ExportColumn<SparesHistoryRow>[] = [
+  {
+    header: "Outward Date",
+    csv: (spare) => formatDate(spare.fitmentDate),
+    pdf: (spare) => formatDate(spare.fitmentDate),
+  },
+  {
+    header: "Material Name",
+    csv: (spare) => spare.materialName,
+    pdf: (spare) => spare.materialName,
+  },
+  {
+    header: "Identity No",
+    csv: (spare) => spare.identityNo,
+    pdf: (spare) => spare.identityNo,
+  },
+  {
+    header: "Part Number",
+    csv: (spare) => spare.partNumber,
+    pdf: (spare) => spare.partNumber,
+  },
+  {
+    header: "Sub Equipment",
+    csv: (spare) => spare.subEquipment,
+    pdf: (spare) => spare.subEquipment,
+  },
+  {
+    header: "Quantity",
+    csv: (spare) => spare.quantity,
+    pdf: (spare) => String(spare.quantity),
+  },
+  {
+    header: "Price ($)",
+    csv: (spare) => spare.priceUsd,
+    pdf: (spare) => formatUsd(spare.priceUsd),
+  },
+  {
+    header: "Amount ($)",
+    csv: (spare) => spare.amountUsd,
+    pdf: (spare) => formatUsd(spare.amountUsd),
+  },
+  {
+    header: "Running KM",
+    csv: (spare) => spare.distance,
+    pdf: (spare) => formatRunningKm(spare.distance),
+  },
+]
+
+const OIL_HEALTH_COLUMNS: ExportColumn<OilHealthRow>[] = [
+  {
+    header: "Asset ID",
+    csv: (row) => row.assetName,
+    pdf: (row) => row.assetName,
+  },
+  {
+    header: "Status",
+    csv: (row) => (row.status ? oilComplianceStatusLabel(row.status) : ""),
+    pdf: (row) => (row.status ? oilComplianceStatusLabel(row.status) : "—"),
+  },
+  {
+    header: "Last Event",
+    csv: (row) => lastEventLabel(row.lastEvent),
+    pdf: (row) => lastEventLabel(row.lastEvent),
+  },
+  {
+    header: "Overdue KM",
+    csv: (row) => Math.round(row.overdueKilometers),
+    pdf: (row) => formatInteger(row.overdueKilometers),
+  },
+  {
+    header: "Total Top-up (L)",
+    csv: (row) => Math.round(row.totalTopUpLiters),
+    pdf: (row) => formatInteger(row.totalTopUpLiters),
+  },
+  {
+    header: "Burn Rate (L/1000km)",
+    csv: (row) =>
+      row.burnRate === null ? null : Number(row.burnRate.toFixed(2)),
+    pdf: (row) => formatBurnRate(row.burnRate),
+  },
 ]
 
 // Quotes a CSV field only when it needs it (contains a comma, quote, or
@@ -75,37 +174,6 @@ const COLUMN_HEADERS = [
 function csvField(value: string | number | null) {
   const str = value === null ? "" : String(value)
   return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str
-}
-
-// Kept as raw numbers (rather than `$`-formatted strings) so the CSV stays
-// usable for spreadsheet math — unlike the PDF/image exports, which format
-// for reading rather than recalculation.
-function sparesToCsvRows(spares: SparesHistoryRow[]) {
-  return spares.map((spare) => [
-    formatDate(spare.fitmentDate),
-    spare.materialName,
-    spare.identityNo,
-    spare.partNumber,
-    spare.subEquipment,
-    spare.quantity,
-    spare.priceUsd,
-    spare.amountUsd,
-    spare.distance,
-  ])
-}
-
-function sparesToPdfRows(spares: SparesHistoryRow[]) {
-  return spares.map((spare) => [
-    formatDate(spare.fitmentDate),
-    spare.materialName,
-    spare.identityNo,
-    spare.partNumber,
-    spare.subEquipment,
-    String(spare.quantity),
-    formatUsd(spare.priceUsd),
-    formatUsd(spare.amountUsd),
-    formatRunningKm(spare.distance),
-  ])
 }
 
 function downloadBlob(blob: Blob, fileName: string) {
@@ -117,24 +185,32 @@ function downloadBlob(blob: Blob, fileName: string) {
   URL.revokeObjectURL(url)
 }
 
-function exportFileName(extension: string) {
-  return `spares-history-${new Date().toISOString().slice(0, 10)}.${extension}`
+function exportFileName(prefix: string, extension: string) {
+  return `${prefix}-${new Date().toISOString().slice(0, 10)}.${extension}`
 }
 
-export function ExportTableMenu({
-  spares,
-  filters,
+function ExportMenu<T>({
+  rows,
+  columns,
+  title,
+  fileNamePrefix,
+  description,
 }: {
-  spares: SparesHistoryRow[]
-  filters: SparesHistoryFilters
+  rows: T[]
+  columns: ExportColumn<T>[]
+  title: string
+  fileNamePrefix: string
+  description?: string
 }) {
   const [isExporting, setIsExporting] = useState<"csv" | "pdf" | null>(null)
-  const disabled = spares.length === 0 || isExporting !== null
+  const disabled = rows.length === 0 || isExporting !== null
+  const headers = columns.map((column) => column.header)
 
   function exportCsv() {
     setIsExporting("csv")
     try {
-      const lines = [COLUMN_HEADERS, ...sparesToCsvRows(spares)].map((row) =>
+      const dataRows = rows.map((row) => columns.map((column) => column.csv(row)))
+      const lines = [headers, ...dataRows].map((row) =>
         row.map(csvField).join(",")
       )
       // Leading BOM so Excel opens the file as UTF-8 rather than guessing
@@ -142,7 +218,7 @@ export function ExportTableMenu({
       const blob = new Blob(["\uFEFF" + lines.join("\r\n")], {
         type: "text/csv;charset=utf-8",
       })
-      downloadBlob(blob, exportFileName("csv"))
+      downloadBlob(blob, exportFileName(fileNamePrefix, "csv"))
     } catch (error) {
       toast.add({
         title: "Export failed",
@@ -168,33 +244,32 @@ export function ExportTableMenu({
       const { default: autoTable } = await import("jspdf-autotable")
 
       const doc = new jsPDF({ orientation: "landscape" })
-      const filterSummary = describeFilters(filters)
 
       doc.setFontSize(16)
-      doc.text("Spares History", 14, 15)
+      doc.text(title, 14, 15)
 
       doc.setFontSize(9)
       doc.setTextColor(90)
-      if (filterSummary) {
-        doc.text(filterSummary, 14, 21)
+      if (description) {
+        doc.text(description, 14, 21)
       }
       doc.text(
-        `Generated ${new Date().toLocaleString()} \u00b7 Miloto WS Spare History \u00b7 ${spares.length} row${
-          spares.length === 1 ? "" : "s"
+        `Generated ${new Date().toLocaleString()} \u00b7 Miloto WS Spare History \u00b7 ${rows.length} row${
+          rows.length === 1 ? "" : "s"
         }`,
         14,
-        filterSummary ? 26 : 21
+        description ? 26 : 21
       )
 
       autoTable(doc, {
-        startY: filterSummary ? 31 : 26,
-        head: [COLUMN_HEADERS],
-        body: sparesToPdfRows(spares),
+        startY: description ? 31 : 26,
+        head: [headers],
+        body: rows.map((row) => columns.map((column) => column.pdf(row))),
         styles: { fontSize: 8 },
         headStyles: { fillColor: [39, 39, 42] },
       })
 
-      doc.save(exportFileName("pdf"))
+      doc.save(exportFileName(fileNamePrefix, "pdf"))
     } catch (error) {
       toast.add({
         title: "Export failed",
@@ -232,5 +307,34 @@ export function ExportTableMenu({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+export function ExportTableMenu({
+  spares,
+  filters,
+}: {
+  spares: SparesHistoryRow[]
+  filters: SparesHistoryFilters
+}) {
+  return (
+    <ExportMenu
+      rows={spares}
+      columns={SPARES_COLUMNS}
+      title="Spares History"
+      fileNamePrefix="spares-history"
+      description={describeFilters(filters) || undefined}
+    />
+  )
+}
+
+export function ExportOilHealthMenu({ rows }: { rows: OilHealthRow[] }) {
+  return (
+    <ExportMenu
+      rows={rows}
+      columns={OIL_HEALTH_COLUMNS}
+      title="Oils & Servicing"
+      fileNamePrefix="oils-and-servicing"
+    />
   )
 }

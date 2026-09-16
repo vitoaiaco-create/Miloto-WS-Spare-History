@@ -5,9 +5,15 @@ export type OilComplianceEvent = "service" | "sample"
 // treats the unit as a critical burner.
 export const CRITICAL_BURN_RATE = 3.0
 
+// Full-service interval in kilometres. Anything beyond this since the last
+// compliance event is overdue; `overdueKilometers` is the surplus.
+export const CRITICAL_SERVICE_INTERVAL = 15_000
+
 export type OilMetrics = {
   status: OilComplianceStatus | null
   kmSinceCompliance: number | null
+  overdueKilometers: number
+  totalTopUpLiters: number
   burnRate: number | null
   lastEvent: OilComplianceEvent | null
 }
