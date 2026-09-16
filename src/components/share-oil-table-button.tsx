@@ -6,17 +6,29 @@ import { CameraIcon, Loader2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/toast"
 
-export function ShareTableButton() {
+export function ShareTableButton({
+  targetId = "oils-priority-table",
+  compact = false,
+  fileName = "oils-roster.png",
+  shareTitle = "Priority Roster",
+  notFoundDescription = "Could not find the priority roster table.",
+}: {
+  targetId?: string
+  compact?: boolean
+  fileName?: string
+  shareTitle?: string
+  notFoundDescription?: string
+} = {}) {
   const [isSharing, setIsSharing] = useState(false)
 
   async function handleShare() {
     if (isSharing) return
 
-    const element = document.getElementById("oils-priority-table")
+    const element = document.getElementById(targetId)
     if (!element) {
       toast.add({
         title: "Share failed",
-        description: "Could not find the priority roster table.",
+        description: notFoundDescription,
         type: "error",
       })
       return
@@ -45,7 +57,7 @@ export function ShareTableButton() {
       )
       if (!blob) throw new Error("Could not generate an image of the table.")
 
-      const file = new File([blob], "oils-roster.png", { type: "image/png" })
+      const file = new File([blob], fileName, { type: "image/png" })
 
       if (
         typeof navigator.canShare === "function" &&
@@ -53,7 +65,7 @@ export function ShareTableButton() {
       ) {
         await navigator.share({
           files: [file],
-          title: "Priority Roster",
+          title: shareTitle,
         })
         return
       }
@@ -61,7 +73,7 @@ export function ShareTableButton() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement("a")
       link.href = url
-      link.download = "oils-roster.png"
+      link.download = fileName
       link.click()
       URL.revokeObjectURL(url)
 
@@ -90,16 +102,29 @@ export function ShareTableButton() {
   return (
     <Button
       type="button"
-      variant="outline"
+      variant={compact ? "ghost" : "outline"}
+      size={compact ? "icon" : "default"}
       disabled={isSharing}
       onClick={handleShare}
+      aria-label={compact ? `Share ${shareTitle}` : undefined}
     >
       {isSharing ? (
-        <Loader2Icon data-icon="inline-start" className="animate-spin" />
+        <Loader2Icon
+          data-icon={compact ? undefined : "inline-start"}
+          className="animate-spin"
+        />
       ) : (
-        <CameraIcon data-icon="inline-start" />
+        <CameraIcon data-icon={compact ? undefined : "inline-start"} />
       )}
-      {isSharing ? "Preparing…" : "Share Roster"}
+      {compact ? (
+        <span className="sr-only">
+          {isSharing ? "Preparing…" : `Share ${shareTitle}`}
+        </span>
+      ) : isSharing ? (
+        "Preparing…"
+      ) : (
+        "Share Roster"
+      )}
     </Button>
   )
 }

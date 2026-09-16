@@ -199,12 +199,14 @@ function ExportMenu<T>({
   title,
   fileNamePrefix,
   description,
+  compact = false,
 }: {
   rows: T[]
   columns: ExportColumn<T>[]
   title: string
   fileNamePrefix: string
   description?: string
+  compact?: boolean
 }) {
   const [isExporting, setIsExporting] = useState<"csv" | "pdf" | null>(null)
   const disabled = rows.length === 0 || isExporting !== null
@@ -291,14 +293,29 @@ function ExportMenu<T>({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button type="button" variant="outline" disabled={disabled} />}
+        render={
+          <Button
+            type="button"
+            variant={compact ? "ghost" : "outline"}
+            size={compact ? "icon" : "default"}
+            disabled={disabled}
+            aria-label={compact ? `Export ${title}` : undefined}
+          />
+        }
       >
         {isExporting ? (
-          <Loader2Icon data-icon="inline-start" className="animate-spin" />
+          <Loader2Icon
+            data-icon={compact ? undefined : "inline-start"}
+            className="animate-spin"
+          />
         ) : (
-          <DownloadIcon data-icon="inline-start" />
+          <DownloadIcon data-icon={compact ? undefined : "inline-start"} />
         )}
-        Export
+        {compact ? (
+          <span className="sr-only">Export {title}</span>
+        ) : (
+          "Export"
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem onClick={exportCsv} disabled={disabled}>
@@ -332,13 +349,87 @@ export function ExportTableMenu({
   )
 }
 
-export function ExportOilHealthMenu({ rows }: { rows: OilHealthRow[] }) {
+export function ExportOilHealthMenu({
+  rows,
+  compact = false,
+  title = "Oils & Servicing",
+  fileNamePrefix = "oils-and-servicing",
+}: {
+  rows: OilHealthRow[]
+  compact?: boolean
+  title?: string
+  fileNamePrefix?: string
+}) {
   return (
     <ExportMenu
       rows={rows}
       columns={OIL_HEALTH_COLUMNS}
-      title="Oils & Servicing"
-      fileNamePrefix="oils-and-servicing"
+      title={title}
+      fileNamePrefix={fileNamePrefix}
+      compact={compact}
+    />
+  )
+}
+
+export type PipelineExportRow = {
+  assetId: number
+  assetName: string
+  status: string
+  createdAt: string
+}
+
+const PIPELINE_STATUS_LABEL: Record<string, string> = {
+  requested: "Requested",
+  drawn: "Drawn",
+  sent: "Sent to Lab",
+  received: "Results Received",
+}
+
+function formatPipelineTimestamp(iso: string) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString("en-GB")
+}
+
+const PIPELINE_COLUMNS: ExportColumn<PipelineExportRow>[] = [
+  {
+    header: "Asset ID",
+    csv: (row) => row.assetName,
+    pdf: (row) => row.assetName,
+  },
+  {
+    header: "Status",
+    csv: (row) => PIPELINE_STATUS_LABEL[row.status] ?? row.status,
+    pdf: (row) => PIPELINE_STATUS_LABEL[row.status] ?? row.status,
+  },
+  {
+    header: "Requested",
+    csv: (row) => formatPipelineTimestamp(row.createdAt),
+    pdf: (row) => formatPipelineTimestamp(row.createdAt),
+  },
+  {
+    header: "Internal Asset ID",
+    csv: (row) => row.assetId,
+    pdf: (row) => String(row.assetId),
+  },
+]
+
+export function ExportPipelineColumnMenu({
+  rows,
+  columnTitle,
+}: {
+  rows: PipelineExportRow[]
+  columnTitle: string
+}) {
+  const slug = columnTitle.toLowerCase().replace(/\s+/g, "-")
+
+  return (
+    <ExportMenu
+      rows={rows}
+      columns={PIPELINE_COLUMNS}
+      title={`Sampling pipeline — ${columnTitle}`}
+      fileNamePrefix={`sampling-pipeline-${slug}`}
+      compact
     />
   )
 }

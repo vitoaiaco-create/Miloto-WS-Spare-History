@@ -2,24 +2,35 @@
 
 import { useState } from "react"
 import { formatDistanceToNow } from "date-fns"
+import { Trash2, Undo2 } from "lucide-react"
 
-import { advanceSampleStatus } from "@/actions/ingestion"
+import {
+  advanceSampleStatus,
+  deleteSampleRequest,
+  reverseSampleStatus,
+} from "@/actions/ingestion"
+import { ExportPipelineColumnMenu } from "@/components/export-table-menu"
+import { ShareTableButton } from "@/components/share-oil-table-button"
 import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
 import { toast } from "@/components/ui/toast"
 
 export const SAMPLE_PIPELINE_COLUMNS = [
-  { status: "requested", title: "Requested" },
-  { status: "drawn", title: "Drawn" },
-  { status: "sent", title: "Sent to Lab" },
-  { status: "received", title: "Results Received" },
+  { id: "requested", status: "requested", title: "Requested", emptyLabel: "No samples" },
+  { id: "drawn", status: "drawn", title: "Drawn", emptyLabel: "No samples" },
+  { id: "sent", status: "sent", title: "Sent to Lab", emptyLabel: "No samples" },
+  {
+    id: "received",
+    status: "received",
+    title: "Results Received",
+    emptyLabel: "No recent results",
+  },
 ] as const
 
 export type PipelineSampleStatus = (typeof SAMPLE_PIPELINE_COLUMNS)[number]["status"]
@@ -39,6 +50,22 @@ const NEXT_STATUS_LABEL: Record<Exclude<PipelineSampleStatus, "received">, strin
     sent: "results received",
   }
 
+const PREV_STATUS_LABEL: Record<Exclude<PipelineSampleStatus, "requested">, string> =
+  {
+    drawn: "requested",
+    sent: "drawn",
+    received: "sent to lab",
+  }
+
+const FORWARD_ACTION_LABEL: Record<
+  Exclude<PipelineSampleStatus, "received">,
+  string
+> = {
+  requested: "Mark as Drawn",
+  drawn: "Mark as Sent",
+  sent: "Mark as Received",
+}
+
 export function SamplingPipelineBoard({ samples }: { samples: PipelineSample[] }) {
   const byStatus = Object.fromEntries(
     SAMPLE_PIPELINE_COLUMNS.map((column) => [
@@ -51,6 +78,7 @@ export function SamplingPipelineBoard({ samples }: { samples: PipelineSample[] }
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
       {SAMPLE_PIPELINE_COLUMNS.map((column) => {
         const columnSamples = byStatus[column.status]
+        const columnDomId = `pipeline-col-${column.id}`
 
         return (
           <section
@@ -61,20 +89,35 @@ export function SamplingPipelineBoard({ samples }: { samples: PipelineSample[] }
               <h2 className="text-sm font-medium tracking-tight">
                 {column.title}
               </h2>
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {columnSamples.length}
-              </span>
+              <div className="flex items-center gap-0.5">
+                <ShareTableButton
+                  targetId={columnDomId}
+                  compact
+                  fileName={`sampling-pipeline-${column.id}.png`}
+                  shareTitle={column.title}
+                  notFoundDescription={`Could not find the ${column.title} column.`}
+                />
+                <ExportPipelineColumnMenu
+                  rows={columnSamples}
+                  columnTitle={column.title}
+                />
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {columnSamples.length}
+                </span>
+              </div>
             </header>
 
-            {columnSamples.length === 0 ? (
-              <p className="px-1 text-sm text-muted-foreground">No samples</p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {columnSamples.map((sample) => (
+            <div id={columnDomId} className="flex flex-col gap-3">
+              {columnSamples.length === 0 ? (
+                <p className="px-1 text-sm text-muted-foreground">
+                  {column.emptyLabel}
+                </p>
+              ) : (
+                columnSamples.map((sample) => (
                   <PipelineSampleCard key={sample.id} sample={sample} />
-                ))}
-              </div>
-            )}
+                ))
+              )}
+            </div>
           </section>
         )
       })}
@@ -83,13 +126,16 @@ export function SamplingPipelineBoard({ samples }: { samples: PipelineSample[] }
 }
 
 function PipelineSampleCard({ sample }: { sample: PipelineSample }) {
-  const [isPending, setIsPending] = useState(false)
+  const [pendingAction, setPendingAction] = useState<
+    "forward" | "reverse" | "delete" | null
+  >(null)
+  const isPending = pendingAction !== null
   const requestedAgo = formatDistanceToNow(new Date(sample.createdAt), {
     addSuffix: true,
   })
 
   async function onAdvance() {
-    setIsPending(true)
+    setPendingAction("forward")
 
     try {
       const result = await advanceSampleStatus(
@@ -118,7 +164,57 @@ function PipelineSampleCard({ sample }: { sample: PipelineSample }) {
         type: "error",
       })
     } finally {
-      setIsPending(false)
+      setPendingAction(null)
+    }
+  }
+
+  async function onReverse() {
+    setPendingAction("reverse")
+
+    try {
+      await reverseSampleStatus(sample.id, sample.status)
+
+      toast.add({
+        title: "Sample updated",
+        description: `${sample.assetName} moved back to ${PREV_STATUS_LABEL[sample.status as Exclude<PipelineSampleStatus, "requested">]}.`,
+        type: "success",
+      })
+    } catch (error) {
+      toast.add({
+        title: "Could not undo sample",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while reversing the sample.",
+        type: "error",
+      })
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function onCancel() {
+    setPendingAction("delete")
+
+    try {
+      await deleteSampleRequest(sample.id)
+
+      toast.add({
+        title: "Sample cancelled",
+        description: `${sample.assetName} request was removed.`,
+        type: "success",
+      })
+    } catch (error) {
+      toast.add({
+        title: "Could not cancel sample",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while cancelling the sample.",
+        type: "error",
+      })
+    } finally {
+      setPendingAction(null)
     }
   }
 
@@ -132,19 +228,37 @@ function PipelineSampleCard({ sample }: { sample: PipelineSample }) {
         <p className="text-xs text-muted-foreground">
           Asset ID {sample.assetId}
         </p>
+        <div className="flex justify-between items-center gap-2 mt-4">
+          {sample.status === "requested" ? (
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={isPending}
+              onClick={onCancel}
+            >
+              <Trash2 data-icon="inline-start" />
+              {pendingAction === "delete" ? "Cancelling…" : "Cancel"}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={isPending}
+              onClick={onReverse}
+            >
+              <Undo2 data-icon="inline-start" />
+              {pendingAction === "reverse" ? "Undoing…" : "Undo"}
+            </Button>
+          )}
+          {sample.status !== "received" ? (
+            <Button size="sm" disabled={isPending} onClick={onAdvance}>
+              {pendingAction === "forward"
+                ? "Moving…"
+                : FORWARD_ACTION_LABEL[sample.status]}
+            </Button>
+          ) : null}
+        </div>
       </CardContent>
-      {sample.status !== "received" ? (
-        <CardFooter>
-          <Button
-            size="sm"
-            className="w-full"
-            disabled={isPending}
-            onClick={onAdvance}
-          >
-            {isPending ? "Moving…" : "Move to Next Stage"}
-          </Button>
-        </CardFooter>
-      ) : null}
     </Card>
   )
 }

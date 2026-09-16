@@ -721,3 +721,141 @@ export async function advanceSampleStatus(
 
   return updated
 }
+
+const PREV_SAMPLE_STATUS: Record<
+  Exclude<SampleStatus, "requested">,
+  SampleStatus
+> = {
+  received: "sent",
+  sent: "drawn",
+  drawn: "requested",
+}
+
+const reverseSampleStatusSchema = z.object({
+  sampleId: z.string().uuid("Sample id must be a valid UUID"),
+  currentStatus: z.enum(SAMPLE_STATUSES),
+})
+
+export type ReverseSampleStatusResult = {
+  id: string
+  status: SampleStatus
+}
+
+// Moves a pipeline card one step backward. Drawn → requested also clears
+// the odometer and drawn date captured when the sample was marked drawn.
+export async function reverseSampleStatus(
+  sampleId: string,
+  currentStatus: string
+): Promise<ReverseSampleStatusResult> {
+  await requireOilSampleAccess()
+
+  const data = reverseSampleStatusSchema.parse({
+    sampleId,
+    currentStatus,
+  })
+
+  if (data.currentStatus === "requested") {
+    throw new Error("This sample is already at the first stage.")
+  }
+
+  const previousStatus = PREV_SAMPLE_STATUS[data.currentStatus]
+
+  const [sample] = await db
+    .select({
+      id: oilSamplesTable.id,
+      status: oilSamplesTable.status,
+    })
+    .from(oilSamplesTable)
+    .where(eq(oilSamplesTable.id, data.sampleId))
+    .limit(1)
+
+  if (!sample) {
+    throw new Error("Oil sample not found.")
+  }
+
+  if (sample.status !== data.currentStatus) {
+    throw new Error("This sample has already moved. Refresh the pipeline.")
+  }
+
+  const [updated] = await db
+    .update(oilSamplesTable)
+    .set(
+      data.currentStatus === "drawn"
+        ? {
+            status: previousStatus,
+            odometer: null,
+            drawnDate: null,
+          }
+        : { status: previousStatus }
+    )
+    .where(
+      and(
+        eq(oilSamplesTable.id, data.sampleId),
+        eq(oilSamplesTable.status, data.currentStatus)
+      )
+    )
+    .returning({
+      id: oilSamplesTable.id,
+      status: oilSamplesTable.status,
+    })
+
+  if (!updated) {
+    throw new Error("Failed to reverse sample status.")
+  }
+
+  revalidateOilSamplePaths()
+
+  return updated
+}
+
+const deleteSampleRequestSchema = z.object({
+  sampleId: z.string().uuid("Sample id must be a valid UUID"),
+})
+
+export type DeleteSampleRequestResult = {
+  id: string
+}
+
+// Cancels a sample that has not yet been drawn by deleting the row.
+export async function deleteSampleRequest(
+  sampleId: string
+): Promise<DeleteSampleRequestResult> {
+  await requireOilSampleAccess()
+
+  const data = deleteSampleRequestSchema.parse({ sampleId })
+
+  const [sample] = await db
+    .select({
+      id: oilSamplesTable.id,
+      status: oilSamplesTable.status,
+    })
+    .from(oilSamplesTable)
+    .where(eq(oilSamplesTable.id, data.sampleId))
+    .limit(1)
+
+  if (!sample) {
+    throw new Error("Oil sample not found.")
+  }
+
+  if (sample.status !== "requested") {
+    throw new Error("Only requested samples can be cancelled.")
+  }
+
+  const [deleted] = await db
+    .delete(oilSamplesTable)
+    .where(
+      and(
+        eq(oilSamplesTable.id, data.sampleId),
+        eq(oilSamplesTable.status, "requested")
+      )
+    )
+    .returning({ id: oilSamplesTable.id })
+
+  if (!deleted) {
+    throw new Error("Failed to cancel sample request.")
+  }
+
+  revalidateOilSamplePaths()
+
+  return deleted
+}

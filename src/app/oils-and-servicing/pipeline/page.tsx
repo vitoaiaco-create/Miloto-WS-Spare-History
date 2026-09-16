@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server"
-import { desc, eq, ne } from "drizzle-orm"
+import { subDays } from "date-fns"
+import { and, desc, eq, gte, inArray, or } from "drizzle-orm"
 import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { redirect } from "next/navigation"
@@ -25,6 +26,11 @@ export default async function SamplingPipelinePage() {
     redirect("/")
   }
 
+  // Active pipeline cards stay on the board indefinitely. Received
+  // samples older than 7 days are left in the table for reporting but
+  // dropped here so the Results Received column does not grow without bound.
+  const receivedArchiveCutoff = subDays(new Date(), 7)
+
   const rows = await db
     .select({
       id: oilSamplesTable.id,
@@ -35,7 +41,15 @@ export default async function SamplingPipelinePage() {
     })
     .from(oilSamplesTable)
     .innerJoin(assetsTable, eq(oilSamplesTable.assetId, assetsTable.id))
-    .where(ne(oilSamplesTable.status, "received"))
+    .where(
+      or(
+        inArray(oilSamplesTable.status, ["requested", "drawn", "sent"]),
+        and(
+          eq(oilSamplesTable.status, "received"),
+          gte(oilSamplesTable.createdAt, receivedArchiveCutoff)
+        )
+      )
+    )
     .orderBy(desc(oilSamplesTable.createdAt))
 
   const samples: PipelineSample[] = rows.map((row) => ({
@@ -65,9 +79,7 @@ export default async function SamplingPipelinePage() {
             Sampling pipeline
           </h1>
           <p className="max-w-2xl text-base leading-7 text-zinc-600 dark:text-zinc-400">
-            Active oil samples from request through to the lab. Marking a
-            sample as drawn pulls the latest odometer from mileage logs —
-            no extra input required.
+            Track every single sample
           </p>
         </div>
 
