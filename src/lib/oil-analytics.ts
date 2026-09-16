@@ -130,7 +130,7 @@ function toOilMetrics(input: {
       ? input.currentOdometer - lastComplianceEvent.odometer
       : null
 
-  const kmSinceLastService =
+  const oilRunningKm =
     input.currentOdometer !== null &&
     input.lastService !== null &&
     input.lastService.odometer !== null
@@ -148,8 +148,10 @@ function toOilMetrics(input: {
     kmSinceCompliance,
     overdueKilometers,
     totalTopUpLiters: input.totalTopUpLiters,
-    burnRate: burnRateLPer1000Km(input.totalTopUpLiters, kmSinceLastService),
+    burnRate: burnRateLPer1000Km(input.totalTopUpLiters, oilRunningKm),
     lastEvent: lastComplianceEvent?.lastEvent ?? null,
+    currentKm: input.currentOdometer,
+    oilRunningKm,
   }
 }
 

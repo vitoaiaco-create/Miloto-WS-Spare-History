@@ -46,6 +46,10 @@ function formatInteger(value: number) {
   return Math.round(value).toLocaleString("en-US")
 }
 
+function formatOptionalKm(value: number | null) {
+  return value === null ? "—" : formatInteger(value)
+}
+
 function formatBurnRate(value: number | null) {
   return value === null
     ? "—"
@@ -53,12 +57,6 @@ function formatBurnRate(value: number | null) {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       })
-}
-
-function lastEventLabel(lastEvent: OilHealthRow["lastEvent"]) {
-  if (lastEvent === "sample") return "Sample"
-  if (lastEvent === "service") return "Service"
-  return "—"
 }
 
 // These reports can land with people who have no Miloto account (and no
@@ -147,14 +145,15 @@ const OIL_HEALTH_COLUMNS: ExportColumn<OilHealthRow>[] = [
     pdf: (row) => (row.status ? oilComplianceStatusLabel(row.status) : "—"),
   },
   {
-    header: "Last Event",
-    csv: (row) => lastEventLabel(row.lastEvent),
-    pdf: (row) => lastEventLabel(row.lastEvent),
+    header: "Current KM",
+    csv: (row) => (row.currentKm === null ? null : Math.round(row.currentKm)),
+    pdf: (row) => formatOptionalKm(row.currentKm),
   },
   {
-    header: "Overdue KM",
-    csv: (row) => Math.round(row.overdueKilometers),
-    pdf: (row) => formatInteger(row.overdueKilometers),
+    header: "Oil Running KM",
+    csv: (row) =>
+      row.oilRunningKm === null ? null : Math.round(row.oilRunningKm),
+    pdf: (row) => formatOptionalKm(row.oilRunningKm),
   },
   {
     header: "Total Top-up (L)",
@@ -166,6 +165,11 @@ const OIL_HEALTH_COLUMNS: ExportColumn<OilHealthRow>[] = [
     csv: (row) =>
       row.burnRate === null ? null : Number(row.burnRate.toFixed(2)),
     pdf: (row) => formatBurnRate(row.burnRate),
+  },
+  {
+    header: "Overdue KM",
+    csv: (row) => Math.round(row.overdueKilometers),
+    pdf: (row) => formatInteger(row.overdueKilometers),
   },
 ]
 

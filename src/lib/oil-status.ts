@@ -16,6 +16,8 @@ export type OilMetrics = {
   totalTopUpLiters: number
   burnRate: number | null
   lastEvent: OilComplianceEvent | null
+  currentKm: number | null
+  oilRunningKm: number | null
 }
 
 export type OilHealthRow = {

@@ -6,6 +6,7 @@ import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon } from "lucide-react"
 import { requestOilSample } from "@/actions/ingestion"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Table,
   TableBody,
@@ -23,7 +24,6 @@ import { toast } from "@/components/ui/toast"
 import {
   CRITICAL_BURN_RATE,
   oilComplianceStatusLabel,
-  type OilComplianceEvent,
   type OilComplianceStatus,
   type OilHealthRow,
 } from "@/lib/oil-status"
@@ -31,10 +31,11 @@ import {
 type SortColumn =
   | "assetName"
   | "status"
-  | "lastEvent"
-  | "overdueKilometers"
+  | "currentKm"
+  | "oilRunningKm"
   | "totalTopUpLiters"
   | "burnRate"
+  | "overdueKilometers"
 
 type SortDirection = "asc" | "desc"
 
@@ -45,9 +46,11 @@ const STATUS_SORT_RANK: Record<OilComplianceStatus, number> = {
 }
 
 const NUMERIC_SORT_COLUMNS: SortColumn[] = [
-  "overdueKilometers",
+  "currentKm",
+  "oilRunningKm",
   "totalTopUpLiters",
   "burnRate",
+  "overdueKilometers",
 ]
 
 function formatBurnRate(value: number | null) {
@@ -61,6 +64,10 @@ function formatBurnRate(value: number | null) {
 
 function formatInteger(value: number) {
   return Math.round(value).toLocaleString("en-US")
+}
+
+function formatOptionalKm(value: number | null) {
+  return value === null ? "—" : formatInteger(value)
 }
 
 function statusVariant(status: OilComplianceStatus) {
@@ -77,10 +84,6 @@ function statusClassName(status: OilComplianceStatus) {
     return "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
   }
   return undefined
-}
-
-function lastEventLabel(lastEvent: OilComplianceEvent) {
-  return lastEvent === "sample" ? "Sample" : "Service"
 }
 
 function needsSampleRequest(status: OilComplianceStatus | null) {
@@ -112,17 +115,20 @@ function compareRows(
       result = aRank - bRank
       break
     }
-    case "lastEvent":
-      result = (a.lastEvent ?? "").localeCompare(b.lastEvent ?? "")
+    case "currentKm":
+      result = (a.currentKm ?? -1) - (b.currentKm ?? -1)
       break
-    case "overdueKilometers":
-      result = a.overdueKilometers - b.overdueKilometers
+    case "oilRunningKm":
+      result = (a.oilRunningKm ?? -1) - (b.oilRunningKm ?? -1)
       break
     case "totalTopUpLiters":
       result = a.totalTopUpLiters - b.totalTopUpLiters
       break
     case "burnRate":
       result = (a.burnRate ?? -1) - (b.burnRate ?? -1)
+      break
+    case "overdueKilometers":
+      result = a.overdueKilometers - b.overdueKilometers
       break
   }
 
@@ -250,12 +256,24 @@ function BurnRateCell({ burnRate }: { burnRate: number | null }) {
 }
 
 export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
+  const [assetFilter, setAssetFilter] = useState("")
   const [sortColumn, setSortColumn] = useState<SortColumn>("overdueKilometers")
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
 
+  const filteredRoster = useMemo(
+    () =>
+      rows.filter((asset) =>
+        asset.assetName.toLowerCase().includes(assetFilter.toLowerCase())
+      ),
+    [rows, assetFilter]
+  )
+
   const sortedRows = useMemo(
-    () => [...rows].sort((a, b) => compareRows(a, b, sortColumn, sortDirection)),
-    [rows, sortColumn, sortDirection]
+    () =>
+      [...filteredRoster].sort((a, b) =>
+        compareRows(a, b, sortColumn, sortDirection)
+      ),
+    [filteredRoster, sortColumn, sortDirection]
   )
 
   function onSort(column: SortColumn) {
@@ -269,116 +287,145 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
   }
 
   return (
-    <div id="oils-priority-table">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <SortableHead
-              label="Asset ID"
-              column="assetName"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-              onSort={onSort}
-            />
-            <SortableHead
-              label="Status"
-              column="status"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-              onSort={onSort}
-            />
-            <SortableHead
-              label="Last Event"
-              column="lastEvent"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-              onSort={onSort}
-            />
-            <SortableHead
-              label="Overdue KM"
-              column="overdueKilometers"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-              onSort={onSort}
-              className="text-right"
-              align="right"
-            />
-            <SortableHead
-              label="Total Top-up (L)"
-              column="totalTopUpLiters"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-              onSort={onSort}
-              className="text-right"
-              align="right"
-            />
-            <SortableHead
-              label="Burn Rate (L/1000km)"
-              column="burnRate"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-              onSort={onSort}
-              className="text-right"
-              align="right"
-            />
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {sortedRows.length === 0 ? (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center">
+        <Input
+          placeholder="Filter Asset ID..."
+          value={assetFilter}
+          onChange={(event) => setAssetFilter(event.target.value)}
+          className="max-w-sm"
+        />
+      </div>
+      <div id="oils-priority-table">
+        <Table>
+          <TableHeader>
             <TableRow>
-              <TableCell
-                colSpan={7}
-                className="text-center text-muted-foreground"
-              >
-                No active Miloto assets found.
-              </TableCell>
+              <SortableHead
+                label="Asset ID"
+                column="assetName"
+                sortColumn={sortColumn}
+                sortDirection={sortDirection}
+                onSort={onSort}
+                className="sticky left-0 z-20 bg-card border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]"
+              />
+              <SortableHead
+                label="Status"
+                column="status"
+                sortColumn={sortColumn}
+                sortDirection={sortDirection}
+                onSort={onSort}
+              />
+              <SortableHead
+                label="Current KM"
+                column="currentKm"
+                sortColumn={sortColumn}
+                sortDirection={sortDirection}
+                onSort={onSort}
+                className="text-right"
+                align="right"
+              />
+              <SortableHead
+                label="Oil Running KM"
+                column="oilRunningKm"
+                sortColumn={sortColumn}
+                sortDirection={sortDirection}
+                onSort={onSort}
+                className="text-right"
+                align="right"
+              />
+              <SortableHead
+                label="Total Top-up (L)"
+                column="totalTopUpLiters"
+                sortColumn={sortColumn}
+                sortDirection={sortDirection}
+                onSort={onSort}
+                className="text-right"
+                align="right"
+              />
+              <SortableHead
+                label="Burn Rate (L/1000km)"
+                column="burnRate"
+                sortColumn={sortColumn}
+                sortDirection={sortDirection}
+                onSort={onSort}
+                className="text-right"
+                align="right"
+              />
+              <SortableHead
+                label="Overdue KM"
+                column="overdueKilometers"
+                sortColumn={sortColumn}
+                sortDirection={sortDirection}
+                onSort={onSort}
+                className="text-right"
+                align="right"
+              />
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
-          ) : (
-            sortedRows.map((row) => (
-              <TableRow key={row.assetId}>
-                <TableCell>{row.assetName}</TableCell>
-                <TableCell>
-                  {row.status ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Badge
-                            variant={statusVariant(row.status)}
-                            className={statusClassName(row.status)}
-                          />
-                        }
-                      >
-                        {oilComplianceStatusLabel(row.status)}
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {kmSinceComplianceTooltip(row.kmSinceCompliance)}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    "—"
-                  )}
-                </TableCell>
-                <TableCell>
-                  {row.lastEvent ? lastEventLabel(row.lastEvent) : "—"}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatInteger(row.overdueKilometers)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatInteger(row.totalTopUpLiters)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <BurnRateCell burnRate={row.burnRate} />
-                </TableCell>
-                <TableCell className="text-right">
-                  <RequestSampleButton row={row} />
+          </TableHeader>
+          <TableBody>
+            {sortedRows.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={8}
+                  className="text-center text-muted-foreground"
+                >
+                  {assetFilter
+                    ? "No assets match this filter."
+                    : "No active Miloto assets found."}
                 </TableCell>
               </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+            ) : (
+              sortedRows.map((row) => (
+                <TableRow key={row.assetId}>
+                  <TableCell className="sticky left-0 z-10 bg-card border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                    {row.assetName}
+                  </TableCell>
+                  <TableCell>
+                    {row.status ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Badge
+                              variant={statusVariant(row.status)}
+                              className={statusClassName(row.status)}
+                            />
+                          }
+                        >
+                          {oilComplianceStatusLabel(row.status)}
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {kmSinceComplianceTooltip(row.kmSinceCompliance)}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatOptionalKm(row.currentKm)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatOptionalKm(row.oilRunningKm)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatInteger(row.totalTopUpLiters)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <BurnRateCell burnRate={row.burnRate} />
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatInteger(row.overdueKilometers)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <RequestSampleButton row={row} />
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 }

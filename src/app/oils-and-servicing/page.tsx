@@ -11,9 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
-  CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -61,11 +59,8 @@ export default async function OilsAndServicingPage() {
             <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
               Oils &amp; Servicing
             </h1>
-            <p className="max-w-2xl text-base leading-7 text-zinc-600 dark:text-zinc-400">
-              Dual-clock oil health for the active Miloto fleet. The
-              compliance clock resets on the most recent of a ≥35 L service
-              or a logged oil sample; burn rate still counts top-ups since
-              the last full service.
+            <p className="text-base leading-7 text-zinc-600 dark:text-zinc-400">
+              For Fleet Preventative Health
             </p>
           </div>
           <Button
@@ -100,17 +95,13 @@ export default async function OilsAndServicingPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Priority roster</CardTitle>
-            <CardDescription>
-              Sorted by overdue kilometres, high to low. Click a column header
-              to change the order.
-            </CardDescription>
-            <CardAction>
+            <div className="flex w-full flex-col items-center justify-between gap-4 sm:flex-row">
+              <CardTitle>Priority roster</CardTitle>
               <div className="flex items-center gap-2">
                 <ExportOilHealthMenu rows={rows} />
                 <ShareTableButton />
               </div>
-            </CardAction>
+            </div>
           </CardHeader>
           <CardContent>
             <OilHealthTable rows={rows} />
