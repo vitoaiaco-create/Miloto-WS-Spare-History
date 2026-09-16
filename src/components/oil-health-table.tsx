@@ -297,8 +297,8 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
         />
       </div>
       <div id="oils-priority-table">
-        <Table>
-          <TableHeader>
+        <Table containerClassName="relative w-full overflow-auto max-h-[650px]">
+          <TableHeader className="sticky top-0 z-20 bg-card shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]">
             <TableRow>
               <SortableHead
                 label="Asset ID"
@@ -306,7 +306,7 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                 sortColumn={sortColumn}
                 sortDirection={sortDirection}
                 onSort={onSort}
-                className="sticky left-0 z-20 bg-card border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]"
+                className="sticky top-0 left-0 z-30 bg-card border-r shadow-[2px_2px_5px_-2px_rgba(0,0,0,0.1)]"
               />
               <SortableHead
                 label="Status"
@@ -314,6 +314,7 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                 sortColumn={sortColumn}
                 sortDirection={sortDirection}
                 onSort={onSort}
+                className="sticky top-0 z-20 bg-card shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]"
               />
               <SortableHead
                 label="Current KM"
@@ -321,7 +322,7 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                 sortColumn={sortColumn}
                 sortDirection={sortDirection}
                 onSort={onSort}
-                className="text-right"
+                className="sticky top-0 z-20 bg-card text-right shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]"
                 align="right"
               />
               <SortableHead
@@ -330,7 +331,7 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                 sortColumn={sortColumn}
                 sortDirection={sortDirection}
                 onSort={onSort}
-                className="text-right"
+                className="sticky top-0 z-20 bg-card text-right shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]"
                 align="right"
               />
               <SortableHead
@@ -339,7 +340,7 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                 sortColumn={sortColumn}
                 sortDirection={sortDirection}
                 onSort={onSort}
-                className="text-right"
+                className="sticky top-0 z-20 bg-card text-right shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]"
                 align="right"
               />
               <SortableHead
@@ -348,7 +349,7 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                 sortColumn={sortColumn}
                 sortDirection={sortDirection}
                 onSort={onSort}
-                className="text-right"
+                className="sticky top-0 z-20 bg-card text-right shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]"
                 align="right"
               />
               <SortableHead
@@ -357,10 +358,12 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                 sortColumn={sortColumn}
                 sortDirection={sortDirection}
                 onSort={onSort}
-                className="text-right"
+                className="sticky top-0 z-20 bg-card text-right shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]"
                 align="right"
               />
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="sticky top-0 z-20 bg-card text-right shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]">
+                Actions
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
