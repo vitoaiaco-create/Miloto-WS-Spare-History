@@ -23,10 +23,16 @@ export default async function Home() {
   }
 
   const allowedModules = sessionClaims?.metadata?.modules || [];
+  const role = sessionClaims?.metadata?.role;
+  const isOilsOnly = role === "oils_only";
   // Data Ingestion isn't a module grant like the others — it's gated by the
   // "admin" role (see src/actions/ingestion.ts and
   // src/app/data-ingestion/page.tsx), so it's kept out of `allowedModules`.
-  const isAdmin = sessionClaims?.metadata?.role === "admin";
+  const isAdmin = role === "admin";
+
+  if (isOilsOnly) {
+    redirect("/oils-and-servicing");
+  }
 
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
@@ -53,7 +59,7 @@ export default async function Home() {
           </Alert>
         ) : (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {allowedModules.includes("spares_history") && (
+            {!isOilsOnly && allowedModules.includes("spares_history") && (
               <Link href="/spares-history">
                 <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
                   <CardHeader>
@@ -73,7 +79,7 @@ export default async function Home() {
               </Link>
             )}
 
-            {allowedModules.includes("workshop_analytics") && (
+            {!isOilsOnly && allowedModules.includes("workshop_analytics") && (
               <Link href="/workshop-analytics">
                 <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
                   <CardHeader>
@@ -95,7 +101,7 @@ export default async function Home() {
               </Link>
             )}
 
-            {allowedModules.includes("oils_servicing") && (
+            {(isOilsOnly || allowedModules.includes("oils_servicing")) && (
               <Link href="/oils-and-servicing">
                 <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
                   <CardHeader>
@@ -117,7 +123,7 @@ export default async function Home() {
               </Link>
             )}
 
-            {isAdmin && (
+            {!isOilsOnly && isAdmin && (
               <Link href="/data-ingestion">
                 <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
                   <CardHeader>

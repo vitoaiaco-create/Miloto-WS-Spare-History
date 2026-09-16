@@ -29,8 +29,10 @@ export default async function OilsAndServicingPage() {
   }
 
   const allowedModules = sessionClaims?.metadata?.modules || []
+  const role = sessionClaims?.metadata?.role
+  const isOilsOnly = role === "oils_only"
 
-  if (!allowedModules.includes("oils_servicing")) {
+  if (!isOilsOnly && !allowedModules.includes("oils_servicing")) {
     redirect("/")
   }
 
@@ -43,16 +45,18 @@ export default async function OilsAndServicingPage() {
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-16 sm:px-10 lg:px-16">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="self-start"
-          nativeButton={false}
-          render={<Link href="/" />}
-        >
-          <ArrowLeft data-icon="inline-start" />
-          Central Hub
-        </Button>
+        {isOilsOnly ? null : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="self-start"
+            nativeButton={false}
+            render={<Link href="/" />}
+          >
+            <ArrowLeft data-icon="inline-start" />
+            Central Hub
+          </Button>
+        )}
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex flex-col gap-2">

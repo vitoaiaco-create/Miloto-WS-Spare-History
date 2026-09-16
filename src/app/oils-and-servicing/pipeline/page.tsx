@@ -21,8 +21,9 @@ export default async function SamplingPipelinePage() {
   }
 
   const allowedModules = sessionClaims?.metadata?.modules || []
+  const isOilsOnly = sessionClaims?.metadata?.role === "oils_only"
 
-  if (!allowedModules.includes("oils_servicing")) {
+  if (!isOilsOnly && !allowedModules.includes("oils_servicing")) {
     redirect("/")
   }
 

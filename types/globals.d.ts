@@ -2,9 +2,9 @@ export {}
 
 declare global {
   interface CustomJwtSessionClaims {
-    metadata?: {
-      modules?: string[]
+    metadata: {
       role?: string
+      modules?: string[]
     }
   }
 }
