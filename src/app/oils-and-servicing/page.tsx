@@ -6,6 +6,7 @@ import { redirect } from "next/navigation"
 import { ExportOilHealthMenu } from "@/components/export-table-menu"
 import { FleetStatusDonut } from "@/components/fleet-status-donut"
 import { OilHealthTable } from "@/components/oil-health-table"
+import { ShareTableButton } from "@/components/share-oil-table-button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -105,7 +106,10 @@ export default async function OilsAndServicingPage() {
               to change the order.
             </CardDescription>
             <CardAction>
-              <ExportOilHealthMenu rows={rows} />
+              <div className="flex items-center gap-2">
+                <ExportOilHealthMenu rows={rows} />
+                <ShareTableButton />
+              </div>
             </CardAction>
           </CardHeader>
           <CardContent>

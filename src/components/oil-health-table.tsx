@@ -34,6 +34,7 @@ type SortColumn =
   | "lastEvent"
   | "overdueKilometers"
   | "totalTopUpLiters"
+  | "burnRate"
 
 type SortDirection = "asc" | "desc"
 
@@ -46,14 +47,15 @@ const STATUS_SORT_RANK: Record<OilComplianceStatus, number> = {
 const NUMERIC_SORT_COLUMNS: SortColumn[] = [
   "overdueKilometers",
   "totalTopUpLiters",
+  "burnRate",
 ]
 
 function formatBurnRate(value: number | null) {
   return value === null
     ? "—"
     : value.toLocaleString("en-US", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
       })
 }
 
@@ -91,12 +93,6 @@ function kmSinceComplianceTooltip(kmSinceCompliance: number | null) {
   return `${kmSinceCompliance.toLocaleString("en-US")} km since last compliance`
 }
 
-function burnRateTooltip(burnRate: number | null) {
-  if (burnRate === null) return "No burn rate on file"
-
-  return `${formatBurnRate(burnRate)} L / 1,000km`
-}
-
 function compareRows(
   a: OilHealthRow,
   b: OilHealthRow,
@@ -124,6 +120,9 @@ function compareRows(
       break
     case "totalTopUpLiters":
       result = a.totalTopUpLiters - b.totalTopUpLiters
+      break
+    case "burnRate":
+      result = (a.burnRate ?? -1) - (b.burnRate ?? -1)
       break
   }
 
@@ -232,29 +231,22 @@ function RequestSampleButton({ row }: { row: OilHealthRow }) {
   )
 }
 
-function TopUpCell({ row }: { row: OilHealthRow }) {
-  const isCritical =
-    row.burnRate !== null && row.burnRate >= CRITICAL_BURN_RATE
-  const display = formatInteger(row.totalTopUpLiters)
+function BurnRateCell({ burnRate }: { burnRate: number | null }) {
+  if (burnRate === null) {
+    return <span className="text-muted-foreground">—</span>
+  }
 
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<span className="inline-flex cursor-help justify-end" />}
-      >
-        {isCritical ? (
-          <Badge variant="destructive" className="font-bold tabular-nums">
-            {display}
-          </Badge>
-        ) : (
-          <span className="tabular-nums underline decoration-dotted underline-offset-4">
-            {display}
-          </span>
-        )}
-      </TooltipTrigger>
-      <TooltipContent>{burnRateTooltip(row.burnRate)}</TooltipContent>
-    </Tooltip>
-  )
+  const display = formatBurnRate(burnRate)
+
+  if (burnRate >= CRITICAL_BURN_RATE) {
+    return (
+      <Badge variant="destructive" className="font-bold tabular-nums">
+        {display}
+      </Badge>
+    )
+  }
+
+  return <span className="tabular-nums">{display}</span>
 }
 
 export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
@@ -277,102 +269,116 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
   }
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <SortableHead
-            label="Asset ID"
-            column="assetName"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={onSort}
-          />
-          <SortableHead
-            label="Status"
-            column="status"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={onSort}
-          />
-          <SortableHead
-            label="Last Event"
-            column="lastEvent"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={onSort}
-          />
-          <SortableHead
-            label="Overdue KM"
-            column="overdueKilometers"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={onSort}
-            className="text-right"
-            align="right"
-          />
-          <SortableHead
-            label="Total Top-up (L)"
-            column="totalTopUpLiters"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={onSort}
-            className="text-right"
-            align="right"
-          />
-          <TableHead className="text-right">Actions</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {sortedRows.length === 0 ? (
+    <div id="oils-priority-table">
+      <Table>
+        <TableHeader>
           <TableRow>
-            <TableCell
-              colSpan={6}
-              className="text-center text-muted-foreground"
-            >
-              No active Miloto assets found.
-            </TableCell>
+            <SortableHead
+              label="Asset ID"
+              column="assetName"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={onSort}
+            />
+            <SortableHead
+              label="Status"
+              column="status"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={onSort}
+            />
+            <SortableHead
+              label="Last Event"
+              column="lastEvent"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={onSort}
+            />
+            <SortableHead
+              label="Overdue KM"
+              column="overdueKilometers"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="text-right"
+              align="right"
+            />
+            <SortableHead
+              label="Total Top-up (L)"
+              column="totalTopUpLiters"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="text-right"
+              align="right"
+            />
+            <SortableHead
+              label="Burn Rate (L/1000km)"
+              column="burnRate"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="text-right"
+              align="right"
+            />
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
-        ) : (
-          sortedRows.map((row) => (
-            <TableRow key={row.assetId}>
-              <TableCell>{row.assetName}</TableCell>
-              <TableCell>
-                {row.status ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Badge
-                          variant={statusVariant(row.status)}
-                          className={statusClassName(row.status)}
-                        />
-                      }
-                    >
-                      {oilComplianceStatusLabel(row.status)}
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {kmSinceComplianceTooltip(row.kmSinceCompliance)}
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  "—"
-                )}
-              </TableCell>
-              <TableCell>
-                {row.lastEvent ? lastEventLabel(row.lastEvent) : "—"}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {formatInteger(row.overdueKilometers)}
-              </TableCell>
-              <TableCell className="text-right">
-                <TopUpCell row={row} />
-              </TableCell>
-              <TableCell className="text-right">
-                <RequestSampleButton row={row} />
+        </TableHeader>
+        <TableBody>
+          {sortedRows.length === 0 ? (
+            <TableRow>
+              <TableCell
+                colSpan={7}
+                className="text-center text-muted-foreground"
+              >
+                No active Miloto assets found.
               </TableCell>
             </TableRow>
-          ))
-        )}
-      </TableBody>
-    </Table>
+          ) : (
+            sortedRows.map((row) => (
+              <TableRow key={row.assetId}>
+                <TableCell>{row.assetName}</TableCell>
+                <TableCell>
+                  {row.status ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Badge
+                            variant={statusVariant(row.status)}
+                            className={statusClassName(row.status)}
+                          />
+                        }
+                      >
+                        {oilComplianceStatusLabel(row.status)}
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {kmSinceComplianceTooltip(row.kmSinceCompliance)}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
+                <TableCell>
+                  {row.lastEvent ? lastEventLabel(row.lastEvent) : "—"}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {formatInteger(row.overdueKilometers)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {formatInteger(row.totalTopUpLiters)}
+                </TableCell>
+                <TableCell className="text-right">
+                  <BurnRateCell burnRate={row.burnRate} />
+                </TableCell>
+                <TableCell className="text-right">
+                  <RequestSampleButton row={row} />
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
   )
 }
