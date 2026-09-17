@@ -493,3 +493,94 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
     }
   })
 }
+
+// Draw-time odometer and oil age for sampling-pipeline cards. `currentKm`
+// is the sample's locked-in odometer (not the latest mileage log).
+// `oilRunningKm` is that reading minus the last ≥35 L service on or
+// before the draw, so later fills do not rewrite the card.
+export async function getPipelineSampleMetrics(
+  samples: {
+    id: string
+    assetId: number
+    odometer: number | null
+    drawnDate: Date | null
+  }[]
+): Promise<Map<string, { currentKm: number | null; oilRunningKm: number | null }>> {
+  const metrics = new Map<
+    string,
+    { currentKm: number | null; oilRunningKm: number | null }
+  >()
+
+  for (const sample of samples) {
+    metrics.set(sample.id, {
+      currentKm: sample.odometer,
+      oilRunningKm: null,
+    })
+  }
+
+  const drawnSamples = samples.filter(
+    (sample): sample is typeof sample & { odometer: number; drawnDate: Date } =>
+      sample.odometer !== null && sample.drawnDate !== null
+  )
+
+  if (drawnSamples.length === 0) return metrics
+
+  const assetIds = [...new Set(drawnSamples.map((sample) => sample.assetId))]
+
+  const services = await db
+    .select({
+      assetId: oilConsumptionLogsTable.assetId,
+      recordDate: oilConsumptionLogsTable.recordDate,
+    })
+    .from(oilConsumptionLogsTable)
+    .where(
+      and(
+        inArray(oilConsumptionLogsTable.assetId, assetIds),
+        gte(oilConsumptionLogsTable.quantity, SERVICE_QUANTITY_LITERS)
+      )
+    )
+    .orderBy(desc(oilConsumptionLogsTable.recordDate))
+
+  const servicesByAsset = new Map<number, { recordDate: Date }[]>()
+  for (const service of services) {
+    const list = servicesByAsset.get(service.assetId) ?? []
+    list.push(service)
+    servicesByAsset.set(service.assetId, list)
+  }
+
+  const serviceBySample = new Map<string, { assetId: number; onDate: string }>()
+  const mileagePairs: { assetId: number; onDate: string }[] = []
+
+  for (const sample of drawnSamples) {
+    const lastService = (servicesByAsset.get(sample.assetId) ?? []).find(
+      (service) => service.recordDate <= sample.drawnDate
+    )
+    if (!lastService) continue
+
+    const pair = {
+      assetId: sample.assetId,
+      onDate: toIsoDateString(lastService.recordDate),
+    }
+    serviceBySample.set(sample.id, pair)
+    mileagePairs.push(pair)
+  }
+
+  const mileageByPair = await loadMileageOnOrBeforeDates(mileagePairs)
+
+  for (const sample of drawnSamples) {
+    const pair = serviceBySample.get(sample.id)
+    if (!pair) continue
+
+    const serviceOdometer = toOdometerKm(
+      mileageByPair.get(`${pair.assetId}:${pair.onDate}`)?.odometer
+    )
+    if (serviceOdometer === null) continue
+
+    metrics.set(sample.id, {
+      currentKm: sample.odometer,
+      oilRunningKm: sample.odometer - serviceOdometer,
+    })
+  }
+
+  return metrics
+}

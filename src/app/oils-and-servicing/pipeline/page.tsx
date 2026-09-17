@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { db } from "@/db"
 import { assetsTable, oilSamplesTable } from "@/db/schema"
+import { getPipelineSampleMetrics } from "@/lib/oil-analytics"
 
 export default async function SamplingPipelinePage() {
   const { userId, sessionClaims } = await auth()
@@ -39,6 +40,8 @@ export default async function SamplingPipelinePage() {
       assetName: assetsTable.assetName,
       status: oilSamplesTable.status,
       createdAt: oilSamplesTable.createdAt,
+      odometer: oilSamplesTable.odometer,
+      drawnDate: oilSamplesTable.drawnDate,
     })
     .from(oilSamplesTable)
     .innerJoin(assetsTable, eq(oilSamplesTable.assetId, assetsTable.id))
@@ -53,13 +56,21 @@ export default async function SamplingPipelinePage() {
     )
     .orderBy(desc(oilSamplesTable.createdAt))
 
-  const samples: PipelineSample[] = rows.map((row) => ({
-    id: row.id,
-    assetId: row.assetId,
-    assetName: row.assetName,
-    status: row.status,
-    createdAt: row.createdAt.toISOString(),
-  }))
+  const metricsById = await getPipelineSampleMetrics(rows)
+
+  const samples: PipelineSample[] = rows.map((row) => {
+    const metrics = metricsById.get(row.id)
+
+    return {
+      id: row.id,
+      assetId: row.assetId,
+      assetName: row.assetName,
+      status: row.status,
+      createdAt: row.createdAt.toISOString(),
+      currentKm: metrics?.currentKm ?? row.odometer,
+      oilRunningKm: metrics?.oilRunningKm ?? null,
+    }
+  })
 
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">

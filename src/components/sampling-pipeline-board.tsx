@@ -41,6 +41,8 @@ export type PipelineSample = {
   assetName: string
   status: PipelineSampleStatus
   createdAt: string
+  currentKm: number | null
+  oilRunningKm: number | null
 }
 
 const NEXT_STATUS_LABEL: Record<Exclude<PipelineSampleStatus, "received">, string> =
@@ -64,6 +66,12 @@ const FORWARD_ACTION_LABEL: Record<
   requested: "Mark as Drawn",
   drawn: "Mark as Sent",
   sent: "Mark as Received",
+}
+
+function formatCardKm(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "—"
+
+  return Math.round(value).toLocaleString("en-US")
 }
 
 export function SamplingPipelineBoard({ samples }: { samples: PipelineSample[] }) {
@@ -228,6 +236,16 @@ function PipelineSampleCard({ sample }: { sample: PipelineSample }) {
         <p className="text-xs text-muted-foreground">
           Asset ID {sample.assetId}
         </p>
+        {sample.status !== "requested" ? (
+          <div className="mt-1 flex flex-col gap-0.5">
+            <p className="text-xs text-muted-foreground">
+              Current Mileage: {formatCardKm(sample.currentKm)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Oil Running KM: {formatCardKm(sample.oilRunningKm)}
+            </p>
+          </div>
+        ) : null}
         <div className="flex justify-between items-center gap-2 mt-4">
           {sample.status === "requested" ? (
             <Button

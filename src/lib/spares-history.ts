@@ -2,7 +2,11 @@ import { desc, inArray, sql } from "drizzle-orm"
 
 import { db } from "@/db"
 import { mileageLogsTable } from "@/db/schema"
-import { normalizeSubEquipment, toIsoDateString } from "@/lib/spreadsheet"
+import {
+  normalizeSubEquipment,
+  toCanonicalFleetNumber,
+  toIsoDateString,
+} from "@/lib/spreadsheet"
 
 // The set of filters the Spares History page can be queried with. All
 // fields are optional strings straight out of URL search params — empty
@@ -180,6 +184,9 @@ export async function getSparesHistory(
       ...(filters.partNumber
         ? { partNumber: { ilike: `%${filters.partNumber}%` } }
         : {}),
+      // Material Name stays a substring search so "brake" still finds
+      // "BRAKE PAD". Asset ID / fleet number is exact: wrapping it in
+      // `%…%` made "MT12" match MT120, MT121, MT124, and so on.
       ...(filters.materialName
         ? { materialName: { ilike: `%${filters.materialName}%` } }
         : {}),
@@ -195,7 +202,11 @@ export async function getSparesHistory(
           }
         : {}),
       ...(filters.fleetNo
-        ? { asset: { assetName: { ilike: `%${filters.fleetNo}%` } } }
+        ? {
+            asset: {
+              assetName: toCanonicalFleetNumber(filters.fleetNo),
+            },
+          }
         : {}),
     },
     with: { asset: true },
