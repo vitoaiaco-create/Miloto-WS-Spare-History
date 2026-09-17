@@ -1,17 +1,11 @@
 "use client"
 
-import type { CSSProperties } from "react"
-import {
-  Bar,
-  CartesianGrid,
-  ComposedChart,
-  Line,
-  XAxis,
-  YAxis,
-} from "recharts"
+import { useId, useState, type CSSProperties } from "react"
+import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
 
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -19,18 +13,21 @@ import {
 } from "@/components/ui/card"
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { cn } from "@/lib/utils"
 
 export type AnalyticsCpkPoint = {
   month: string
   totalUsd: number
   cpk: number
 }
+
+type ChartMetric = "totalUsd" | "cpk"
 
 const chartConfig = {
   totalUsd: {
@@ -63,25 +60,63 @@ const cpkFormat = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 })
 
-function formatCompactUsd(value: number) {
-  return usdCompact.format(value)
+function formatAxisValue(metric: ChartMetric, value: number) {
+  return metric === "cpk" ? cpkFormat.format(value) : usdCompact.format(value)
 }
 
-function formatTooltipValue(dataKey: unknown, value: unknown) {
+function formatTooltipValue(metric: ChartMetric, value: unknown) {
   const numeric = typeof value === "number" ? value : Number(value)
   if (!Number.isFinite(numeric)) return "—"
 
-  return dataKey === "cpk" ? cpkFormat.format(numeric) : usdFull.format(numeric)
+  return metric === "cpk" ? cpkFormat.format(numeric) : usdFull.format(numeric)
 }
 
 export function AnalyticsCpkChart({ data }: { data: AnalyticsCpkPoint[] }) {
+  const switchId = useId()
+  const [metric, setMetric] = useState<ChartMetric>("totalUsd")
+  const isCpk = metric === "cpk"
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Spend vs CPK</CardTitle>
+        <CardTitle>{isCpk ? "Cost per km" : "Monthly spend"}</CardTitle>
         <CardDescription>
-          Monthly workshop spend against cost per kilometre
+          {isCpk
+            ? "Month-on-month workshop cost per kilometre"
+            : "Month-on-month workshop spend in USD"}
         </CardDescription>
+        <CardAction>
+          <div className="flex items-center gap-2">
+            <Label
+              className={cn(
+                "cursor-pointer",
+                isCpk && "text-muted-foreground"
+              )}
+              onClick={() => setMetric("totalUsd")}
+            >
+              USD spend
+            </Label>
+            <Switch
+              id={switchId}
+              checked={isCpk}
+              onCheckedChange={(checked) =>
+                setMetric(checked ? "cpk" : "totalUsd")
+              }
+            />
+            <Label htmlFor={switchId} className="sr-only">
+              Show cost per km instead of USD spend
+            </Label>
+            <Label
+              className={cn(
+                "cursor-pointer",
+                !isCpk && "text-muted-foreground"
+              )}
+              onClick={() => setMetric("cpk")}
+            >
+              CPK
+            </Label>
+          </div>
+        </CardAction>
       </CardHeader>
       <CardContent>
         {data.length === 0 ? (
@@ -89,8 +124,11 @@ export function AnalyticsCpkChart({ data }: { data: AnalyticsCpkPoint[] }) {
             No monthly spend data to chart yet.
           </p>
         ) : (
-          <ChartContainer config={chartConfig} className="aspect-auto h-[280px] w-full">
-            <ComposedChart
+          <ChartContainer
+            config={chartConfig}
+            className="aspect-auto h-[280px] w-full"
+          >
+            <LineChart
               accessibilityLayer
               data={data}
               margin={{ top: 8, right: 8, left: 4 }}
@@ -103,23 +141,14 @@ export function AnalyticsCpkChart({ data }: { data: AnalyticsCpkPoint[] }) {
                 tickMargin={8}
               />
               <YAxis
-                yAxisId="left"
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
                 width="auto"
                 domain={[0, "auto"]}
-                tickFormatter={(value) => formatCompactUsd(Number(value))}
-              />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                width="auto"
-                domain={[0, "auto"]}
-                tickFormatter={(value) => cpkFormat.format(Number(value))}
+                tickFormatter={(value) =>
+                  formatAxisValue(metric, Number(value))
+                }
               />
               <ChartTooltip
                 content={
@@ -141,7 +170,7 @@ export function AnalyticsCpkChart({ data }: { data: AnalyticsCpkPoint[] }) {
                               ?.label ?? name}
                           </span>
                           <span className="font-mono font-medium text-foreground tabular-nums">
-                            {formatTooltipValue(item.dataKey, value)}
+                            {formatTooltipValue(metric, value)}
                           </span>
                         </div>
                       </>
@@ -149,22 +178,20 @@ export function AnalyticsCpkChart({ data }: { data: AnalyticsCpkPoint[] }) {
                   />
                 }
               />
-              <ChartLegend content={<ChartLegendContent />} />
-              <Bar
-                yAxisId="left"
-                dataKey="totalUsd"
-                fill="var(--color-totalUsd)"
-                radius={[4, 4, 0, 0]}
-              />
               <Line
-                yAxisId="right"
-                dataKey="cpk"
+                key={metric}
+                dataKey={metric}
                 type="monotone"
-                stroke="var(--color-cpk)"
-                strokeWidth={3}
-                dot={{ r: 3, strokeWidth: 2, fill: "var(--color-cpk)" }}
+                stroke={`var(--color-${metric})`}
+                strokeWidth={2.5}
+                dot={{
+                  r: 3,
+                  strokeWidth: 2,
+                  fill: `var(--color-${metric})`,
+                }}
+                activeDot={{ r: 4 }}
               />
-            </ComposedChart>
+            </LineChart>
           </ChartContainer>
         )}
       </CardContent>
