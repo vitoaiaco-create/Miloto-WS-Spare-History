@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import Image from "next/image";
 import Link from "next/link";
 
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 
 export async function SiteHeader() {
@@ -73,6 +74,7 @@ export async function SiteHeader() {
               ) : null}
             </nav>
           ) : null}
+          <ThemeToggle />
           <Show when="signed-out">
             <SignInButton>
               <Button size="sm">Sign in</Button>
