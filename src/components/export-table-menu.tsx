@@ -463,6 +463,8 @@ export type PipelineExportRow = {
   assetName: string
   status: string
   createdAt: string
+  currentKm: number | null
+  oilRunningKm: number | null
 }
 
 const PIPELINE_STATUS_LABEL: Record<string, string> = {
@@ -478,6 +480,15 @@ function formatPipelineTimestamp(iso: string) {
   return date.toLocaleString("en-GB")
 }
 
+function pipelineKmCsv(status: string, value: number | null) {
+  return status === "requested" ? "-" : value || "-"
+}
+
+function pipelineKmPdf(status: string, value: number | null) {
+  if (status === "requested") return "-"
+  return value ? formatOptionalKm(value) : "-"
+}
+
 const PIPELINE_COLUMNS: ExportColumn<PipelineExportRow>[] = [
   {
     header: "Asset ID",
@@ -488,6 +499,16 @@ const PIPELINE_COLUMNS: ExportColumn<PipelineExportRow>[] = [
     header: "Status",
     csv: (row) => PIPELINE_STATUS_LABEL[row.status] ?? row.status,
     pdf: (row) => PIPELINE_STATUS_LABEL[row.status] ?? row.status,
+  },
+  {
+    header: "Current Mileage",
+    csv: (row) => pipelineKmCsv(row.status, row.currentKm),
+    pdf: (row) => pipelineKmPdf(row.status, row.currentKm),
+  },
+  {
+    header: "Oil Running KM",
+    csv: (row) => pipelineKmCsv(row.status, row.oilRunningKm),
+    pdf: (row) => pipelineKmPdf(row.status, row.oilRunningKm),
   },
   {
     header: "Requested",
