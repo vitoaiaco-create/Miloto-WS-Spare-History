@@ -18,6 +18,10 @@ export async function SiteHeader() {
     Boolean(userId) &&
     !isOilsOnly &&
     allowedModules.includes("spares_history");
+  const showWorkshopAnalytics =
+    Boolean(userId) &&
+    !isOilsOnly &&
+    (isAdmin || allowedModules.includes("workshop_analytics"));
   const showOilsAndServicing =
     Boolean(userId) &&
     (isOilsOnly || allowedModules.includes("oils_servicing"));
@@ -50,6 +54,16 @@ export async function SiteHeader() {
                   render={<Link href="/spares-history" />}
                 >
                   Spares History
+                </Button>
+              ) : null}
+              {showWorkshopAnalytics ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  nativeButton={false}
+                  render={<Link href="/analytics" />}
+                >
+                  Analytics
                 </Button>
               ) : null}
               {showOilsAndServicing ? (

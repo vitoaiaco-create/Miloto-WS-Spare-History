@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import {
+  check,
   date,
   integer,
   numeric,
@@ -141,3 +143,22 @@ export const oilSamplesTable = pgTable("oil_samples", {
   // Insert time — used by the pipeline board as "time since the request".
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// Manual monthly fleet-wide kilometre totals entered in Workshop Analytics.
+// One row per calendar month; `month_year` is always the 1st of that month.
+export const monthlyFleetKmTable = pgTable(
+  "monthly_fleet_km",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    monthYear: date("month_year").notNull(),
+    totalKm: integer("total_km").notNull(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("monthly_fleet_km_month_year_idx").on(table.monthYear),
+    check(
+      "monthly_fleet_km_month_year_first_day",
+      sql`extract(day from ${table.monthYear}) = 1`
+    ),
+  ]
+);

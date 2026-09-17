@@ -75,8 +75,9 @@ export default async function Home() {
               </Link>
             )}
 
-            {!isOilsOnly && allowedModules.includes("workshop_analytics") && (
-              <Link href="/workshop-analytics">
+            {!isOilsOnly &&
+              (isAdmin || allowedModules.includes("workshop_analytics")) && (
+              <Link href="/analytics">
                 <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
                   <CardHeader>
                     <BarChart3
