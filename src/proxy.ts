@@ -14,6 +14,11 @@ const isOilsOnlyAllowedRoute = createRouteMatcher([
 
 const isAuthRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
 
+// Server Actions POST to the current page (and Next.js may also hit /api).
+// Redirecting those requests would convert the mutation into a GET and
+// surface a generic Vercel error for `oils_only` users.
+const isApiRoute = createRouteMatcher(["/api(.*)", "/trpc(.*)"]);
+
 export default clerkMiddleware(async (auth, req) => {
   if (isDataIngestionRoute(req)) {
     await auth.protect();
@@ -21,11 +26,14 @@ export default clerkMiddleware(async (auth, req) => {
 
   const { sessionClaims } = await auth();
   const role = sessionClaims?.metadata?.role;
+  const isServerAction = req.headers.has("next-action");
 
   if (
     role === "oils_only" &&
     !isOilsOnlyAllowedRoute(req) &&
     !isAuthRoute(req) &&
+    !isApiRoute(req) &&
+    !isServerAction &&
     !req.nextUrl.pathname.startsWith("/__clerk")
   ) {
     return NextResponse.redirect(new URL("/oils-and-servicing", req.url));

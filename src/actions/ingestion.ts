@@ -74,12 +74,18 @@ async function requireAdmin() {
 }
 
 // Sample lifecycle actions are used by workshop staff on Oils & Servicing.
-// Bulk importers stay admin-only.
+// Bulk importers stay admin-only. The dedicated `oils_only` role is allowed
+// even without the `oils_servicing` module claim.
 async function requireOilSampleAccess() {
   const { userId, sessionClaims } = await auth()
 
   if (!userId) {
     throw new Error("Unauthorized")
+  }
+
+  const isOilsOnly = sessionClaims?.metadata?.role === "oils_only"
+  if (isOilsOnly) {
+    return
   }
 
   const isAdmin = sessionClaims?.metadata?.role === "admin"
@@ -467,6 +473,7 @@ function revalidateOilSamplePaths() {
   revalidatePath("/data-ingestion")
   revalidatePath("/oils-and-servicing")
   revalidatePath("/oils-and-servicing/pipeline")
+  revalidatePath("/oils-servicing/pipeline")
 }
 
 const requestOilSampleSchema = z.object({
