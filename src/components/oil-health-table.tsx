@@ -75,6 +75,18 @@ function formatOptionalKm(value: number | null) {
   return formatInteger(value)
 }
 
+function formatElapsedDays(daysSinceAction: number | null) {
+  if (daysSinceAction === null || !Number.isFinite(daysSinceAction)) return "—"
+
+  return `${Math.floor(daysSinceAction)} Days`
+}
+
+function oilRunningDisplay(row: OilHealthRow) {
+  return row.isTimeBased
+    ? formatElapsedDays(row.daysSinceAction)
+    : formatOptionalKm(row.oilRunningKm)
+}
+
 function statusVariant(status: OilComplianceStatus) {
   if (status === "overdue") return "destructive" as const
   if (status === "due_soon" || status === "unknown") return "outline" as const
@@ -103,6 +115,14 @@ function needsSampleRequest(row: OilHealthRow) {
 }
 
 function kmSinceComplianceTooltip(row: OilHealthRow) {
+  if (row.isTimeBased) {
+    if (row.daysSinceAction === null) {
+      return "Odometer is stale. No service or sample date on file — request a sample to start the 75-day clock."
+    }
+
+    return `${Math.floor(row.daysSinceAction)} days since last service or sample (time-based; odometer stale ≥30 days)`
+  }
+
   if (row.status === "unknown") {
     return "No ≥35 L oil replenishment on file. Request a sample to establish a baseline."
   }
@@ -135,7 +155,9 @@ function compareRows(
       result = (a.currentKm ?? -1) - (b.currentKm ?? -1)
       break
     case "oilRunningKm":
-      result = (a.oilRunningKm ?? -1) - (b.oilRunningKm ?? -1)
+      result =
+        (a.isTimeBased ? (a.daysSinceAction ?? -1) : (a.oilRunningKm ?? -1)) -
+        (b.isTimeBased ? (b.daysSinceAction ?? -1) : (b.oilRunningKm ?? -1))
       break
     case "totalTopUpLiters":
       result = a.totalTopUpLiters - b.totalTopUpLiters
@@ -406,7 +428,17 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
               sortedRows.map((row) => (
                 <TableRow key={row.assetId}>
                   <TableCell className="sticky left-0 z-10 bg-card border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                    {row.assetName}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>{row.assetName}</span>
+                      {row.isTimeBased ? (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                        >
+                          Stale Odo: Time Mode
+                        </Badge>
+                      ) : null}
+                    </div>
                   </TableCell>
                   <TableCell>
                     {row.status ? (
@@ -433,7 +465,7 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                     {formatOptionalKm(row.currentKm)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {formatOptionalKm(row.oilRunningKm)}
+                    {oilRunningDisplay(row)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatInteger(row.totalTopUpLiters)}

@@ -44,6 +44,13 @@ const SERVICE_QUANTITY_LITERS = 35
 const COMPLIANT_KM_LIMIT = 13_000
 const OVERDUE_KM_LIMIT = CRITICAL_SERVICE_INTERVAL
 
+// Broken-odometer failsafe: no new mileage log in this many days switches
+// the unit from kilometre thresholds to a 75-day time clock (10-day warning).
+const STALE_ODOMETER_DAYS = 30
+const TIME_BASED_OVERDUE_DAYS = 75
+const TIME_BASED_DUE_SOON_DAYS = 65
+const MS_PER_DAY = 1000 * 60 * 60 * 24
+
 // Engine-bearing units that consume engine oil. Trailers are left out of
 // the Oils & Servicing health table — they almost never appear on the
 // consumption report and would pad the view with empty dual-clock rows.
@@ -77,20 +84,71 @@ function complianceStatus(kmSinceCompliance: number): OilComplianceStatus {
   return "compliant"
 }
 
+function toStartOfLocalDay(value: Date | string): Date {
+  if (typeof value === "string") {
+    const [year, month, day] = value.split("-").map(Number)
+    return new Date(year, month - 1, day)
+  }
+
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate())
+}
+
+function daysBetween(later: Date, earlier: Date): number {
+  return (later.getTime() - earlier.getTime()) / MS_PER_DAY
+}
+
+function isStaleOdometer(
+  latestOdometerDate: Date | string | null,
+  today: Date
+): boolean {
+  if (latestOdometerDate == null) return true
+
+  return (
+    daysBetween(today, toStartOfLocalDay(latestOdometerDate)) >=
+    STALE_ODOMETER_DAYS
+  )
+}
+
+function lastActionDateOf(
+  latestService: { recordDate: Date } | null,
+  latestSample: { drawnDate: Date } | null
+): Date | null {
+  if (!latestService && !latestSample) return null
+  if (!latestService) return latestSample!.drawnDate
+  if (!latestSample) return latestService.recordDate
+
+  return latestSample.drawnDate >= latestService.recordDate
+    ? latestSample.drawnDate
+    : latestService.recordDate
+}
+
+function timeBasedStatus(daysSinceAction: number): OilComplianceStatus {
+  if (daysSinceAction >= TIME_BASED_OVERDUE_DAYS) return "overdue"
+  if (daysSinceAction >= TIME_BASED_DUE_SOON_DAYS) return "due_soon"
+  return "compliant"
+}
+
 function pickLastComplianceEvent(
   latestService: { recordDate: Date; odometer: number | null } | null,
   latestSample: { drawnDate: Date; odometer: number | null } | null
 ): { lastEvent: OilComplianceEvent; odometer: number | null } | null {
-  if (!latestService && !latestSample) return null
+  // A drawn sample with no odometer still counts for the time clock, but
+  // cannot reset kilometre compliance — fall back to the last service.
+  const sampleWithOdometer =
+    latestSample !== null && latestSample.odometer !== null
+      ? latestSample
+      : null
+
+  if (!latestService && !sampleWithOdometer) return null
 
   if (!latestService) {
     return {
       lastEvent: "sample",
-      odometer: latestSample!.odometer,
+      odometer: sampleWithOdometer!.odometer,
     }
   }
 
-  if (!latestSample) {
+  if (!sampleWithOdometer) {
     return {
       lastEvent: "service",
       odometer: latestService.odometer,
@@ -99,10 +157,10 @@ function pickLastComplianceEvent(
 
   // The more recent of a ≥35 L service and a logged sample resets the clock.
   // Equal timestamps prefer the sample — its odometer was locked in at draw.
-  if (latestSample.drawnDate >= latestService.recordDate) {
+  if (sampleWithOdometer.drawnDate >= latestService.recordDate) {
     return {
       lastEvent: "sample",
-      odometer: latestSample.odometer,
+      odometer: sampleWithOdometer.odometer,
     }
   }
 
@@ -125,21 +183,63 @@ function unknownOilMetrics(
     overdueKilometers: 0,
     kmSinceCompliance: null,
     lastEvent: null,
+    isTimeBased: false,
+    daysSinceAction: null,
   }
 }
 
 function toOilMetrics(input: {
   currentOdometer: number | null
+  latestOdometerDate: Date | string | null
   lastService: { recordDate: Date; odometer: number | null } | null
   lastSample: { drawnDate: Date; odometer: number | null } | null
   totalTopUpLiters: number
 }): OilMetrics {
+  const today = new Date()
+  const isTimeBased = isStaleOdometer(input.latestOdometerDate, today)
+  const lastActionDate = lastActionDateOf(input.lastService, input.lastSample)
+  const daysSinceAction =
+    lastActionDate === null
+      ? null
+      : daysBetween(today, lastActionDate)
+
   // No ≥35 L fill on file — keep the truck on the roster with a
   // structured unknown baseline instead of nulling the whole row.
-  if (input.lastService === null) {
-    return unknownOilMetrics(input.currentOdometer, input.totalTopUpLiters)
+  const metrics =
+    input.lastService === null
+      ? unknownOilMetrics(input.currentOdometer, input.totalTopUpLiters)
+      : distanceBasedOilMetrics({
+          currentOdometer: input.currentOdometer,
+          lastService: input.lastService,
+          lastSample: input.lastSample,
+          totalTopUpLiters: input.totalTopUpLiters,
+        })
+
+  if (isTimeBased) {
+    return {
+      ...metrics,
+      // Time clock fully replaces kilometre thresholds, including the
+      // unknown baseline when a sample or service date is on file.
+      status:
+        daysSinceAction === null ? "unknown" : timeBasedStatus(daysSinceAction),
+      isTimeBased: true,
+      daysSinceAction,
+    }
   }
 
+  return {
+    ...metrics,
+    isTimeBased: false,
+    daysSinceAction,
+  }
+}
+
+function distanceBasedOilMetrics(input: {
+  currentOdometer: number | null
+  lastService: { recordDate: Date; odometer: number | null }
+  lastSample: { drawnDate: Date; odometer: number | null } | null
+  totalTopUpLiters: number
+}): OilMetrics {
   const lastComplianceEvent = pickLastComplianceEvent(
     input.lastService,
     input.lastSample
@@ -153,9 +253,7 @@ function toOilMetrics(input: {
       : null
 
   const oilRunningKm =
-    input.currentOdometer !== null &&
-    input.lastService !== null &&
-    input.lastService.odometer !== null
+    input.currentOdometer !== null && input.lastService.odometer !== null
       ? input.currentOdometer - input.lastService.odometer
       : null
 
@@ -174,6 +272,8 @@ function toOilMetrics(input: {
     lastEvent: lastComplianceEvent?.lastEvent ?? null,
     currentKm: input.currentOdometer,
     oilRunningKm,
+    isTimeBased: false,
+    daysSinceAction: null,
   }
 }
 
@@ -226,8 +326,7 @@ export async function calculateOilMetrics(
       .where(
         and(
           eq(oilSamplesTable.assetId, assetId),
-          isNotNull(oilSamplesTable.drawnDate),
-          isNotNull(oilSamplesTable.odometer)
+          isNotNull(oilSamplesTable.drawnDate)
         )
       )
       .orderBy(desc(oilSamplesTable.drawnDate))
@@ -268,6 +367,7 @@ export async function calculateOilMetrics(
 
   return toOilMetrics({
     currentOdometer: toOdometerKm(currentMileage?.odometer),
+    latestOdometerDate: currentMileage?.date ?? null,
     lastService: lastService
       ? {
           recordDate: lastService.recordDate,
@@ -381,8 +481,7 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
         .where(
           and(
             inArray(oilSamplesTable.assetId, assetIds),
-            isNotNull(oilSamplesTable.drawnDate),
-            isNotNull(oilSamplesTable.odometer)
+            isNotNull(oilSamplesTable.drawnDate)
           )
         )
         .orderBy(oilSamplesTable.assetId, desc(oilSamplesTable.drawnDate)),
@@ -471,6 +570,7 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
       hasActiveSample: activeSampleAssetIds.has(asset.id),
       ...toOilMetrics({
         currentOdometer: toOdometerKm(currentByAsset.get(asset.id)?.odometer),
+        latestOdometerDate: currentByAsset.get(asset.id)?.date ?? null,
         lastSample:
           lastSample?.drawnDate != null
             ? {

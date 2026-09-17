@@ -22,6 +22,10 @@ export type OilMetrics = {
   lastEvent: OilComplianceEvent | null
   currentKm: number | null
   oilRunningKm: number | null
+  // True when the latest odometer reading is ≥30 days old (or missing).
+  // Status then follows the 75-day time clock instead of kilometres.
+  isTimeBased: boolean
+  daysSinceAction: number | null
 }
 
 export type OilHealthRow = {

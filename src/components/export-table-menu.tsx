@@ -50,6 +50,16 @@ function formatOptionalKm(value: number | null) {
   return value === null ? "—" : formatInteger(value)
 }
 
+function formatOilRunningExport(row: OilHealthRow) {
+  if (row.isTimeBased) {
+    return row.daysSinceAction === null
+      ? "—"
+      : `${Math.floor(row.daysSinceAction)} Days`
+  }
+
+  return formatOptionalKm(row.oilRunningKm)
+}
+
 function formatBurnRate(value: number | null) {
   return value === null
     ? "—"
@@ -152,8 +162,14 @@ const OIL_HEALTH_COLUMNS: ExportColumn<OilHealthRow>[] = [
   {
     header: "Oil Running KM",
     csv: (row) =>
-      row.oilRunningKm === null ? null : Math.round(row.oilRunningKm),
-    pdf: (row) => formatOptionalKm(row.oilRunningKm),
+      row.isTimeBased
+        ? row.daysSinceAction === null
+          ? null
+          : `${Math.floor(row.daysSinceAction)} Days`
+        : row.oilRunningKm === null
+          ? null
+          : Math.round(row.oilRunningKm),
+    pdf: (row) => formatOilRunningExport(row),
   },
   {
     header: "Total Top-up (L)",
