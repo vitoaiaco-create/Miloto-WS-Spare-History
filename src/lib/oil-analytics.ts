@@ -112,12 +112,34 @@ function pickLastComplianceEvent(
   }
 }
 
+function unknownOilMetrics(
+  currentOdometer: number | null,
+  totalTopUpLiters: number
+): OilMetrics {
+  return {
+    status: "unknown",
+    currentKm: currentOdometer,
+    oilRunningKm: null,
+    totalTopUpLiters,
+    burnRate: null,
+    overdueKilometers: 0,
+    kmSinceCompliance: null,
+    lastEvent: null,
+  }
+}
+
 function toOilMetrics(input: {
   currentOdometer: number | null
   lastService: { recordDate: Date; odometer: number | null } | null
   lastSample: { drawnDate: Date; odometer: number | null } | null
   totalTopUpLiters: number
 }): OilMetrics {
+  // No ≥35 L fill on file — keep the truck on the roster with a
+  // structured unknown baseline instead of nulling the whole row.
+  if (input.lastService === null) {
+    return unknownOilMetrics(input.currentOdometer, input.totalTopUpLiters)
+  }
+
   const lastComplianceEvent = pickLastComplianceEvent(
     input.lastService,
     input.lastSample
@@ -229,19 +251,19 @@ export async function calculateOilMetrics(
     lastService
       ? loadMileageOnOrBefore(assetId, lastService.recordDate)
       : Promise.resolve(null),
-    lastService
-      ? db
-          .select({ total: sum(oilConsumptionLogsTable.quantity) })
-          .from(oilConsumptionLogsTable)
-          .where(
-            and(
-              eq(oilConsumptionLogsTable.assetId, assetId),
-              lt(oilConsumptionLogsTable.quantity, SERVICE_QUANTITY_LITERS),
-              gt(oilConsumptionLogsTable.recordDate, lastService.recordDate)
-            )
-          )
-          .then((rows) => Number(rows[0]?.total ?? 0))
-      : Promise.resolve(0),
+    db
+      .select({ total: sum(oilConsumptionLogsTable.quantity) })
+      .from(oilConsumptionLogsTable)
+      .where(
+        and(
+          eq(oilConsumptionLogsTable.assetId, assetId),
+          lt(oilConsumptionLogsTable.quantity, SERVICE_QUANTITY_LITERS),
+          lastService
+            ? gt(oilConsumptionLogsTable.recordDate, lastService.recordDate)
+            : undefined
+        )
+      )
+      .then((rows) => Number(rows[0]?.total ?? 0)),
   ])
 
   return toOilMetrics({
@@ -346,8 +368,8 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
 
   if (assetIds.length === 0) return []
 
-  const [currentByAsset, lastSamples, lastServices, topUps] = await Promise.all(
-    [
+  const [currentByAsset, lastSamples, lastServices, topUps, activeSamples] =
+    await Promise.all([
       loadLatestMileageLogs(assetIds),
       db
         .selectDistinctOn([oilSamplesTable.assetId], {
@@ -393,8 +415,19 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
             lt(oilConsumptionLogsTable.quantity, SERVICE_QUANTITY_LITERS)
           )
         ),
-    ]
-  )
+      db
+        .selectDistinctOn([oilSamplesTable.assetId], {
+          assetId: oilSamplesTable.assetId,
+        })
+        .from(oilSamplesTable)
+        .where(
+          and(
+            inArray(oilSamplesTable.assetId, assetIds),
+            inArray(oilSamplesTable.status, ["requested", "drawn", "sent"])
+          )
+        )
+        .orderBy(oilSamplesTable.assetId, desc(oilSamplesTable.createdAt)),
+    ])
 
   const lastSampleByAsset = new Map(
     lastSamples.map((sample) => [sample.assetId, sample] as const)
@@ -410,10 +443,17 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
 
   const mileageByPair = await loadMileageOnOrBeforeDates(mileagePairs)
 
+  const activeSampleAssetIds = new Set(
+    activeSamples.map((sample) => sample.assetId)
+  )
+
   const topUpByAsset = new Map<number, number>()
   for (const topUp of topUps) {
     const lastService = lastServiceByAsset.get(topUp.assetId)
-    if (!lastService || topUp.recordDate <= lastService.recordDate) continue
+    // With a ≥35 L fill, only count top-ups after that service. With no
+    // fill on file, sum every top-up so the unknown baseline still shows
+    // how much oil has been issued.
+    if (lastService && topUp.recordDate <= lastService.recordDate) continue
 
     topUpByAsset.set(
       topUp.assetId,
@@ -428,6 +468,7 @@ export async function getFleetOilHealth(): Promise<OilHealthRow[]> {
     return {
       assetId: asset.id,
       assetName: asset.assetName,
+      hasActiveSample: activeSampleAssetIds.has(asset.id),
       ...toOilMetrics({
         currentOdometer: toOdometerKm(currentByAsset.get(asset.id)?.odometer),
         lastSample:

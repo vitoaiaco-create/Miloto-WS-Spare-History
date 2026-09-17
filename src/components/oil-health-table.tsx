@@ -43,6 +43,7 @@ const STATUS_SORT_RANK: Record<OilComplianceStatus, number> = {
   overdue: 0,
   due_soon: 1,
   compliant: 2,
+  unknown: 3,
 }
 
 const NUMERIC_SORT_COLUMNS: SortColumn[] = [
@@ -62,17 +63,21 @@ function formatBurnRate(value: number | null) {
       })
 }
 
-function formatInteger(value: number) {
+function formatInteger(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "—"
+
   return Math.round(value).toLocaleString("en-US")
 }
 
 function formatOptionalKm(value: number | null) {
-  return value === null ? "—" : formatInteger(value)
+  if (value === null || !Number.isFinite(value)) return "—"
+
+  return formatInteger(value)
 }
 
 function statusVariant(status: OilComplianceStatus) {
   if (status === "overdue") return "destructive" as const
-  if (status === "due_soon") return "outline" as const
+  if (status === "due_soon" || status === "unknown") return "outline" as const
   return "secondary" as const
 }
 
@@ -83,17 +88,28 @@ function statusClassName(status: OilComplianceStatus) {
   if (status === "compliant") {
     return "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
   }
+  if (status === "unknown") {
+    return "border-border bg-muted text-muted-foreground"
+  }
   return undefined
 }
 
-function needsSampleRequest(status: OilComplianceStatus | null) {
-  return status === "overdue" || status === "due_soon"
+function needsSampleRequest(row: OilHealthRow) {
+  return (
+    row.status === "overdue" ||
+    row.status === "due_soon" ||
+    row.status === "unknown"
+  )
 }
 
-function kmSinceComplianceTooltip(kmSinceCompliance: number | null) {
-  if (kmSinceCompliance === null) return "No compliance mileage on file"
+function kmSinceComplianceTooltip(row: OilHealthRow) {
+  if (row.status === "unknown") {
+    return "No ≥35 L oil replenishment on file. Request a sample to establish a baseline."
+  }
 
-  return `${kmSinceCompliance.toLocaleString("en-US")} km since last compliance`
+  if (row.kmSinceCompliance === null) return "No compliance mileage on file"
+
+  return `${row.kmSinceCompliance.toLocaleString("en-US")} km since last compliance`
 }
 
 function compareRows(
@@ -192,8 +208,20 @@ function SortableHead({
 function RequestSampleButton({ row }: { row: OilHealthRow }) {
   const [requested, setRequested] = useState(false)
   const [pending, setPending] = useState(false)
+  const inPipeline = row.hasActiveSample || requested
 
-  if (!needsSampleRequest(row.status)) return null
+  // Unknown / due / overdue trucks keep an action in this column. An
+  // already-active pipeline card replaces Request Sample so workshop
+  // staff cannot queue a duplicate.
+  if (!needsSampleRequest(row) && !requested) return null
+
+  if (inPipeline) {
+    return (
+      <Button size="sm" variant="outline" disabled>
+        In Pipeline
+      </Button>
+    )
+  }
 
   async function onRequestSample() {
     setPending(true)
@@ -225,14 +253,10 @@ function RequestSampleButton({ row }: { row: OilHealthRow }) {
     <Button
       size="sm"
       variant={row.status === "overdue" ? "destructive" : "default"}
-      disabled={pending || requested}
+      disabled={pending}
       onClick={onRequestSample}
     >
-      {pending
-        ? "Requesting…"
-        : requested
-          ? "Sample Requested"
-          : "Request Sample"}
+      {pending ? "Requesting…" : "Request Sample"}
     </Button>
   )
 }
@@ -398,7 +422,7 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                           {oilComplianceStatusLabel(row.status)}
                         </TooltipTrigger>
                         <TooltipContent>
-                          {kmSinceComplianceTooltip(row.kmSinceCompliance)}
+                          {kmSinceComplianceTooltip(row)}
                         </TooltipContent>
                       </Tooltip>
                     ) : (

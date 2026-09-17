@@ -1,4 +1,8 @@
-export type OilComplianceStatus = "overdue" | "due_soon" | "compliant"
+export type OilComplianceStatus =
+  | "overdue"
+  | "due_soon"
+  | "compliant"
+  | "unknown"
 export type OilComplianceEvent = "service" | "sample"
 
 // Liters per 1,000 km. At or above this, the Oils & Servicing dashboard
@@ -23,6 +27,9 @@ export type OilMetrics = {
 export type OilHealthRow = {
   assetId: number
   assetName: string
+  // True while a sample is requested, drawn, or sent — hides a duplicate
+  // "Request Sample" action until that card leaves the active pipeline.
+  hasActiveSample: boolean
 } & OilMetrics
 
 export type FleetOilStatusCounts = {
@@ -35,11 +42,13 @@ const STATUS_PRIORITY: Record<OilComplianceStatus, number> = {
   overdue: 0,
   due_soon: 1,
   compliant: 2,
+  unknown: 3,
 }
 
 export function oilComplianceStatusLabel(status: OilComplianceStatus) {
   if (status === "due_soon") return "Due Soon"
   if (status === "overdue") return "Overdue"
+  if (status === "unknown") return "Needs Baseline"
   return "Compliant"
 }
 
