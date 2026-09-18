@@ -7,11 +7,10 @@ import {
   upsertMonthlyFleetKm,
   type SpendPacing,
   type YtdAnalytics,
+  type YtdAnalyticsPoint,
 } from "@/actions/analytics"
-import {
-  AnalyticsCpkChart,
-  type AnalyticsCpkPoint,
-} from "@/components/analytics-cpk-chart"
+import { AnalyticsCpkChart } from "@/components/analytics-cpk-chart"
+import { MomDataTable } from "@/components/mom-data-table"
 import { SpendPacingDashboard } from "@/components/spend-pacing-dashboard"
 import { Button } from "@/components/ui/button"
 import {
@@ -29,7 +28,7 @@ import { toast } from "@/components/ui/toast"
 export type AnalyticsViewProps = {
   selectedMonth: string
   fleetKm: number | null
-  cpkData: AnalyticsCpkPoint[]
+  cpkData: YtdAnalyticsPoint[]
   avgTotalUsd: number | null
   avgCpk: number | null
   spendPacing: SpendPacing
@@ -64,6 +63,10 @@ function FleetAnalyticsView({
 }: AnalyticsViewProps) {
   return (
     <div className="flex flex-col gap-6">
+      <MomDataTable
+        data={cpkData}
+        fleetKm={cpkData.map(({ month, totalKm }) => ({ month, totalKm }))}
+      />
       <AnalyticsCpkChart
         data={cpkData}
         avgTotalUsd={avgTotalUsd}

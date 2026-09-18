@@ -124,6 +124,7 @@ export type AnalyticsFleetType = GetYtdAnalyticsInput["fleetType"]
 export type YtdAnalyticsPoint = {
   month: string
   totalUsd: number
+  totalKm: number
   cpk: number
 }
 
@@ -336,6 +337,7 @@ export async function getYtdAnalytics(
     return {
       month,
       totalUsd,
+      totalKm,
       cpk: totalKm > 0 ? totalUsd / totalKm : 0,
     }
   })
