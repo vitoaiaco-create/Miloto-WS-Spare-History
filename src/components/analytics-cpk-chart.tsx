@@ -1,7 +1,15 @@
 "use client"
 
 import { useId, useState, type CSSProperties } from "react"
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
+import {
+  CartesianGrid,
+  Label as RechartsLabel,
+  Line,
+  LineChart,
+  ReferenceLine,
+  XAxis,
+  YAxis,
+} from "recharts"
 
 import {
   Card,
@@ -71,10 +79,19 @@ function formatTooltipValue(metric: ChartMetric, value: unknown) {
   return metric === "cpk" ? cpkFormat.format(numeric) : usdFull.format(numeric)
 }
 
-export function AnalyticsCpkChart({ data }: { data: AnalyticsCpkPoint[] }) {
+export function AnalyticsCpkChart({
+  data,
+  avgTotalUsd,
+  avgCpk,
+}: {
+  data: AnalyticsCpkPoint[]
+  avgTotalUsd: number | null
+  avgCpk: number | null
+}) {
   const switchId = useId()
   const [metric, setMetric] = useState<ChartMetric>("totalUsd")
   const isCpk = metric === "cpk"
+  const average = isCpk ? avgCpk : avgTotalUsd
 
   return (
     <Card>
@@ -131,7 +148,7 @@ export function AnalyticsCpkChart({ data }: { data: AnalyticsCpkPoint[] }) {
             <LineChart
               accessibilityLayer
               data={data}
-              margin={{ top: 8, right: 8, left: 4 }}
+              margin={{ top: 18, right: 12, left: 4 }}
             >
               <CartesianGrid vertical={false} />
               <XAxis
@@ -178,6 +195,20 @@ export function AnalyticsCpkChart({ data }: { data: AnalyticsCpkPoint[] }) {
                   />
                 }
               />
+              {average != null ? (
+                <ReferenceLine
+                  y={average}
+                  stroke={`var(--color-${metric})`}
+                  strokeDasharray="3 3"
+                >
+                  <RechartsLabel
+                    value={`Avg ${formatAxisValue(metric, average)}`}
+                    position="insideTopRight"
+                    fill="var(--muted-foreground)"
+                    fontSize={12}
+                  />
+                </ReferenceLine>
+              ) : null}
               <Line
                 key={metric}
                 dataKey={metric}

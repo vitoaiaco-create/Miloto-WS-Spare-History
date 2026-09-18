@@ -3,11 +3,16 @@
 import { useState, type FormEvent } from "react"
 import { usePathname, useRouter } from "next/navigation"
 
-import { upsertMonthlyFleetKm } from "@/actions/analytics"
+import {
+  upsertMonthlyFleetKm,
+  type SpendPacing,
+  type YtdAnalytics,
+} from "@/actions/analytics"
 import {
   AnalyticsCpkChart,
   type AnalyticsCpkPoint,
 } from "@/components/analytics-cpk-chart"
+import { SpendPacingDashboard } from "@/components/spend-pacing-dashboard"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -25,6 +30,9 @@ export type AnalyticsViewProps = {
   selectedMonth: string
   fleetKm: number | null
   cpkData: AnalyticsCpkPoint[]
+  avgTotalUsd: number | null
+  avgCpk: number | null
+  spendPacing: SpendPacing
 }
 
 function parseFleetKm(value: string): number | null {
@@ -48,16 +56,25 @@ function parseSelectedMonth(value: string) {
   return { year, month }
 }
 
-function CombinedMilotoView({ cpkData }: AnalyticsViewProps) {
-  return <AnalyticsCpkChart data={cpkData} />
-}
-
-function MotiveTrucksView({ cpkData }: AnalyticsViewProps) {
-  return <AnalyticsCpkChart data={cpkData} />
-}
-
-function TowedTrailersView({ cpkData }: AnalyticsViewProps) {
-  return <AnalyticsCpkChart data={cpkData} />
+function FleetAnalyticsView({
+  cpkData,
+  avgTotalUsd,
+  avgCpk,
+  spendPacing,
+}: AnalyticsViewProps) {
+  return (
+    <div className="flex flex-col gap-6">
+      <AnalyticsCpkChart
+        data={cpkData}
+        avgTotalUsd={avgTotalUsd}
+        avgCpk={avgCpk}
+      />
+      <SpendPacingDashboard
+        dailyPacing={spendPacing.dailyPacing}
+        weeklyPacing={spendPacing.weeklyPacing}
+      />
+    </div>
+  )
 }
 
 export function AnalyticsDashboard({
@@ -65,11 +82,17 @@ export function AnalyticsDashboard({
   combinedCpk,
   motiveCpk,
   towedCpk,
+  combinedPacing,
+  motivePacing,
+  towedPacing,
 }: {
   selectedMonth: string
-  combinedCpk: AnalyticsCpkPoint[]
-  motiveCpk: AnalyticsCpkPoint[]
-  towedCpk: AnalyticsCpkPoint[]
+  combinedCpk: YtdAnalytics
+  motiveCpk: YtdAnalytics
+  towedCpk: YtdAnalytics
+  combinedPacing: SpendPacing
+  motivePacing: SpendPacing
+  towedPacing: SpendPacing
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -80,17 +103,26 @@ export function AnalyticsDashboard({
   const combinedViewProps: AnalyticsViewProps = {
     selectedMonth,
     fleetKm,
-    cpkData: combinedCpk,
+    cpkData: combinedCpk.months,
+    avgTotalUsd: combinedCpk.avgTotalUsd,
+    avgCpk: combinedCpk.avgCpk,
+    spendPacing: combinedPacing,
   }
   const motiveViewProps: AnalyticsViewProps = {
     selectedMonth,
     fleetKm,
-    cpkData: motiveCpk,
+    cpkData: motiveCpk.months,
+    avgTotalUsd: motiveCpk.avgTotalUsd,
+    avgCpk: motiveCpk.avgCpk,
+    spendPacing: motivePacing,
   }
   const towedViewProps: AnalyticsViewProps = {
     selectedMonth,
     fleetKm,
-    cpkData: towedCpk,
+    cpkData: towedCpk.months,
+    avgTotalUsd: towedCpk.avgTotalUsd,
+    avgCpk: towedCpk.avgCpk,
+    spendPacing: towedPacing,
   }
 
   function onSelectedMonthChange(value: string) {
@@ -196,25 +228,25 @@ export function AnalyticsDashboard({
       </Card>
 
       <Tabs defaultValue="combined" className="gap-6">
-        <TabsList className="mx-auto h-12 w-full max-w-2xl group-data-horizontal/tabs:h-12">
+        <TabsList className="grid w-full max-w-[400px] grid-cols-3">
           <TabsTrigger className="px-6 text-base" value="combined">
-            Combined Miloto
+            All Miloto
           </TabsTrigger>
           <TabsTrigger className="px-6 text-base" value="motive">
-            Motive (Trucks)
+            Trucks
           </TabsTrigger>
           <TabsTrigger className="px-6 text-base" value="towed">
-            Towed (Trailers)
+            Trailers
           </TabsTrigger>
         </TabsList>
         <TabsContent value="combined">
-          <CombinedMilotoView {...combinedViewProps} />
+          <FleetAnalyticsView {...combinedViewProps} />
         </TabsContent>
         <TabsContent value="motive">
-          <MotiveTrucksView {...motiveViewProps} />
+          <FleetAnalyticsView {...motiveViewProps} />
         </TabsContent>
         <TabsContent value="towed">
-          <TowedTrailersView {...towedViewProps} />
+          <FleetAnalyticsView {...towedViewProps} />
         </TabsContent>
       </Tabs>
     </div>

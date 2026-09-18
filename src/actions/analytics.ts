@@ -6,10 +6,12 @@ import {
   between,
   eq,
   ilike,
+  lt,
   not,
   or,
   sql,
   sum,
+  type SQL,
 } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
@@ -70,6 +72,28 @@ function toFirstOfMonthIso(year: number, month: number) {
   return `${year}-${String(month).padStart(2, "0")}-01`
 }
 
+function toIsoDate(year: number, month: number, day: number) {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+}
+
+function daysInCalendarMonth(year: number, month: number) {
+  return new Date(year, month, 0).getDate()
+}
+
+function weekOfMonth(day: number) {
+  return Math.ceil(day / 7)
+}
+
+function pushSample(
+  samples: Map<number, number[]>,
+  key: number,
+  value: number
+) {
+  const values = samples.get(key)
+  if (values) values.push(value)
+  else samples.set(key, [value])
+}
+
 const MONTH_LABELS = [
   "Jan",
   "Feb",
@@ -98,6 +122,32 @@ export type YtdAnalyticsPoint = {
   month: string
   totalUsd: number
   cpk: number
+}
+
+export type YtdAnalytics = {
+  months: YtdAnalyticsPoint[]
+  avgTotalUsd: number | null
+  avgCpk: number | null
+}
+
+function average(values: number[]) {
+  if (values.length === 0) return null
+  return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+// A month is completed only after it has fully elapsed. The in-progress
+// calendar month (and any future months) are excluded from MoM averages.
+function isCompletedCalendarMonth(
+  year: number,
+  month: number,
+  now: Date
+) {
+  const currentYear = now.getFullYear()
+  const currentMonth = now.getMonth() + 1
+
+  if (year < currentYear) return true
+  if (year > currentYear) return false
+  return month < currentMonth
 }
 
 function toNumber(value: string | number | null | undefined) {
@@ -130,6 +180,28 @@ function fleetTypeFilter(fleetType: AnalyticsFleetType) {
   if (fleetType === "motive") return not(trailerIdentityFilter())
   if (fleetType === "towed") return trailerIdentityFilter()
   return undefined
+}
+
+async function querySpendByFitmentDate(
+  fleetType: AnalyticsFleetType,
+  dateFilter: SQL
+) {
+  const identityFilter = fleetTypeFilter(fleetType)
+
+  return db
+    .select({
+      fitmentDate: mechanicalSparesTable.fitmentDate,
+      totalUsd: sum(mechanicalSparesTable.costUsd),
+    })
+    .from(mechanicalSparesTable)
+    .innerJoin(
+      assetsTable,
+      eq(mechanicalSparesTable.assetId, assetsTable.id)
+    )
+    .where(
+      identityFilter ? and(dateFilter, identityFilter) : dateFilter
+    )
+    .groupBy(mechanicalSparesTable.fitmentDate)
 }
 
 // Inserts a monthly fleet KM total, or overwrites the existing row for
@@ -180,7 +252,7 @@ export async function upsertMonthlyFleetKm(
 export async function getYtdAnalytics(
   year: number,
   fleetType: AnalyticsFleetType
-): Promise<YtdAnalyticsPoint[]> {
+): Promise<YtdAnalytics> {
   await requireWorkshopAnalyticsAccess()
 
   const data = getYtdAnalyticsSchema.parse({ year, fleetType })
@@ -232,7 +304,7 @@ export async function getYtdAnalytics(
     kmByMonth.set(monthNumberFromIsoDate(row.monthYear), row.totalKm)
   }
 
-  return MONTH_LABELS.map((month, index) => {
+  const months = MONTH_LABELS.map((month, index) => {
     const totalUsd = usdByMonth.get(index + 1) ?? 0
     const totalKm = kmByMonth.get(index + 1) ?? 0
 
@@ -242,4 +314,154 @@ export async function getYtdAnalytics(
       cpk: totalKm > 0 ? totalUsd / totalKm : 0,
     }
   })
+
+  const now = new Date()
+  const completedMonths = months.filter((_, index) =>
+    isCompletedCalendarMonth(data.year, index + 1, now)
+  )
+
+  return {
+    months,
+    avgTotalUsd: average(completedMonths.map((point) => point.totalUsd)),
+    avgCpk: average(completedMonths.map((point) => point.cpk)),
+  }
+}
+
+const getSpendPacingSchema = z.object({
+  fleetType: z.enum(["combined", "motive", "towed"]),
+})
+
+export type DailyPacingPoint = {
+  day: number
+  actual: number
+  target: number
+}
+
+export type WeeklyPacingPoint = {
+  week: number
+  actual: number
+  target: number
+}
+
+export type SpendPacing = {
+  dailyPacing: DailyPacingPoint[]
+  weeklyPacing: WeeklyPacingPoint[]
+}
+
+function spendByIsoDate(
+  rows: { fitmentDate: string; totalUsd: string | number | null }[]
+) {
+  const totals = new Map<string, number>()
+  for (const row of rows) {
+    totals.set(row.fitmentDate, toNumber(row.totalUsd))
+  }
+  return totals
+}
+
+// Current-month spend vs historical day-of-month and week-of-month
+// baselines. Week 1 is days 1–7, week 2 is 8–14, and so on. The in-progress
+// calendar month is excluded from the targets so they only reflect
+// completed months.
+export async function getSpendPacing(
+  fleetType: AnalyticsFleetType
+): Promise<SpendPacing> {
+  await requireWorkshopAnalyticsAccess()
+
+  const data = getSpendPacingSchema.parse({ fleetType })
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth() + 1
+  const daysInCurrentMonth = daysInCalendarMonth(year, month)
+  const currentMonthStart = toFirstOfMonthIso(year, month)
+  const currentMonthEnd = toIsoDate(year, month, daysInCurrentMonth)
+
+  const [historicalRows, currentRows] = await Promise.all([
+    querySpendByFitmentDate(
+      data.fleetType,
+      lt(mechanicalSparesTable.fitmentDate, currentMonthStart)
+    ),
+    querySpendByFitmentDate(
+      data.fleetType,
+      between(
+        mechanicalSparesTable.fitmentDate,
+        currentMonthStart,
+        currentMonthEnd
+      )
+    ),
+  ])
+
+  const historicalSpend = spendByIsoDate(historicalRows)
+  const historicalMonths = new Map<
+    string,
+    { year: number; month: number }
+  >()
+  for (const isoDate of historicalSpend.keys()) {
+    const monthYear = isoDate.slice(0, 7)
+    if (historicalMonths.has(monthYear)) continue
+
+    historicalMonths.set(monthYear, {
+      year: Number(isoDate.slice(0, 4)),
+      month: Number(isoDate.slice(5, 7)),
+    })
+  }
+
+  const daySamples = new Map<number, number[]>()
+  const weekSamples = new Map<number, number[]>()
+
+  for (const { year: sampleYear, month: sampleMonth } of historicalMonths.values()) {
+    const days = daysInCalendarMonth(sampleYear, sampleMonth)
+    const weekTotals = new Map<number, number>()
+
+    for (let day = 1; day <= days; day++) {
+      const spend =
+        historicalSpend.get(toIsoDate(sampleYear, sampleMonth, day)) ?? 0
+      pushSample(daySamples, day, spend)
+
+      const week = weekOfMonth(day)
+      weekTotals.set(week, (weekTotals.get(week) ?? 0) + spend)
+    }
+
+    for (const [week, total] of weekTotals) {
+      pushSample(weekSamples, week, total)
+    }
+  }
+
+  const currentByDay = new Map<number, number>()
+  for (const [isoDate, totalUsd] of spendByIsoDate(currentRows)) {
+    currentByDay.set(Number(isoDate.slice(8, 10)), totalUsd)
+  }
+
+  const dailyPacing: DailyPacingPoint[] = Array.from(
+    { length: daysInCurrentMonth },
+    (_, index) => {
+      const day = index + 1
+      return {
+        day,
+        actual: currentByDay.get(day) ?? 0,
+        target: average(daySamples.get(day) ?? []) ?? 0,
+      }
+    }
+  )
+
+  const weeksInCurrentMonth = weekOfMonth(daysInCurrentMonth)
+  const weeklyPacing: WeeklyPacingPoint[] = Array.from(
+    { length: weeksInCurrentMonth },
+    (_, index) => {
+      const week = index + 1
+      const startDay = (week - 1) * 7 + 1
+      const endDay = Math.min(week * 7, daysInCurrentMonth)
+      let actual = 0
+      for (let day = startDay; day <= endDay; day++) {
+        actual += currentByDay.get(day) ?? 0
+      }
+
+      return {
+        week,
+        actual,
+        target: average(weekSamples.get(week) ?? []) ?? 0,
+      }
+    }
+  )
+
+  return { dailyPacing, weeklyPacing }
 }

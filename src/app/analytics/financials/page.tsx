@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server"
 import { format } from "date-fns"
 import { redirect } from "next/navigation"
 
-import { getYtdAnalytics } from "@/actions/analytics"
+import { getSpendPacing, getYtdAnalytics } from "@/actions/analytics"
 import { AnalyticsDashboard } from "@/components/analytics-dashboard"
 
 type SearchParams = { [key: string]: string | string[] | undefined }
@@ -41,10 +41,20 @@ export default async function AnalyticsFinancialsPage({
   const selectedMonth = toSelectedMonth((await searchParams).month)
   const year = Number(selectedMonth.slice(0, 4))
 
-  const [combinedCpk, motiveCpk, towedCpk] = await Promise.all([
+  const [
+    combinedCpk,
+    motiveCpk,
+    towedCpk,
+    combinedPacing,
+    motivePacing,
+    towedPacing,
+  ] = await Promise.all([
     getYtdAnalytics(year, "combined"),
     getYtdAnalytics(year, "motive"),
     getYtdAnalytics(year, "towed"),
+    getSpendPacing("combined"),
+    getSpendPacing("motive"),
+    getSpendPacing("towed"),
   ])
 
   return (
@@ -53,6 +63,9 @@ export default async function AnalyticsFinancialsPage({
       combinedCpk={combinedCpk}
       motiveCpk={motiveCpk}
       towedCpk={towedCpk}
+      combinedPacing={combinedPacing}
+      motivePacing={motivePacing}
+      towedPacing={towedPacing}
     />
   )
 }
