@@ -5,6 +5,7 @@ import {
   and,
   between,
   eq,
+  gte,
   ilike,
   lt,
   not,
@@ -84,14 +85,16 @@ function weekOfMonth(day: number) {
   return Math.ceil(day / 7)
 }
 
-function pushSample(
-  samples: Map<number, number[]>,
-  key: number,
-  value: number
-) {
-  const values = samples.get(key)
-  if (values) values.push(value)
-  else samples.set(key, [value])
+// Calendar days from 1 Jan through the last day of the previous month.
+// January has no completed YTD months, so the baseline is 0.
+function ytdElapsedDaysExcludingCurrentMonth(year: number, month: number) {
+  if (month <= 1) return 0
+
+  let days = 0
+  for (let calendarMonth = 1; calendarMonth < month; calendarMonth++) {
+    days += daysInCalendarMonth(year, calendarMonth)
+  }
+  return days
 }
 
 const MONTH_LABELS = [
@@ -202,6 +205,28 @@ async function querySpendByFitmentDate(
       identityFilter ? and(dateFilter, identityFilter) : dateFilter
     )
     .groupBy(mechanicalSparesTable.fitmentDate)
+}
+
+async function querySpendTotal(
+  fleetType: AnalyticsFleetType,
+  dateFilter: SQL
+) {
+  const identityFilter = fleetTypeFilter(fleetType)
+
+  const [row] = await db
+    .select({
+      totalUsd: sum(mechanicalSparesTable.costUsd),
+    })
+    .from(mechanicalSparesTable)
+    .innerJoin(
+      assetsTable,
+      eq(mechanicalSparesTable.assetId, assetsTable.id)
+    )
+    .where(
+      identityFilter ? and(dateFilter, identityFilter) : dateFilter
+    )
+
+  return toNumber(row?.totalUsd)
 }
 
 // Inserts a monthly fleet KM total, or overwrites the existing row for
@@ -334,18 +359,18 @@ const getSpendPacingSchema = z.object({
 export type DailyPacingPoint = {
   day: number
   actual: number
-  target: number
 }
 
 export type WeeklyPacingPoint = {
   week: number
   actual: number
-  target: number
 }
 
 export type SpendPacing = {
   dailyPacing: DailyPacingPoint[]
   weeklyPacing: WeeklyPacingPoint[]
+  historicalDailyAvg: number
+  historicalWeeklyAvg: number
 }
 
 function spendByIsoDate(
@@ -358,10 +383,10 @@ function spendByIsoDate(
   return totals
 }
 
-// Current-month spend vs historical day-of-month and week-of-month
-// baselines. Week 1 is days 1–7, week 2 is 8–14, and so on. The in-progress
-// calendar month is excluded from the targets so they only reflect
-// completed months.
+// Current-month spend vs a single YTD run-rate. Historical daily/weekly
+// averages are total year-to-date spend (strictly excluding the in-progress
+// calendar month) divided by elapsed YTD days and weeks. Week 1 is days
+// 1–7, week 2 is 8–14, and so on.
 export async function getSpendPacing(
   fleetType: AnalyticsFleetType
 ): Promise<SpendPacing> {
@@ -372,14 +397,23 @@ export async function getSpendPacing(
   const year = now.getFullYear()
   const month = now.getMonth() + 1
   const daysInCurrentMonth = daysInCalendarMonth(year, month)
+  const yearStart = toIsoDate(year, 1, 1)
   const currentMonthStart = toFirstOfMonthIso(year, month)
   const currentMonthEnd = toIsoDate(year, month, daysInCurrentMonth)
+  const ytdBeforeCurrentMonth = and(
+    gte(mechanicalSparesTable.fitmentDate, yearStart),
+    lt(mechanicalSparesTable.fitmentDate, currentMonthStart)
+  )
 
-  const [historicalRows, currentRows] = await Promise.all([
-    querySpendByFitmentDate(
-      data.fleetType,
-      lt(mechanicalSparesTable.fitmentDate, currentMonthStart)
-    ),
+  if (!ytdBeforeCurrentMonth) {
+    throw new Error("YTD date filter is required")
+  }
+
+  const elapsedDays = ytdElapsedDaysExcludingCurrentMonth(year, month)
+  const elapsedWeeks = elapsedDays / 7
+
+  const [totalYtdSpend, currentRows] = await Promise.all([
+    querySpendTotal(data.fleetType, ytdBeforeCurrentMonth),
     querySpendByFitmentDate(
       data.fleetType,
       between(
@@ -390,41 +424,10 @@ export async function getSpendPacing(
     ),
   ])
 
-  const historicalSpend = spendByIsoDate(historicalRows)
-  const historicalMonths = new Map<
-    string,
-    { year: number; month: number }
-  >()
-  for (const isoDate of historicalSpend.keys()) {
-    const monthYear = isoDate.slice(0, 7)
-    if (historicalMonths.has(monthYear)) continue
-
-    historicalMonths.set(monthYear, {
-      year: Number(isoDate.slice(0, 4)),
-      month: Number(isoDate.slice(5, 7)),
-    })
-  }
-
-  const daySamples = new Map<number, number[]>()
-  const weekSamples = new Map<number, number[]>()
-
-  for (const { year: sampleYear, month: sampleMonth } of historicalMonths.values()) {
-    const days = daysInCalendarMonth(sampleYear, sampleMonth)
-    const weekTotals = new Map<number, number>()
-
-    for (let day = 1; day <= days; day++) {
-      const spend =
-        historicalSpend.get(toIsoDate(sampleYear, sampleMonth, day)) ?? 0
-      pushSample(daySamples, day, spend)
-
-      const week = weekOfMonth(day)
-      weekTotals.set(week, (weekTotals.get(week) ?? 0) + spend)
-    }
-
-    for (const [week, total] of weekTotals) {
-      pushSample(weekSamples, week, total)
-    }
-  }
+  const historicalDailyAvg =
+    elapsedDays > 0 ? totalYtdSpend / elapsedDays : 0
+  const historicalWeeklyAvg =
+    elapsedWeeks > 0 ? totalYtdSpend / elapsedWeeks : 0
 
   const currentByDay = new Map<number, number>()
   for (const [isoDate, totalUsd] of spendByIsoDate(currentRows)) {
@@ -438,7 +441,6 @@ export async function getSpendPacing(
       return {
         day,
         actual: currentByDay.get(day) ?? 0,
-        target: average(daySamples.get(day) ?? []) ?? 0,
       }
     }
   )
@@ -458,10 +460,14 @@ export async function getSpendPacing(
       return {
         week,
         actual,
-        target: average(weekSamples.get(week) ?? []) ?? 0,
       }
     }
   )
 
-  return { dailyPacing, weeklyPacing }
+  return {
+    dailyPacing,
+    weeklyPacing,
+    historicalDailyAvg,
+    historicalWeeklyAvg,
+  }
 }

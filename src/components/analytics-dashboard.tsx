@@ -69,10 +69,7 @@ function FleetAnalyticsView({
         avgTotalUsd={avgTotalUsd}
         avgCpk={avgCpk}
       />
-      <SpendPacingDashboard
-        dailyPacing={spendPacing.dailyPacing}
-        weeklyPacing={spendPacing.weeklyPacing}
-      />
+      <SpendPacingDashboard {...spendPacing} />
     </div>
   )
 }

@@ -4,14 +4,16 @@ import { useId } from "react"
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
+  Label as RechartsLabel,
+  Line,
+  LineChart,
+  ReferenceLine,
   XAxis,
   YAxis,
 } from "recharts"
 
-import type { DailyPacingPoint, WeeklyPacingPoint } from "@/actions/analytics"
+import type { SpendPacing } from "@/actions/analytics"
 import {
   Card,
   CardContent,
@@ -34,7 +36,7 @@ const chartConfig = {
     color: "var(--chart-1)",
   },
   target: {
-    label: "Historical average",
+    label: "YTD average",
     color: "var(--chart-2)",
   },
 } satisfies ChartConfig
@@ -53,10 +55,9 @@ function formatUsdAxis(value: number) {
 export function SpendPacingDashboard({
   dailyPacing,
   weeklyPacing,
-}: {
-  dailyPacing: DailyPacingPoint[]
-  weeklyPacing: WeeklyPacingPoint[]
-}) {
+  historicalDailyAvg,
+  historicalWeeklyAvg,
+}: SpendPacing) {
   const fillId = `spend-pacing-actual-${useId().replace(/:/g, "")}`
 
   return (
@@ -65,8 +66,8 @@ export function SpendPacingDashboard({
         <CardHeader>
           <CardTitle>Daily spend pacing</CardTitle>
           <CardDescription>
-            This month versus the historical average for each day of the
-            month
+            This month&apos;s daily spend versus the year-to-date daily
+            average
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -82,7 +83,7 @@ export function SpendPacingDashboard({
               <AreaChart
                 accessibilityLayer
                 data={dailyPacing}
-                margin={{ top: 8, right: 8, left: 4 }}
+                margin={{ top: 18, right: 12, left: 4 }}
               >
                 <defs>
                   <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
@@ -124,20 +125,27 @@ export function SpendPacingDashboard({
                   }
                 />
                 <ChartLegend content={<ChartLegendContent />} />
+                <ReferenceLine
+                  y={historicalDailyAvg}
+                  stroke="var(--color-target)"
+                  strokeWidth={2}
+                  strokeDasharray="6 4"
+                  ifOverflow="extendDomain"
+                >
+                  <RechartsLabel
+                    value={`YTD avg ${formatUsdAxis(historicalDailyAvg)}`}
+                    position="insideTopRight"
+                    fill="var(--color-target)"
+                    fontSize={12}
+                    fontWeight={600}
+                  />
+                </ReferenceLine>
                 <Area
                   dataKey="actual"
                   type="monotone"
                   fill={`url(#${fillId})`}
                   stroke="var(--color-actual)"
                   strokeWidth={2}
-                />
-                <Area
-                  dataKey="target"
-                  type="monotone"
-                  fill="none"
-                  stroke="var(--color-target)"
-                  strokeWidth={2}
-                  strokeDasharray="3 3"
                 />
               </AreaChart>
             </ChartContainer>
@@ -149,8 +157,8 @@ export function SpendPacingDashboard({
         <CardHeader>
           <CardTitle>Weekly spend pacing</CardTitle>
           <CardDescription>
-            This month versus the historical average for each week of the
-            month
+            This month&apos;s weekly spend versus the year-to-date weekly
+            average
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -163,10 +171,10 @@ export function SpendPacingDashboard({
               config={chartConfig}
               className="aspect-auto h-[280px] w-full"
             >
-              <BarChart
+              <LineChart
                 accessibilityLayer
                 data={weeklyPacing}
-                margin={{ top: 8, right: 8, left: 4 }}
+                margin={{ top: 18, right: 12, left: 4 }}
               >
                 <CartesianGrid vertical={false} />
                 <XAxis
@@ -195,17 +203,34 @@ export function SpendPacingDashboard({
                   }
                 />
                 <ChartLegend content={<ChartLegendContent />} />
-                <Bar
+                <ReferenceLine
+                  y={historicalWeeklyAvg}
+                  stroke="var(--color-target)"
+                  strokeWidth={2}
+                  strokeDasharray="6 4"
+                  ifOverflow="extendDomain"
+                >
+                  <RechartsLabel
+                    value={`YTD avg ${formatUsdAxis(historicalWeeklyAvg)}`}
+                    position="insideTopRight"
+                    fill="var(--color-target)"
+                    fontSize={12}
+                    fontWeight={600}
+                  />
+                </ReferenceLine>
+                <Line
                   dataKey="actual"
-                  fill="var(--color-actual)"
-                  radius={[4, 4, 0, 0]}
+                  type="monotone"
+                  stroke="var(--color-actual)"
+                  strokeWidth={2.5}
+                  dot={{
+                    r: 3,
+                    strokeWidth: 2,
+                    fill: "var(--color-actual)",
+                  }}
+                  activeDot={{ r: 4 }}
                 />
-                <Bar
-                  dataKey="target"
-                  fill="var(--color-target)"
-                  radius={[4, 4, 0, 0]}
-                />
-              </BarChart>
+              </LineChart>
             </ChartContainer>
           )}
         </CardContent>
