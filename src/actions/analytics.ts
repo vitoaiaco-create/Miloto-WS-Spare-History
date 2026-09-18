@@ -169,7 +169,7 @@ export async function upsertMonthlyFleetKm(
     throw new Error("Failed to save monthly fleet KM")
   }
 
-  revalidatePath("/analytics")
+  revalidatePath("/analytics/financials")
 
   return row
 }
