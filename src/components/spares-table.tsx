@@ -4,6 +4,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -64,6 +65,10 @@ function RunningKmCell({
   )
 }
 
+function formatUsdTotal(value: number) {
+  return value.toLocaleString("en-US", { style: "currency", currency: "USD" })
+}
+
 export function SparesTable({
   spares,
   isFiltered,
@@ -71,6 +76,15 @@ export function SparesTable({
   spares: SparesHistoryRow[]
   isFiltered: boolean
 }) {
+  const totalPrice = spares.reduce(
+    (acc, row) => acc + (Number(row.priceUsd) || 0),
+    0
+  )
+  const totalAmount = spares.reduce(
+    (acc, row) => acc + (Number(row.amountUsd) || 0),
+    0
+  )
+
   return (
     <Table>
       <TableHeader>
@@ -119,6 +133,16 @@ export function SparesTable({
           ))
         )}
       </TableBody>
+      {spares.length > 0 ? (
+        <TableFooter>
+          <TableRow className="border-t-2 bg-muted/50 font-bold hover:bg-muted/50">
+            <TableCell colSpan={6}>Total</TableCell>
+            <TableCell>{formatUsdTotal(totalPrice)}</TableCell>
+            <TableCell>{formatUsdTotal(totalAmount)}</TableCell>
+            <TableCell />
+          </TableRow>
+        </TableFooter>
+      ) : null}
     </Table>
   )
 }

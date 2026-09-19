@@ -29,8 +29,8 @@ export async function SiteHeader() {
 
   return (
     <header className="flex h-16 w-full items-center border-b border-border">
-      <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-6 sm:px-10 lg:px-16">
-        <Link href={homeHref} className="flex min-w-0 items-center gap-3">
+      <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 sm:px-10 lg:px-16">
+        <Link href={homeHref} className="flex min-w-0 shrink items-center gap-2">
           <Image
             src="/zpc-logo.png"
             alt="Zambezi Portland Cement"
@@ -39,11 +39,11 @@ export async function SiteHeader() {
             className="h-8 w-auto shrink-0"
             priority
           />
-          <span className="whitespace-nowrap text-lg font-semibold tracking-tight sm:text-xl">
+          <span className="truncate text-sm font-semibold tracking-tight sm:text-base md:text-lg">
             Miloto WS Intel
           </span>
         </Link>
-        <div className="flex items-center gap-3">
+        <div className="ml-2 flex shrink-0 items-center gap-2">
           {userId ? (
             <nav className="hidden items-center gap-1 sm:flex">
               {showSparesHistory ? (
