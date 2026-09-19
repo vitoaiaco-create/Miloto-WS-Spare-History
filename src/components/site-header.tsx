@@ -30,17 +30,17 @@ export async function SiteHeader() {
   return (
     <header className="flex h-16 w-full items-center border-b border-border">
       <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-6 sm:px-10 lg:px-16">
-        <Link href={homeHref} className="flex items-center gap-3">
+        <Link href={homeHref} className="flex min-w-0 items-center gap-3">
           <Image
             src="/zpc-logo.png"
             alt="Zambezi Portland Cement"
             width={420}
             height={145}
-            className="h-8 w-auto"
+            className="h-8 w-auto shrink-0"
             priority
           />
-          <span className="text-base font-semibold tracking-tight">
-            Miloto WS Spare History
+          <span className="whitespace-nowrap text-lg font-semibold tracking-tight sm:text-xl">
+            Miloto WS Intel
           </span>
         </Link>
         <div className="flex items-center gap-3">

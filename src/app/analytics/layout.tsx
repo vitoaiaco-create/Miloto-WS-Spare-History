@@ -42,18 +42,7 @@ export default async function AnalyticsLayout({
           Workshop Analytics
         </h1>
 
-        <div className="flex w-full items-center gap-3">
-          <AnalyticsNav className="min-w-0 flex-1" />
-          <Button
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            nativeButton={false}
-            render={<Link href="/analytics/settings" />}
-          >
-            ⚙️ Settings
-          </Button>
-        </div>
+        <AnalyticsNav />
 
         {children}
       </section>

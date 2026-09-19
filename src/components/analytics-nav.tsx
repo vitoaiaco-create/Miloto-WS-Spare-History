@@ -2,59 +2,109 @@
 
 import Link from "next/link"
 import { useSelectedLayoutSegment } from "next/navigation"
+import { MenuIcon } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 
-const NAV_ITEMS = [
-  { href: "/analytics/financials", segment: "financials", label: "Financials" },
-  { href: "/analytics/assets", segment: "assets", label: "Assets" },
-  {
-    href: "/analytics/operations",
-    segment: "operations",
-    label: "Operational Health",
-  },
-  {
-    href: "/analytics/compliance",
-    segment: "compliance",
-    label: "Compliance & Audit",
-  },
-  {
-    href: "/analytics/cross-module",
-    segment: "cross-module",
-    label: "Cross-Module",
-  },
-] as const
+const LOCATION_BY_SEGMENT: Record<string, string> = {
+  financials: "Costings / Financials",
+  assets: "Costings / Assets",
+  operations: "Operational Health",
+  compliance: "Compliance & Audit",
+  "cross-module": "Cross-Module",
+  settings: "Settings (Fleet KM)",
+}
 
 export function AnalyticsNav({ className }: { className?: string }) {
   const segment = useSelectedLayoutSegment()
+  const currentLocation =
+    (segment && LOCATION_BY_SEGMENT[segment]) ?? "Costings / Financials"
 
   return (
     <nav
       aria-label="Analytics sections"
       className={cn(
-        "inline-flex w-full flex-wrap items-center justify-center rounded-lg bg-muted p-[3px] text-muted-foreground sm:h-12 sm:flex-nowrap",
+        "flex h-12 w-full items-center justify-between gap-3 rounded-lg border bg-background px-3",
         className
       )}
     >
-      {NAV_ITEMS.map((item) => {
-        const isActive = segment === item.segment
+      <p className="min-w-0 truncate text-sm font-medium text-foreground">
+        {currentLocation}
+      </p>
 
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-current={isActive ? "page" : undefined}
-            className={cn(
-              "relative inline-flex min-h-9 flex-1 items-center justify-center rounded-md border border-transparent px-3 py-1.5 text-center text-sm font-medium whitespace-nowrap transition-all hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring dark:text-muted-foreground dark:hover:text-foreground",
-              isActive
-                ? "bg-background text-foreground shadow-sm dark:border-input dark:bg-input/30 dark:text-foreground"
-                : "text-foreground/60"
-            )}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              aria-label="Open analytics navigation"
+            />
+          }
+        >
+          <MenuIcon />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-56">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>COSTINGS</DropdownMenuLabel>
+            <DropdownMenuItem
+              nativeButton={false}
+              render={<Link href="/analytics/financials" />}
+              aria-current={segment === "financials" ? "page" : undefined}
+            >
+              Fleet Financials
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              nativeButton={false}
+              render={<Link href="/analytics/assets" />}
+              aria-current={segment === "assets" ? "page" : undefined}
+            >
+              Asset Deep-Dive
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            nativeButton={false}
+            render={<Link href="/analytics/operations" />}
+            aria-current={segment === "operations" ? "page" : undefined}
           >
-            {item.label}
-          </Link>
-        )
-      })}
+            Operational Health (Coming Soon)
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            nativeButton={false}
+            render={<Link href="/analytics/compliance" />}
+            aria-current={segment === "compliance" ? "page" : undefined}
+          >
+            Compliance & Audit (Coming Soon)
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            nativeButton={false}
+            render={<Link href="/analytics/cross-module" />}
+            aria-current={segment === "cross-module" ? "page" : undefined}
+          >
+            Cross-Module (Coming Soon)
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            nativeButton={false}
+            render={<Link href="/analytics/settings" />}
+            aria-current={segment === "settings" ? "page" : undefined}
+          >
+            Settings (Fleet KM)
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </nav>
   )
 }
