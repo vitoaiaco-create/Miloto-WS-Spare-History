@@ -3,11 +3,15 @@
 import { auth } from "@clerk/nextjs/server"
 import {
   and,
+  asc,
   between,
+  desc,
   eq,
   gte,
   ilike,
+  isNotNull,
   lt,
+  ne,
   not,
   or,
   sql,
@@ -472,4 +476,144 @@ export async function getSpendPacing(
     historicalDailyAvg,
     historicalWeeklyAvg,
   }
+}
+
+const getActiveAssetsSchema = z.object({
+  year: z.number({ error: "Year is required" }).int().min(2000).max(2100),
+})
+
+export type ActiveAsset = {
+  id: string
+  name: string
+}
+
+export async function getActiveAssets(year: number): Promise<ActiveAsset[]> {
+  await requireWorkshopAnalyticsAccess()
+
+  const data = getActiveAssetsSchema.parse({ year })
+  const yearStart = `${data.year}-01-01`
+  const yearEnd = `${data.year}-12-31`
+
+  const rows = await db
+    .selectDistinct({
+      id: assetsTable.id,
+      name: assetsTable.assetName,
+    })
+    .from(mechanicalSparesTable)
+    .innerJoin(
+      assetsTable,
+      eq(mechanicalSparesTable.assetId, assetsTable.id)
+    )
+    .where(
+      between(mechanicalSparesTable.fitmentDate, yearStart, yearEnd)
+    )
+    .orderBy(asc(assetsTable.assetName))
+
+  return rows.map((row) => ({
+    id: String(row.id),
+    name: row.name,
+  }))
+}
+
+const getAssetSubEquipmentCostingsSchema = z.object({
+  assetId: z
+    .string({ error: "Asset is required" })
+    .trim()
+    .min(1, "Asset is required")
+    .regex(/^\d+$/, "Asset id must be a number")
+    .transform((value) => Number(value)),
+  year: z.number({ error: "Year is required" }).int().min(2000).max(2100),
+  month: z
+    .number()
+    .int()
+    .min(1, "Month must be between 1 and 12")
+    .max(12, "Month must be between 1 and 12")
+    .optional(),
+})
+
+export type AssetSubEquipmentCosting = {
+  subEquipment: string
+  totalUsd: number
+  percentage: number
+}
+
+// Sub Equipment is ingested into `tier1` (see `src/lib/validations.ts`).
+// Overhauled engine/diff labels vary in the source file, so the CASE
+// folds those raw strings into the standard fleet categories before
+// grouping spend.
+function normalizedSubEquipmentExpr() {
+  return sql<string>`
+    CASE
+      WHEN UPPER(${mechanicalSparesTable.tier1}) LIKE '%OVERHAULED%ENGINE%' THEN 'ENGINE'
+      WHEN UPPER(${mechanicalSparesTable.tier1}) LIKE '%OVERHAULED%DIFF%' THEN 'DIFFS'
+      ELSE UPPER(${mechanicalSparesTable.tier1})
+    END
+  `
+}
+
+function spendDateFilter(year: number, month?: number) {
+  if (month === undefined) {
+    return between(
+      mechanicalSparesTable.fitmentDate,
+      `${year}-01-01`,
+      `${year}-12-31`
+    )
+  }
+
+  return between(
+    mechanicalSparesTable.fitmentDate,
+    toFirstOfMonthIso(year, month),
+    toIsoDate(year, month, daysInCalendarMonth(year, month))
+  )
+}
+
+export async function getAssetSubEquipmentCostings(
+  assetId: string,
+  year: number,
+  month?: number
+): Promise<AssetSubEquipmentCosting[]> {
+  await requireWorkshopAnalyticsAccess()
+
+  const data = getAssetSubEquipmentCostingsSchema.parse({
+    assetId,
+    year,
+    month,
+  })
+  const normalizedSubEquipment = normalizedSubEquipmentExpr()
+
+  const rows = await db
+    .select({
+      subEquipment: normalizedSubEquipment.mapWith(String),
+      totalUsd: sum(mechanicalSparesTable.costUsd),
+    })
+    .from(mechanicalSparesTable)
+    .where(
+      and(
+        eq(mechanicalSparesTable.assetId, data.assetId),
+        spendDateFilter(data.year, data.month),
+        isNotNull(mechanicalSparesTable.tier1),
+        ne(mechanicalSparesTable.tier1, ""),
+        sql`btrim(${mechanicalSparesTable.tier1}) <> ''`
+      )
+    )
+    .groupBy(normalizedSubEquipment)
+    .having(sql`btrim(${normalizedSubEquipment}) <> ''`)
+    .orderBy(desc(sum(mechanicalSparesTable.costUsd)))
+
+  const costings = rows.flatMap((row) => {
+    const subEquipment = (row.subEquipment ?? "").trim()
+    if (!subEquipment) return []
+
+    return [{ subEquipment, totalUsd: toNumber(row.totalUsd) }]
+  })
+
+  const grandTotal = costings.reduce(
+    (total, row) => total + row.totalUsd,
+    0
+  )
+
+  return costings.map((row) => ({
+    ...row,
+    percentage: grandTotal > 0 ? (row.totalUsd / grandTotal) * 100 : 0,
+  }))
 }

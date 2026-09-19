@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 
 const NAV_ITEMS = [
   { href: "/analytics/financials", segment: "financials", label: "Financials" },
+  { href: "/analytics/assets", segment: "assets", label: "Assets" },
   {
     href: "/analytics/operations",
     segment: "operations",
@@ -24,13 +25,16 @@ const NAV_ITEMS = [
   },
 ] as const
 
-export function AnalyticsNav() {
+export function AnalyticsNav({ className }: { className?: string }) {
   const segment = useSelectedLayoutSegment()
 
   return (
     <nav
       aria-label="Analytics sections"
-      className="inline-flex w-full flex-wrap items-center justify-center rounded-lg bg-muted p-[3px] text-muted-foreground sm:h-12 sm:flex-nowrap"
+      className={cn(
+        "inline-flex w-full flex-wrap items-center justify-center rounded-lg bg-muted p-[3px] text-muted-foreground sm:h-12 sm:flex-nowrap",
+        className
+      )}
     >
       {NAV_ITEMS.map((item) => {
         const isActive = segment === item.segment
