@@ -2,6 +2,18 @@
 
 import { useRouter } from "next/navigation"
 
+import type { ActiveAsset } from "@/actions/analytics"
+import { Button } from "@/components/ui/button"
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+  ComboboxValue,
+} from "@/components/ui/combobox"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -14,6 +26,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   ASSET_COMPARISON_MONTH_OPTIONS,
   assetComparisonSearchString,
+  assetDetailSearchString,
   cohortOptions,
   parseAssetComparisonView,
   type AssetComparisonFleet,
@@ -21,11 +34,13 @@ import {
 } from "@/lib/asset-comparison"
 
 export function AssetComparisonControls({
+  assets,
   fleet,
   view,
   year,
   month,
 }: {
+  assets: ActiveAsset[]
   fleet: AssetComparisonFleet
   view: AssetComparisonView
   year: number
@@ -34,6 +49,7 @@ export function AssetComparisonControls({
   const router = useRouter()
   const monthValue = month === undefined ? "ytd" : String(month)
   const views = cohortOptions(fleet)
+  const assetNames = assets.map((asset) => asset.name)
 
   function goTo(next: {
     fleet?: AssetComparisonFleet
@@ -51,8 +67,51 @@ export function AssetComparisonControls({
     )
   }
 
+  function onJumpToAsset(name: string | null) {
+    if (!name) return
+    const asset = assets.find((item) => item.name === name)
+    if (!asset) return
+    router.push(
+      `/analytics/assets/${encodeURIComponent(asset.name)}${assetDetailSearchString(
+        year,
+        month
+      )}`
+    )
+  }
+
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <Label htmlFor="asset-comparison-jump">Jump to Asset...</Label>
+        <Combobox items={assetNames} value={null} onValueChange={onJumpToAsset}>
+          <ComboboxTrigger
+            render={
+              <Button
+                id="asset-comparison-jump"
+                variant="outline"
+                className="w-full justify-between font-normal"
+              />
+            }
+          >
+            <ComboboxValue placeholder="Jump to Asset..." />
+          </ComboboxTrigger>
+          <ComboboxContent>
+            <ComboboxInput
+              showTrigger={false}
+              placeholder="Search assets..."
+            />
+            <ComboboxEmpty>No assets found.</ComboboxEmpty>
+            <ComboboxList>
+              {(item) => (
+                <ComboboxItem key={item} value={item}>
+                  {item}
+                </ComboboxItem>
+              )}
+            </ComboboxList>
+          </ComboboxContent>
+        </Combobox>
+      </div>
+
       <div className="flex min-w-0 flex-col gap-1.5">
         <Label>Fleet Type</Label>
         <Tabs

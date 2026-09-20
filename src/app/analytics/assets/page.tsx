@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 
-import { getFleetAssetCostings } from "@/actions/analytics"
+import { getActiveAssets, getFleetAssetCostings } from "@/actions/analytics"
 import { AssetComparisonCharts } from "@/components/asset-comparison-charts"
 import { AssetComparisonControls } from "@/components/asset-comparison-controls"
 import {
@@ -65,11 +65,14 @@ export default async function AnalyticsAssetsIndexPage({
   const view = parseAssetComparisonView(
     toSearchString(resolvedSearchParams.view)
   )
-  const costings = await getFleetAssetCostings(
-    year,
-    fleetTypeFromComparisonFleet(fleet),
-    month
-  )
+  const [costings, activeAssets] = await Promise.all([
+    getFleetAssetCostings(
+      year,
+      fleetTypeFromComparisonFleet(fleet),
+      month
+    ),
+    getActiveAssets(year),
+  ])
   const assets = filterAssetsForView(costings.assets, fleet, view).map(
     (asset) => ({
       ...asset,
@@ -83,6 +86,7 @@ export default async function AnalyticsAssetsIndexPage({
   return (
     <div className="flex flex-col gap-6">
       <AssetComparisonControls
+        assets={activeAssets}
         fleet={fleet}
         view={view}
         year={year}
