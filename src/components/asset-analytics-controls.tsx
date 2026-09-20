@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation"
 
 import type { ActiveAsset } from "@/actions/analytics"
+import { toCanonicalFleetNumber } from "@/lib/spreadsheet"
 import { Button } from "@/components/ui/button"
 import {
   Combobox,
@@ -62,21 +63,34 @@ export function AssetAnalyticsControls({
   month?: number
 }) {
   const router = useRouter()
-  const selectedAsset = assets.find((asset) => asset.id === assetId)
+  const canonicalAssetId = toCanonicalFleetNumber(assetId)
+  const selectedAsset = assets.find(
+    (asset) =>
+      asset.id === assetId ||
+      asset.name === assetId ||
+      toCanonicalFleetNumber(asset.name) === canonicalAssetId
+  )
   const assetNames = assets.map((asset) => asset.name)
   const monthValue = month === undefined ? "ytd" : String(month)
 
   function goToAsset(nextAssetId: string) {
     router.push(
-      `/analytics/assets/${nextAssetId}${assetSearchString(year, month)}`
+      `/analytics/assets/${encodeURIComponent(nextAssetId)}${assetSearchString(year, month)}`
     )
   }
 
   function onAssetNameChange(name: string | null) {
     if (!name) return
     const asset = assets.find((item) => item.name === name)
-    if (!asset || asset.id === assetId) return
-    goToAsset(asset.id)
+    if (!asset) return
+    if (
+      asset.id === assetId ||
+      asset.name === assetId ||
+      toCanonicalFleetNumber(asset.name) === canonicalAssetId
+    ) {
+      return
+    }
+    goToAsset(asset.name)
   }
 
   function onMonthChange(value: string | null) {
@@ -86,7 +100,7 @@ export function AssetAnalyticsControls({
       value === "ytd" ? undefined : Number(value)
 
     router.replace(
-      `/analytics/assets/${assetId}${assetSearchString(year, nextMonth)}`,
+      `/analytics/assets/${encodeURIComponent(assetId)}${assetSearchString(year, nextMonth)}`,
       { scroll: false }
     )
   }

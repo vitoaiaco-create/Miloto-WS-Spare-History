@@ -27,6 +27,7 @@ import {
   mechanicalSparesTable,
   monthlyFleetKmTable,
 } from "@/db/schema"
+import { toCanonicalFleetNumber } from "@/lib/spreadsheet"
 
 const upsertMonthlyFleetKmSchema = z.object({
   year: z.number({ error: "Year is required" }).int().min(2000).max(2100),
@@ -616,4 +617,159 @@ export async function getAssetSubEquipmentCostings(
     ...row,
     percentage: grandTotal > 0 ? (row.totalUsd / grandTotal) * 100 : 0,
   }))
+}
+
+const getFleetAssetCostingsSchema = z.object({
+  year: z.number({ error: "Year is required" }).int().min(2000).max(2100),
+  fleetType: z.enum(["Motive", "Towed"]),
+  month: z
+    .number()
+    .int()
+    .min(1, "Month must be between 1 and 12")
+    .max(12, "Month must be between 1 and 12")
+    .optional(),
+})
+
+type GetFleetAssetCostingsInput = z.infer<typeof getFleetAssetCostingsSchema>
+
+export type FleetAssetCostingsFleetType = GetFleetAssetCostingsInput["fleetType"]
+
+export type FleetAssetCosting = {
+  assetId: string
+  totalUsd: number
+  subEquipmentSpend: Record<string, number>
+}
+
+export type FleetAssetCostings = {
+  assets: FleetAssetCosting[]
+  fleetOverallAverage: number
+  subEquipmentAverages: Record<string, number>
+}
+
+function costingFleetTypeFilter(fleetType: FleetAssetCostingsFleetType) {
+  return fleetTypeFilter(fleetType === "Motive" ? "motive" : "towed")
+}
+
+function meanSpendPerAsset(totalUsd: number, assetCount: number) {
+  return assetCount > 0 ? totalUsd / assetCount : 0
+}
+
+// Per-asset spend vs fleet baselines for Workshop Analytics. USD is grouped
+// by canonical Miloto No and normalized Sub Equipment. Active-asset count
+// is year-scoped (same definition as `getActiveAssets`) even when spend is
+// limited to a month, so monthly baselines stay fleet-wide means per asset
+// rather than means among assets that happened to have work that month.
+export async function getFleetAssetCostings(
+  year: number,
+  fleetType: FleetAssetCostingsFleetType,
+  month?: number
+): Promise<FleetAssetCostings> {
+  await requireWorkshopAnalyticsAccess()
+
+  const data = getFleetAssetCostingsSchema.parse({
+    year,
+    fleetType,
+    month,
+  })
+  const identityFilter = costingFleetTypeFilter(data.fleetType)
+  const dateFilter = spendDateFilter(data.year, data.month)
+  const yearFilter = spendDateFilter(data.year)
+  const normalizedSubEquipment = normalizedSubEquipmentExpr()
+  const spendWhere = identityFilter
+    ? and(
+        dateFilter,
+        identityFilter,
+        isNotNull(mechanicalSparesTable.tier1),
+        ne(mechanicalSparesTable.tier1, ""),
+        sql`btrim(${mechanicalSparesTable.tier1}) <> ''`
+      )
+    : and(
+        dateFilter,
+        isNotNull(mechanicalSparesTable.tier1),
+        ne(mechanicalSparesTable.tier1, ""),
+        sql`btrim(${mechanicalSparesTable.tier1}) <> ''`
+      )
+  const activeWhere = identityFilter
+    ? and(yearFilter, identityFilter)
+    : yearFilter
+
+  const [spendRows, [countRow]] = await Promise.all([
+    db
+      .select({
+        assetName: assetsTable.assetName,
+        subEquipment: normalizedSubEquipment.mapWith(String),
+        totalUsd: sum(mechanicalSparesTable.costUsd),
+      })
+      .from(mechanicalSparesTable)
+      .innerJoin(
+        assetsTable,
+        eq(mechanicalSparesTable.assetId, assetsTable.id)
+      )
+      .where(spendWhere)
+      .groupBy(assetsTable.assetName, normalizedSubEquipment)
+      .having(sql`btrim(${normalizedSubEquipment}) <> ''`)
+      .orderBy(asc(assetsTable.assetName)),
+    db
+      .select({
+        assetCount: sql<number>`count(distinct ${assetsTable.id})`.mapWith(
+          Number
+        ),
+      })
+      .from(mechanicalSparesTable)
+      .innerJoin(
+        assetsTable,
+        eq(mechanicalSparesTable.assetId, assetsTable.id)
+      )
+      .where(activeWhere),
+  ])
+
+  const byAsset = new Map<string, FleetAssetCosting>()
+  const categoryTotals = new Map<string, number>()
+
+  for (const row of spendRows) {
+    const subEquipment = (row.subEquipment ?? "").trim()
+    if (!subEquipment) continue
+
+    const assetId = toCanonicalFleetNumber(row.assetName)
+    const totalUsd = toNumber(row.totalUsd)
+    const existing = byAsset.get(assetId)
+
+    if (existing) {
+      existing.totalUsd += totalUsd
+      existing.subEquipmentSpend[subEquipment] =
+        (existing.subEquipmentSpend[subEquipment] ?? 0) + totalUsd
+    } else {
+      byAsset.set(assetId, {
+        assetId,
+        totalUsd,
+        subEquipmentSpend: { [subEquipment]: totalUsd },
+      })
+    }
+
+    categoryTotals.set(
+      subEquipment,
+      (categoryTotals.get(subEquipment) ?? 0) + totalUsd
+    )
+  }
+
+  const assets = [...byAsset.values()]
+  const fleetTotalUsd = assets.reduce(
+    (total, asset) => total + asset.totalUsd,
+    0
+  )
+  const activeAssetCount = countRow?.assetCount ?? 0
+  const subEquipmentAverages: Record<string, number> = {}
+
+  for (const [subEquipment, totalUsd] of categoryTotals) {
+    subEquipmentAverages[subEquipment] = meanSpendPerAsset(
+      totalUsd,
+      activeAssetCount
+    )
+  }
+
+  return {
+    assets,
+    fleetOverallAverage: meanSpendPerAsset(fleetTotalUsd, activeAssetCount),
+    subEquipmentAverages,
+  }
 }

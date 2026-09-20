@@ -1,14 +1,16 @@
 import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 
-import { getActiveAssets } from "@/actions/analytics"
-import { AssetAnalyticsControls } from "@/components/asset-analytics-controls"
+import { getFleetAssetCostings } from "@/actions/analytics"
+import { AssetComparisonCharts } from "@/components/asset-comparison-charts"
+import { AssetComparisonControls } from "@/components/asset-comparison-controls"
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+  assetDetailSearchString,
+  filterAssetsForView,
+  fleetTypeFromComparisonFleet,
+  parseAssetComparisonFleet,
+  parseAssetComparisonView,
+} from "@/lib/asset-comparison"
 
 type SearchParams = { [key: string]: string | string[] | undefined }
 
@@ -57,42 +59,40 @@ export default async function AnalyticsAssetsIndexPage({
   const resolvedSearchParams = await searchParams
   const year = toSelectedYear(resolvedSearchParams.year)
   const month = toSelectedMonth(resolvedSearchParams.month)
-  const assets = await getActiveAssets(year)
-  const firstAsset = assets[0]
-
-  if (firstAsset) {
-    const params = new URLSearchParams()
-    if (toSearchString(resolvedSearchParams.year)) {
-      params.set("year", String(year))
-    }
-    if (month !== undefined) params.set("month", String(month))
-
-    const query = params.toString()
-    redirect(
-      query
-        ? `/analytics/assets/${firstAsset.id}?${query}`
-        : `/analytics/assets/${firstAsset.id}`
-    )
-  }
+  const fleet = parseAssetComparisonFleet(
+    toSearchString(resolvedSearchParams.fleet)
+  )
+  const view = parseAssetComparisonView(
+    toSearchString(resolvedSearchParams.view)
+  )
+  const costings = await getFleetAssetCostings(
+    year,
+    fleetTypeFromComparisonFleet(fleet),
+    month
+  )
+  const assets = filterAssetsForView(costings.assets, fleet, view).map(
+    (asset) => ({
+      ...asset,
+      href: `/analytics/assets/${encodeURIComponent(asset.assetId)}${assetDetailSearchString(
+        year,
+        month
+      )}`,
+    })
+  )
 
   return (
     <div className="flex flex-col gap-6">
-      <AssetAnalyticsControls
-        assets={assets}
-        assetId=""
+      <AssetComparisonControls
+        fleet={fleet}
+        view={view}
         year={year}
         month={month}
       />
-      <Card>
-        <CardHeader>
-          <CardTitle>Sub Equipment Costings</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">
-            No maintenance costings recorded for this period
-          </p>
-        </CardContent>
-      </Card>
+      <AssetComparisonCharts
+        assets={assets}
+        fleetOverallAverage={costings.fleetOverallAverage}
+        subEquipmentAverages={costings.subEquipmentAverages}
+      />
     </div>
   )
 }

@@ -13,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { toCanonicalFleetNumber } from "@/lib/spreadsheet"
 
 type SearchParams = { [key: string]: string | string[] | undefined }
 
@@ -36,6 +37,22 @@ function toSelectedMonth(value: string | string[] | undefined) {
     return undefined
   }
   return month
+}
+
+function resolveCostingAssetId(
+  assetId: string,
+  assets: Awaited<ReturnType<typeof getActiveAssets>>
+) {
+  if (/^\d+$/.test(assetId)) return assetId
+
+  const canonical = toCanonicalFleetNumber(assetId)
+  const match = assets.find(
+    (asset) =>
+      asset.name === assetId ||
+      toCanonicalFleetNumber(asset.name) === canonical
+  )
+
+  return match?.id
 }
 
 export default async function AnalyticsAssetPage({
@@ -64,14 +81,11 @@ export default async function AnalyticsAssetPage({
   const resolvedSearchParams = await searchParams
   const year = toSelectedYear(resolvedSearchParams.year)
   const month = toSelectedMonth(resolvedSearchParams.month)
-  const hasNumericAssetId = /^\d+$/.test(assetId)
-
-  const [assets, costings] = await Promise.all([
-    getActiveAssets(year),
-    hasNumericAssetId
-      ? getAssetSubEquipmentCostings(assetId, year, month)
-      : Promise.resolve([]),
-  ])
+  const assets = await getActiveAssets(year)
+  const costingAssetId = resolveCostingAssetId(assetId, assets)
+  const costings = costingAssetId
+    ? await getAssetSubEquipmentCostings(costingAssetId, year, month)
+    : []
 
   return (
     <div className="flex flex-col gap-6">
