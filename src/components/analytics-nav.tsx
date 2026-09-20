@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useSelectedLayoutSegment } from "next/navigation"
+import { useSelectedLayoutSegments } from "next/navigation"
 import { MenuIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -17,8 +17,7 @@ import {
 import { cn } from "@/lib/utils"
 
 const LOCATION_BY_SEGMENT: Record<string, string> = {
-  financials: "Costings / Financials",
-  assets: "Costings / Assets",
+  financials: "Costings / Fleet Financials",
   operations: "Operational Health",
   compliance: "Compliance & Audit",
   "cross-module": "Cross-Module",
@@ -26,9 +25,16 @@ const LOCATION_BY_SEGMENT: Record<string, string> = {
 }
 
 export function AnalyticsNav({ className }: { className?: string }) {
-  const segment = useSelectedLayoutSegment()
-  const currentLocation =
-    (segment && LOCATION_BY_SEGMENT[segment]) ?? "Costings / Financials"
+  const segments = useSelectedLayoutSegments()
+  const section = segments[0]
+  const isMasterTable = section === "assets" && segments[1] === "table"
+  const isAssetCharts = section === "assets" && !isMasterTable
+  const currentLocation = isMasterTable
+    ? "Costings / Master Costings Table"
+    : isAssetCharts
+      ? "Costings / Asset Comparison Charts"
+      : ((section && LOCATION_BY_SEGMENT[section]) ??
+        "Costings / Fleet Financials")
 
   return (
     <nav
@@ -61,37 +67,44 @@ export function AnalyticsNav({ className }: { className?: string }) {
             <DropdownMenuItem
               nativeButton={false}
               render={<Link href="/analytics/financials" />}
-              aria-current={segment === "financials" ? "page" : undefined}
+              aria-current={section === "financials" ? "page" : undefined}
             >
               Fleet Financials
             </DropdownMenuItem>
             <DropdownMenuItem
               nativeButton={false}
               render={<Link href="/analytics/assets" />}
-              aria-current={segment === "assets" ? "page" : undefined}
+              aria-current={isAssetCharts ? "page" : undefined}
             >
-              Asset Deep-Dive
+              Asset Comparison Charts
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              nativeButton={false}
+              render={<Link href="/analytics/assets/table" />}
+              aria-current={isMasterTable ? "page" : undefined}
+            >
+              Master Costings Table
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             nativeButton={false}
             render={<Link href="/analytics/operations" />}
-            aria-current={segment === "operations" ? "page" : undefined}
+            aria-current={section === "operations" ? "page" : undefined}
           >
             Operational Health (Coming Soon)
           </DropdownMenuItem>
           <DropdownMenuItem
             nativeButton={false}
             render={<Link href="/analytics/compliance" />}
-            aria-current={segment === "compliance" ? "page" : undefined}
+            aria-current={section === "compliance" ? "page" : undefined}
           >
             Compliance & Audit (Coming Soon)
           </DropdownMenuItem>
           <DropdownMenuItem
             nativeButton={false}
             render={<Link href="/analytics/cross-module" />}
-            aria-current={segment === "cross-module" ? "page" : undefined}
+            aria-current={section === "cross-module" ? "page" : undefined}
           >
             Cross-Module (Coming Soon)
           </DropdownMenuItem>
@@ -99,7 +112,7 @@ export function AnalyticsNav({ className }: { className?: string }) {
           <DropdownMenuItem
             nativeButton={false}
             render={<Link href="/analytics/settings" />}
-            aria-current={segment === "settings" ? "page" : undefined}
+            aria-current={section === "settings" ? "page" : undefined}
           >
             Settings (Fleet KM)
           </DropdownMenuItem>

@@ -15,6 +15,25 @@ export const ASSET_COMPARISON_VIEWS = [
 
 export type AssetComparisonView = (typeof ASSET_COMPARISON_VIEWS)[number]
 
+export const STANDARD_SUB_EQUIPMENT = [
+  "ENGINE",
+  "TRANSMISSION",
+  "AXLES",
+  "DIFFS",
+  "SUSPENSION",
+  "AIR SYSTEM",
+  "ELECTRICAL",
+  "HYDRAULIC SYSTEM",
+  "CABIN",
+  "CHASSIS",
+  "BODY",
+  "AIRCON",
+  "COMPRESSOR",
+  "SERVICE",
+] as const
+
+export type StandardSubEquipment = (typeof STANDARD_SUB_EQUIPMENT)[number]
+
 export const ASSET_COMPARISON_MONTH_OPTIONS = [
   { value: "ytd", label: "Full Year YTD" },
   { value: "1", label: "January" },
@@ -69,6 +88,38 @@ export function cohortOptions(fleet: AssetComparisonFleet) {
   ] as const
 }
 
+export function isStandardSubEquipment(
+  value: string
+): value is StandardSubEquipment {
+  return (STANDARD_SUB_EQUIPMENT as readonly string[]).includes(value)
+}
+
+export function masterCostingsCategoryColumns(
+  assets: FleetAssetCosting[]
+): string[] {
+  const extraTotals = new Map<string, number>()
+
+  for (const asset of assets) {
+    for (const [category, totalUsd] of Object.entries(asset.subEquipmentSpend)) {
+      if (!isStandardSubEquipment(category)) {
+        extraTotals.set(
+          category,
+          (extraTotals.get(category) ?? 0) + totalUsd
+        )
+      }
+    }
+  }
+
+  const extras = [...extraTotals.entries()]
+    .sort(
+      (left, right) =>
+        right[1] - left[1] || left[0].localeCompare(right[0])
+    )
+    .map(([category]) => category)
+
+  return [...STANDARD_SUB_EQUIPMENT, ...extras]
+}
+
 export function assetComparisonSearchString({
   fleet,
   view,
@@ -76,7 +127,7 @@ export function assetComparisonSearchString({
   month,
 }: {
   fleet: AssetComparisonFleet
-  view: AssetComparisonView
+  view?: AssetComparisonView
   year: number
   month?: number
 }) {
@@ -84,7 +135,7 @@ export function assetComparisonSearchString({
   const currentYear = new Date().getFullYear()
 
   if (fleet !== "trucks") params.set("fleet", fleet)
-  if (view !== "top20") params.set("view", view)
+  if (view !== undefined && view !== "top20") params.set("view", view)
   if (year !== currentYear) params.set("year", String(year))
   if (month !== undefined) params.set("month", String(month))
 

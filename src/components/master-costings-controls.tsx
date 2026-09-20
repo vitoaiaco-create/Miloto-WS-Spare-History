@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation"
 
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -14,36 +15,32 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   ASSET_COMPARISON_MONTH_OPTIONS,
   assetComparisonSearchString,
-  cohortOptions,
-  parseAssetComparisonView,
   type AssetComparisonFleet,
-  type AssetComparisonView,
 } from "@/lib/asset-comparison"
 
-export function AssetComparisonControls({
+export function MasterCostingsControls({
   fleet,
-  view,
   year,
   month,
+  query,
+  onQueryChange,
 }: {
   fleet: AssetComparisonFleet
-  view: AssetComparisonView
   year: number
   month?: number
+  query: string
+  onQueryChange: (value: string) => void
 }) {
   const router = useRouter()
   const monthValue = month === undefined ? "ytd" : String(month)
-  const views = cohortOptions(fleet)
 
   function goTo(next: {
     fleet?: AssetComparisonFleet
-    view?: AssetComparisonView
     month?: number | undefined
   }) {
     router.replace(
-      `/analytics/assets${assetComparisonSearchString({
+      `/analytics/assets/table${assetComparisonSearchString({
         fleet: next.fleet ?? fleet,
-        view: next.view ?? view,
         year,
         month: "month" in next ? next.month : month,
       })}`,
@@ -71,29 +68,7 @@ export function AssetComparisonControls({
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <Label htmlFor="asset-comparison-view">View</Label>
-        <Select
-          value={view}
-          onValueChange={(value) => {
-            if (!value) return
-            goTo({ view: parseAssetComparisonView(value) })
-          }}
-        >
-          <SelectTrigger id="asset-comparison-view" className="w-full">
-            <SelectValue placeholder="Select view" />
-          </SelectTrigger>
-          <SelectContent>
-            {views.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <Label htmlFor="asset-comparison-month">Timeframe</Label>
+        <Label htmlFor="master-costings-month">Timeframe</Label>
         <Select
           value={monthValue}
           onValueChange={(value) => {
@@ -103,7 +78,7 @@ export function AssetComparisonControls({
             })
           }}
         >
-          <SelectTrigger id="asset-comparison-month" className="w-full">
+          <SelectTrigger id="master-costings-month" className="w-full">
             <SelectValue placeholder="Select timeframe" />
           </SelectTrigger>
           <SelectContent>
@@ -114,6 +89,16 @@ export function AssetComparisonControls({
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <Label htmlFor="master-costings-search">Asset Search</Label>
+        <Input
+          id="master-costings-search"
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder="Filter by Miloto No..."
+        />
       </div>
     </div>
   )

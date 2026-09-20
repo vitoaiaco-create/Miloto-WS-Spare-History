@@ -35,28 +35,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { isStandardSubEquipment, STANDARD_SUB_EQUIPMENT } from "@/lib/asset-comparison"
 import { normalizeSubEquipment } from "@/lib/spreadsheet"
 
 export type AssetComparisonPoint = FleetAssetCosting & {
   href: string
 }
-
-const STANDARD_SUB_EQUIPMENT = [
-  "ENGINE",
-  "TRANSMISSION",
-  "AXLES",
-  "DIFFS",
-  "SUSPENSION",
-  "AIR SYSTEM",
-  "ELECTRICAL",
-  "HYDRAULIC SYSTEM",
-  "CABIN",
-  "CHASSIS",
-  "BODY",
-  "AIRCON",
-  "COMPRESSOR",
-  "SERVICE",
-] as const
 
 const chartConfig = {
   totalUsd: {
@@ -116,12 +100,7 @@ function subEquipmentOptions(
   }
 
   const extras = [...extra]
-    .filter(
-      (key) =>
-        !STANDARD_SUB_EQUIPMENT.includes(
-          key as (typeof STANDARD_SUB_EQUIPMENT)[number]
-        )
-    )
+    .filter((key) => !isStandardSubEquipment(key))
     .sort((left, right) => left.localeCompare(right))
 
   return [...STANDARD_SUB_EQUIPMENT, ...extras]

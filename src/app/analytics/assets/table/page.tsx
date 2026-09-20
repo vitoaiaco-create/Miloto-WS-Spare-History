@@ -2,14 +2,11 @@ import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 
 import { getFleetAssetCostings } from "@/actions/analytics"
-import { AssetComparisonCharts } from "@/components/asset-comparison-charts"
-import { AssetComparisonControls } from "@/components/asset-comparison-controls"
+import { MasterCostingsTable } from "@/components/master-costings-table"
 import {
   assetDetailSearchString,
-  filterAssetsForView,
   fleetTypeFromComparisonFleet,
   parseAssetComparisonFleet,
-  parseAssetComparisonView,
 } from "@/lib/asset-comparison"
 
 type SearchParams = { [key: string]: string | string[] | undefined }
@@ -36,7 +33,7 @@ function toSelectedMonth(value: string | string[] | undefined) {
   return month
 }
 
-export default async function AnalyticsAssetsIndexPage({
+export default async function AnalyticsAssetsTablePage({
   searchParams,
 }: {
   searchParams: Promise<SearchParams>
@@ -62,37 +59,31 @@ export default async function AnalyticsAssetsIndexPage({
   const fleet = parseAssetComparisonFleet(
     toSearchString(resolvedSearchParams.fleet)
   )
-  const view = parseAssetComparisonView(
-    toSearchString(resolvedSearchParams.view)
-  )
   const costings = await getFleetAssetCostings(
     year,
     fleetTypeFromComparisonFleet(fleet),
     month
   )
-  const assets = filterAssetsForView(costings.assets, fleet, view).map(
-    (asset) => ({
+  const assets = [...costings.assets]
+    .sort(
+      (left, right) =>
+        right.totalUsd - left.totalUsd ||
+        left.assetId.localeCompare(right.assetId)
+    )
+    .map((asset) => ({
       ...asset,
       href: `/analytics/assets/${encodeURIComponent(asset.assetId)}${assetDetailSearchString(
         year,
         month
       )}`,
-    })
-  )
+    }))
 
   return (
-    <div className="flex flex-col gap-6">
-      <AssetComparisonControls
-        fleet={fleet}
-        view={view}
-        year={year}
-        month={month}
-      />
-      <AssetComparisonCharts
-        assets={assets}
-        fleetOverallAverage={costings.fleetOverallAverage}
-        subEquipmentAverages={costings.subEquipmentAverages}
-      />
-    </div>
+    <MasterCostingsTable
+      assets={assets}
+      fleet={fleet}
+      year={year}
+      month={month}
+    />
   )
 }
