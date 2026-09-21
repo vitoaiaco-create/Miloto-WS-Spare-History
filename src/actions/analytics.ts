@@ -661,68 +661,70 @@ function meanSpendPerAsset(totalUsd: number, assetCount: number) {
 // rather than means among assets that happened to have work that month.
 export async function getFleetAssetCostings(
   year: number,
-  fleetType: FleetAssetCostingsFleetType,
+  fleetType: "Motive" | "Towed",
   month?: number
 ): Promise<FleetAssetCostings | FleetAssetCosting[]> {
-  await requireWorkshopAnalyticsAccess()
-
-  const data = getFleetAssetCostingsSchema.parse({
-    year,
-    fleetType,
-    month,
-  })
-  const identityFilter = costingFleetTypeFilter(data.fleetType)
-  const dateFilter = spendDateFilter(data.year, data.month)
-  const yearFilter = spendDateFilter(data.year)
-  const normalizedSubEquipment = normalizedSubEquipmentExpr()
-  const spendWhere = identityFilter
-    ? and(
-        dateFilter,
-        identityFilter,
-        isNotNull(mechanicalSparesTable.tier1),
-        ne(mechanicalSparesTable.tier1, ""),
-        sql`btrim(${mechanicalSparesTable.tier1}) <> ''`
-      )
-    : and(
-        dateFilter,
-        isNotNull(mechanicalSparesTable.tier1),
-        ne(mechanicalSparesTable.tier1, ""),
-        sql`btrim(${mechanicalSparesTable.tier1}) <> ''`
-      )
-  const activeWhere = identityFilter
-    ? and(yearFilter, identityFilter)
-    : yearFilter
-
   try {
-    const [spendRows, [countRow]] = await Promise.all([
-      db
-        .select({
-          assetName: assetsTable.assetName,
-          subEquipment: normalizedSubEquipment.mapWith(String),
-          totalUsd: sum(mechanicalSparesTable.costUsd),
-        })
-        .from(mechanicalSparesTable)
-        .innerJoin(
-          assetsTable,
-          eq(mechanicalSparesTable.assetId, assetsTable.id)
+    // Ensure db is defined before querying
+    if (!db) throw new Error("Database connection instance is undefined")
+
+    await requireWorkshopAnalyticsAccess()
+
+    const parsed = getFleetAssetCostingsSchema.parse({
+      year,
+      fleetType,
+      month,
+    })
+    const identityFilter = costingFleetTypeFilter(parsed.fleetType)
+    const dateFilter = spendDateFilter(parsed.year, parsed.month)
+    const yearFilter = spendDateFilter(parsed.year)
+    const normalizedSubEquipment = normalizedSubEquipmentExpr()
+    const spendWhere = identityFilter
+      ? and(
+          dateFilter,
+          identityFilter,
+          isNotNull(mechanicalSparesTable.tier1),
+          ne(mechanicalSparesTable.tier1, ""),
+          sql`btrim(${mechanicalSparesTable.tier1}) <> ''`
         )
-        .where(spendWhere)
-        .groupBy(assetsTable.assetName, normalizedSubEquipment)
-        .having(sql`btrim(${normalizedSubEquipment}) <> ''`)
-        .orderBy(asc(assetsTable.assetName)),
-      db
-        .select({
-          assetCount: sql<number>`count(distinct ${assetsTable.id})`.mapWith(
-            Number
-          ),
-        })
-        .from(mechanicalSparesTable)
-        .innerJoin(
-          assetsTable,
-          eq(mechanicalSparesTable.assetId, assetsTable.id)
+      : and(
+          dateFilter,
+          isNotNull(mechanicalSparesTable.tier1),
+          ne(mechanicalSparesTable.tier1, ""),
+          sql`btrim(${mechanicalSparesTable.tier1}) <> ''`
         )
-        .where(activeWhere),
-    ])
+    const activeWhere = identityFilter
+      ? and(yearFilter, identityFilter)
+      : yearFilter
+
+    const spendRows = await db
+      .select({
+        assetName: assetsTable.assetName,
+        subEquipment: normalizedSubEquipment.mapWith(String),
+        totalUsd: sum(mechanicalSparesTable.costUsd),
+      })
+      .from(mechanicalSparesTable)
+      .innerJoin(
+        assetsTable,
+        eq(mechanicalSparesTable.assetId, assetsTable.id)
+      )
+      .where(spendWhere)
+      .groupBy(assetsTable.assetName, normalizedSubEquipment)
+      .having(sql`btrim(${normalizedSubEquipment}) <> ''`)
+      .orderBy(asc(assetsTable.assetName))
+
+    const countRows = await db
+      .select({
+        assetCount: sql<number>`count(distinct ${assetsTable.id})`.mapWith(
+          Number
+        ),
+      })
+      .from(mechanicalSparesTable)
+      .innerJoin(
+        assetsTable,
+        eq(mechanicalSparesTable.assetId, assetsTable.id)
+      )
+      .where(activeWhere)
 
     const byAsset = new Map<string, FleetAssetCosting>()
     const categoryTotals = new Map<string, number>()
@@ -758,7 +760,7 @@ export async function getFleetAssetCostings(
       (total, asset) => total + asset.totalUsd,
       0
     )
-    const activeAssetCount = countRow?.assetCount ?? 0
+    const activeAssetCount = countRows[0]?.assetCount ?? 0
     const subEquipmentAverages: Record<string, number> = {}
 
     for (const [subEquipment, totalUsd] of categoryTotals) {
@@ -768,13 +770,15 @@ export async function getFleetAssetCostings(
       )
     }
 
-    return {
+    const data: FleetAssetCostings = {
       assets,
       fleetOverallAverage: meanSpendPerAsset(fleetTotalUsd, activeAssetCount),
       subEquipmentAverages,
     }
+
+    return data
   } catch (error) {
-    console.error(error)
+    console.error("Failed to fetch fleet asset costings:", error)
     return []
   }
 }
