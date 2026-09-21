@@ -1,6 +1,6 @@
 "use client"
 
-import { useId, useState, type CSSProperties } from "react"
+import { useId, useRef, useState, type CSSProperties } from "react"
 import {
   CartesianGrid,
   Label as RechartsLabel,
@@ -25,6 +25,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
+import { ExportMenu } from "@/components/ui/export-menu"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
@@ -89,6 +90,7 @@ export function AnalyticsCpkChart({
   avgCpk: number | null
 }) {
   const switchId = useId()
+  const chartRef = useRef<HTMLDivElement>(null)
   const [metric, setMetric] = useState<ChartMetric>("totalUsd")
   const isCpk = metric === "cpk"
   const average = isCpk ? avgCpk : avgTotalUsd
@@ -136,95 +138,104 @@ export function AnalyticsCpkChart({
         </CardAction>
       </CardHeader>
       <CardContent>
-        {data.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            No monthly spend data to chart yet.
-          </p>
-        ) : (
-          <ChartContainer
-            config={chartConfig}
-            className="aspect-auto h-[280px] w-full"
-          >
-            <LineChart
-              accessibilityLayer
-              data={data}
-              margin={{ top: 18, right: 12, left: 4 }}
-            >
-              <CartesianGrid vertical={false} />
-              <XAxis
-                dataKey="month"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-              />
-              <YAxis
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                width="auto"
-                domain={[0, "auto"]}
-                tickFormatter={(value) =>
-                  formatAxisValue(metric, Number(value))
-                }
-              />
-              <ChartTooltip
-                content={
-                  <ChartTooltipContent
-                    formatter={(value, name, item) => (
-                      <>
-                        <div
-                          className="h-2.5 w-2.5 shrink-0 rounded-[2px] border-(--color-border) bg-(--color-bg)"
-                          style={
-                            {
-                              "--color-bg": item.color,
-                              "--color-border": item.color,
-                            } as CSSProperties
-                          }
-                        />
-                        <div className="flex flex-1 items-center justify-between leading-none">
-                          <span className="text-muted-foreground">
-                            {chartConfig[name as keyof typeof chartConfig]
-                              ?.label ?? name}
-                          </span>
-                          <span className="font-mono font-medium text-foreground tabular-nums">
-                            {formatTooltipValue(metric, value)}
-                          </span>
-                        </div>
-                      </>
-                    )}
-                  />
-                }
-              />
-              {average != null ? (
-                <ReferenceLine
-                  y={average}
-                  stroke={`var(--color-${metric})`}
-                  strokeDasharray="3 3"
+        <div className="relative mt-4 rounded-md border bg-background p-4 pt-8">
+          <ExportMenu
+            targetRef={chartRef}
+            filename={isCpk ? "financials-cpk-chart" : "financials-monthly-spend"}
+            className="absolute top-2 right-2 z-40"
+          />
+          <div ref={chartRef} className="bg-background">
+            {data.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No monthly spend data to chart yet.
+              </p>
+            ) : (
+              <ChartContainer
+                config={chartConfig}
+                className="aspect-auto h-[280px] w-full"
+              >
+                <LineChart
+                  accessibilityLayer
+                  data={data}
+                  margin={{ top: 18, right: 12, left: 4 }}
                 >
-                  <RechartsLabel
-                    value={`Avg ${formatAxisValue(metric, average)}`}
-                    position="insideTopRight"
-                    fill="var(--muted-foreground)"
-                    fontSize={12}
+                  <CartesianGrid vertical={false} />
+                  <XAxis
+                    dataKey="month"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
                   />
-                </ReferenceLine>
-              ) : null}
-              <Line
-                key={metric}
-                dataKey={metric}
-                type="monotone"
-                stroke={`var(--color-${metric})`}
-                strokeWidth={2.5}
-                dot={{
-                  r: 3,
-                  strokeWidth: 2,
-                  fill: `var(--color-${metric})`,
-                }}
-                activeDot={{ r: 4 }}
-              />
-            </LineChart>
-          </ChartContainer>
-        )}
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    width="auto"
+                    domain={[0, "auto"]}
+                    tickFormatter={(value) =>
+                      formatAxisValue(metric, Number(value))
+                    }
+                  />
+                  <ChartTooltip
+                    content={
+                      <ChartTooltipContent
+                        formatter={(value, name, item) => (
+                          <>
+                            <div
+                              className="h-2.5 w-2.5 shrink-0 rounded-[2px] border-(--color-border) bg-(--color-bg)"
+                              style={
+                                {
+                                  "--color-bg": item.color,
+                                  "--color-border": item.color,
+                                } as CSSProperties
+                              }
+                            />
+                            <div className="flex flex-1 items-center justify-between leading-none">
+                              <span className="text-muted-foreground">
+                                {chartConfig[name as keyof typeof chartConfig]
+                                  ?.label ?? name}
+                              </span>
+                              <span className="font-mono font-medium text-foreground tabular-nums">
+                                {formatTooltipValue(metric, value)}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      />
+                    }
+                  />
+                  {average != null ? (
+                    <ReferenceLine
+                      y={average}
+                      stroke={`var(--color-${metric})`}
+                      strokeDasharray="3 3"
+                    >
+                      <RechartsLabel
+                        value={`Avg ${formatAxisValue(metric, average)}`}
+                        position="insideTopRight"
+                        fill="var(--muted-foreground)"
+                        fontSize={12}
+                      />
+                    </ReferenceLine>
+                  ) : null}
+                  <Line
+                    key={metric}
+                    dataKey={metric}
+                    type="monotone"
+                    stroke={`var(--color-${metric})`}
+                    strokeWidth={2.5}
+                    dot={{
+                      r: 3,
+                      strokeWidth: 2,
+                      fill: `var(--color-${metric})`,
+                    }}
+                    activeDot={{ r: 4 }}
+                  />
+                </LineChart>
+              </ChartContainer>
+            )}
+          </div>
+        </div>
       </CardContent>
     </Card>
   )

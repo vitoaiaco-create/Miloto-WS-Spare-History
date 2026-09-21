@@ -257,6 +257,7 @@ export function AssetComparisonCharts({
         <CardContent>
           <div className="relative border rounded-md p-4 bg-background">
             <ExportMenu
+              className="absolute top-2 right-2 z-10"
               targetRef={overallChartRef}
               filename="overall-spend-cohort"
             />
@@ -311,6 +312,7 @@ export function AssetComparisonCharts({
         <CardContent>
           <div className="relative border rounded-md p-4 bg-background">
             <ExportMenu
+              className="absolute top-2 right-2 z-10"
               targetRef={subEqChartRef}
               filename="sub-equipment-spend-cohort"
             />

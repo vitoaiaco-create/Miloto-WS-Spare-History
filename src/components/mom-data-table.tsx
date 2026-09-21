@@ -1,3 +1,7 @@
+"use client"
+
+import { useMemo, useRef } from "react"
+
 import {
   Card,
   CardContent,
@@ -5,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { ExportMenu } from "@/components/ui/export-menu"
 import {
   Table,
   TableBody,
@@ -67,8 +72,19 @@ export function MomDataTable({
   data: MomDataPoint[]
   fleetKm: { month: string; totalKm: number }[]
 }) {
+  const tableRef = useRef<HTMLDivElement>(null)
   const spendByMonth = byMonth(data)
   const kmByMonth = byMonth(fleetKm)
+  const csvData = useMemo(() => {
+    const spend = byMonth(data)
+    const km = byMonth(fleetKm)
+    return MONTH_COLUMNS.map((month) => ({
+      month,
+      totalUsd: spend.get(month)?.totalUsd ?? null,
+      fleetKm: km.get(month)?.totalKm ?? null,
+      cpk: spend.get(month)?.cpk ?? null,
+    }))
+  }, [data, fleetKm])
 
   return (
     <Card>
@@ -79,73 +95,83 @@ export function MomDataTable({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="sticky left-0 z-10 min-w-[9.5rem] bg-card">
-                Metric
-              </TableHead>
-              {MONTH_COLUMNS.map((month) => (
-                <TableHead
-                  key={month}
-                  className="min-w-[4.75rem] text-right font-medium"
-                >
-                  {month}
+        <div className="relative pt-10">
+          <ExportMenu
+            targetRef={tableRef}
+            tableData={csvData}
+            filename="financials-table"
+            className="absolute top-2 right-2 z-40"
+          />
+          <div ref={tableRef}>
+            <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="sticky left-0 z-10 min-w-[9.5rem] bg-card">
+                  Metric
                 </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <TableRow>
-              <TableCell className="sticky left-0 z-10 bg-card font-medium">
-                Cost Year (USD)
-              </TableCell>
-              {MONTH_COLUMNS.map((month) => (
-                <TableCell
-                  key={month}
-                  className="text-right font-mono tabular-nums"
-                >
-                  {formatOrDash(
-                    spendByMonth.get(month)?.totalUsd,
-                    (value) => usdFormat.format(value)
-                  )}
+                {MONTH_COLUMNS.map((month) => (
+                  <TableHead
+                    key={month}
+                    className="min-w-[4.75rem] text-right font-medium"
+                  >
+                    {month}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow>
+                <TableCell className="sticky left-0 z-10 bg-card font-medium">
+                  Cost Year (USD)
                 </TableCell>
-              ))}
-            </TableRow>
-            <TableRow>
-              <TableCell className="sticky left-0 z-10 bg-card font-medium">
-                Fleet KM
-              </TableCell>
-              {MONTH_COLUMNS.map((month) => (
-                <TableCell
-                  key={month}
-                  className="text-right font-mono tabular-nums"
-                >
-                  {formatOrDash(
-                    kmByMonth.get(month)?.totalKm,
-                    (value) => kmFormat.format(value)
-                  )}
+                {MONTH_COLUMNS.map((month) => (
+                  <TableCell
+                    key={month}
+                    className="text-right font-mono tabular-nums"
+                  >
+                    {formatOrDash(
+                      spendByMonth.get(month)?.totalUsd,
+                      (value) => usdFormat.format(value)
+                    )}
+                  </TableCell>
+                ))}
+              </TableRow>
+              <TableRow>
+                <TableCell className="sticky left-0 z-10 bg-card font-medium">
+                  Fleet KM
                 </TableCell>
-              ))}
-            </TableRow>
-            <TableRow>
-              <TableCell className="sticky left-0 z-10 bg-card font-medium">
-                CPK
-              </TableCell>
-              {MONTH_COLUMNS.map((month) => (
-                <TableCell
-                  key={month}
-                  className="text-right font-mono tabular-nums"
-                >
-                  {formatOrDash(
-                    spendByMonth.get(month)?.cpk,
-                    (value) => cpkFormat.format(value)
-                  )}
+                {MONTH_COLUMNS.map((month) => (
+                  <TableCell
+                    key={month}
+                    className="text-right font-mono tabular-nums"
+                  >
+                    {formatOrDash(
+                      kmByMonth.get(month)?.totalKm,
+                      (value) => kmFormat.format(value)
+                    )}
+                  </TableCell>
+                ))}
+              </TableRow>
+              <TableRow>
+                <TableCell className="sticky left-0 z-10 bg-card font-medium">
+                  CPK
                 </TableCell>
-              ))}
-            </TableRow>
-          </TableBody>
-        </Table>
+                {MONTH_COLUMNS.map((month) => (
+                  <TableCell
+                    key={month}
+                    className="text-right font-mono tabular-nums"
+                  >
+                    {formatOrDash(
+                      spendByMonth.get(month)?.cpk,
+                      (value) => cpkFormat.format(value)
+                    )}
+                  </TableCell>
+                ))}
+              </TableRow>
+            </TableBody>
+          </Table>
+          </div>
+        </div>
       </CardContent>
     </Card>
   )

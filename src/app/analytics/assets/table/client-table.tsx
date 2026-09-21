@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import {
   createColumnHelper,
   createSortedRowModel,
@@ -261,6 +261,7 @@ export function ClientTable({
   const rows = table.getRowModel().rows
   const columnCount = table.getAllLeafColumns().length
   const hasQuery = query.trim().length > 0
+  const tableRef = useRef<HTMLDivElement>(null)
   const csvData = useMemo(
     () =>
       filteredAssets.map((asset) => {
@@ -294,71 +295,78 @@ export function ClientTable({
             timeframe.
           </CardDescription>
         </CardHeader>
-        <CardContent className="relative">
-          <ExportMenu tableData={csvData} filename="master-costings" />
-          <Table containerClassName="relative w-full overflow-auto max-h-[70vh]">
-            <TableHeader className="sticky top-0 z-20 bg-card shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]">
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <TableHead
-                      key={header.id}
-                      className={header.column.columnDef.meta?.headerClassName}
-                    >
-                      {header.isPlaceholder ? null : (
-                        <table.FlexRender header={header} />
-                      )}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {rows.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={columnCount}
-                    className="text-muted-foreground"
-                  >
-                    {hasQuery
-                      ? "No assets match that Miloto No."
-                      : "No maintenance costings recorded for this period"}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                rows.map((row) => (
-                  <TableRow key={row.id}>
-                    {row.getAllCells().map((cell) => (
-                      <TableCell
-                        key={cell.id}
-                        className={cell.column.columnDef.meta?.cellClassName}
+        <CardContent>
+          <div ref={tableRef} className="relative">
+            <ExportMenu
+              className="absolute top-2 right-2 z-40"
+              targetRef={tableRef}
+              tableData={csvData}
+              filename="master-costings"
+            />
+            <Table containerClassName="relative w-full overflow-auto max-h-[70vh]">
+              <TableHeader className="sticky top-0 z-20 bg-card shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <TableHead
+                        key={header.id}
+                        className={header.column.columnDef.meta?.headerClassName}
                       >
-                        <table.FlexRender cell={cell} />
+                        {header.isPlaceholder ? null : (
+                          <table.FlexRender header={header} />
+                        )}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {rows.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={columnCount}
+                      className="text-muted-foreground"
+                    >
+                      {hasQuery
+                        ? "No assets match that Miloto No."
+                        : "No maintenance costings recorded for this period"}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  rows.map((row) => (
+                    <TableRow key={row.id}>
+                      {row.getAllCells().map((cell) => (
+                        <TableCell
+                          key={cell.id}
+                          className={cell.column.columnDef.meta?.cellClassName}
+                        >
+                          <table.FlexRender cell={cell} />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+              {rows.length > 0 ? (
+                <TableFooter>
+                  <TableRow className="bg-muted hover:bg-muted">
+                    {table.getAllLeafColumns().map((column) => (
+                      <TableCell
+                        key={column.id}
+                        className={column.columnDef.meta?.footerClassName}
+                      >
+                        {column.id === "assetId"
+                          ? "Total"
+                          : column.id === "totalUsd"
+                            ? formatTotalSpend(totals.totalUsd)
+                            : formatSpend(totals.categoryTotals[column.id] ?? 0)}
                       </TableCell>
                     ))}
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-            {rows.length > 0 ? (
-              <TableFooter>
-                <TableRow className="bg-muted hover:bg-muted">
-                  {table.getAllLeafColumns().map((column) => (
-                    <TableCell
-                      key={column.id}
-                      className={column.columnDef.meta?.footerClassName}
-                    >
-                      {column.id === "assetId"
-                        ? "Total"
-                        : column.id === "totalUsd"
-                          ? formatTotalSpend(totals.totalUsd)
-                          : formatSpend(totals.categoryTotals[column.id] ?? 0)}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              </TableFooter>
-            ) : null}
-          </Table>
+                </TableFooter>
+              ) : null}
+            </Table>
+          </div>
         </CardContent>
       </Card>
     </div>

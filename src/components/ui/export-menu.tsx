@@ -21,16 +21,23 @@ import {
   downloadElementAsPng,
   exportDataToCSV,
 } from "@/lib/export-image"
+import { cn } from "@/lib/utils"
 
 export function ExportMenu({
   targetRef,
   filename = "export.png",
   tableData,
+  className,
 }: {
   targetRef?: RefObject<HTMLElement | null>
   filename?: string
   tableData?: Record<string, unknown>[]
+  className?: string
 }) {
+  if (!targetRef && !tableData) {
+    return null
+  }
+
   function getTarget() {
     const element = targetRef?.current
     if (!element) {
@@ -105,7 +112,7 @@ export function ExportMenu({
   }
 
   return (
-    <div className="absolute top-2 right-2 z-10">
+    <div className={cn(className)}>
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -118,7 +125,7 @@ export function ExportMenu({
             />
           }
         >
-          <CameraIcon />
+          {targetRef ? <CameraIcon /> : <DownloadIcon />}
           <span className="sr-only">Export</span>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
