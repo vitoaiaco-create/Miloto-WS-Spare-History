@@ -134,6 +134,11 @@ export function SparesFilterBar({
   }
 
   const hasActiveFilters = Object.values(filters).some(Boolean)
+  const subEquipmentItems =
+    filters.subEquipment &&
+    !SUB_EQUIPMENT_OPTIONS.includes(filters.subEquipment)
+      ? [...SUB_EQUIPMENT_OPTIONS, filters.subEquipment]
+      : SUB_EQUIPMENT_OPTIONS
 
   return (
     <Card>
@@ -188,7 +193,7 @@ export function SparesFilterBar({
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="filter-sub-equipment">Sub Equipment</Label>
             <Combobox
-              items={SUB_EQUIPMENT_OPTIONS}
+              items={subEquipmentItems}
               value={filters.subEquipment || null}
               onValueChange={(value) =>
                 updateDiscreteFilter("subEquipment", value ?? "")

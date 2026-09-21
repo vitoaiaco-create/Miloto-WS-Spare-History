@@ -1,9 +1,15 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import Link from "next/link"
+import { useTable, type SortingState } from "@tanstack/react-table"
 
-import type { FleetAssetCosting } from "@/actions/analytics"
+import {
+  createMasterCostingsColumns,
+  formatSpend,
+  formatTotalSpend,
+  masterCostingsTableFeatures,
+  type MasterCostingRow,
+} from "@/app/analytics/assets/table/columns"
 import { MasterCostingsControls } from "@/components/master-costings-controls"
 import {
   Card,
@@ -25,23 +31,8 @@ import {
   masterCostingsCategoryColumns,
   type AssetComparisonFleet,
 } from "@/lib/asset-comparison"
-import { normalizeSubEquipment } from "@/lib/spreadsheet"
 
-const usdFormat = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
-
-export type MasterCostingRow = FleetAssetCosting & {
-  href: string
-}
-
-function formatSpend(value: number) {
-  if (!Number.isFinite(value) || value === 0) return "—"
-  return usdFormat.format(value)
-}
+export type { MasterCostingRow }
 
 export function MasterCostingsTable({
   assets,
@@ -55,9 +46,16 @@ export function MasterCostingsTable({
   month?: number
 }) {
   const [query, setQuery] = useState("")
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "totalUsd", desc: true },
+  ])
   const categories = useMemo(
     () => masterCostingsCategoryColumns(assets),
     [assets]
+  )
+  const columns = useMemo(
+    () => createMasterCostingsColumns(categories),
+    [categories]
   )
   const filteredAssets = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -81,7 +79,18 @@ export function MasterCostingsTable({
 
     return { totalUsd, categoryTotals }
   }, [categories, filteredAssets])
-  const columnCount = categories.length + 2
+  const table = useTable({
+    features: masterCostingsTableFeatures,
+    data: filteredAssets,
+    columns,
+    getRowId: (row) => row.assetId,
+    onSortingChange: setSorting,
+    state: {
+      sorting,
+    },
+  })
+  const rows = table.getRowModel().rows
+  const columnCount = table.getAllLeafColumns().length
   const hasQuery = query.trim().length > 0
 
   return (
@@ -105,25 +114,23 @@ export function MasterCostingsTable({
         <CardContent>
           <Table containerClassName="relative w-full overflow-auto max-h-[70vh]">
             <TableHeader className="sticky top-0 z-20 bg-card shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]">
-              <TableRow>
-                <TableHead className="sticky top-0 left-0 z-30 min-w-[7rem] bg-card border-r shadow-[2px_2px_5px_-2px_rgba(0,0,0,0.1)]">
-                  Asset ID
-                </TableHead>
-                <TableHead className="sticky top-0 z-20 min-w-[8.5rem] bg-card text-right shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]">
-                  Total Spend (USD)
-                </TableHead>
-                {categories.map((category) => (
-                  <TableHead
-                    key={category}
-                    className="sticky top-0 z-20 min-w-[7.5rem] bg-card text-right shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]"
-                  >
-                    {normalizeSubEquipment(category)}
-                  </TableHead>
-                ))}
-              </TableRow>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <TableHead
+                      key={header.id}
+                      className={header.column.columnDef.meta?.headerClassName}
+                    >
+                      {header.isPlaceholder ? null : (
+                        <table.FlexRender header={header} />
+                      )}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              ))}
             </TableHeader>
             <TableBody>
-              {filteredAssets.length === 0 ? (
+              {rows.length === 0 ? (
                 <TableRow>
                   <TableCell
                     colSpan={columnCount}
@@ -135,46 +142,33 @@ export function MasterCostingsTable({
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredAssets.map((asset) => (
-                  <TableRow key={asset.assetId}>
-                    <TableCell className="sticky left-0 z-10 bg-card font-medium border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                      <Link
-                        href={asset.href}
-                        className="underline-offset-4 hover:underline"
-                      >
-                        {asset.assetId}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-right font-mono tabular-nums">
-                      {formatSpend(asset.totalUsd)}
-                    </TableCell>
-                    {categories.map((category) => (
+                rows.map((row) => (
+                  <TableRow key={row.id}>
+                    {row.getAllCells().map((cell) => (
                       <TableCell
-                        key={category}
-                        className="text-right font-mono tabular-nums"
+                        key={cell.id}
+                        className={cell.column.columnDef.meta?.cellClassName}
                       >
-                        {formatSpend(asset.subEquipmentSpend[category] ?? 0)}
+                        <table.FlexRender cell={cell} />
                       </TableCell>
                     ))}
                   </TableRow>
                 ))
               )}
             </TableBody>
-            {filteredAssets.length > 0 ? (
+            {rows.length > 0 ? (
               <TableFooter>
                 <TableRow className="bg-muted hover:bg-muted">
-                  <TableCell className="sticky left-0 z-10 bg-muted font-semibold border-r">
-                    Total
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-sm font-semibold tabular-nums">
-                    {usdFormat.format(totals.totalUsd)}
-                  </TableCell>
-                  {categories.map((category) => (
+                  {table.getAllLeafColumns().map((column) => (
                     <TableCell
-                      key={category}
-                      className="text-right font-mono text-sm font-semibold tabular-nums"
+                      key={column.id}
+                      className={column.columnDef.meta?.footerClassName}
                     >
-                      {formatSpend(totals.categoryTotals[category] ?? 0)}
+                      {column.id === "assetId"
+                        ? "Total"
+                        : column.id === "totalUsd"
+                          ? formatTotalSpend(totals.totalUsd)
+                          : formatSpend(totals.categoryTotals[column.id] ?? 0)}
                     </TableCell>
                   ))}
                 </TableRow>

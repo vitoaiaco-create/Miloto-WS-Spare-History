@@ -27,6 +27,19 @@ export function hasActiveSparesFilters(filters: SparesHistoryFilters) {
   return Object.values(filters).some((value) => Boolean(value?.trim()))
 }
 
+export function sparesHistoryHref({
+  fleetNo,
+  subEquipment,
+}: {
+  fleetNo: string
+  subEquipment: string
+}) {
+  const params = new URLSearchParams()
+  params.set("fleetNo", fleetNo)
+  params.set("subEquipment", subEquipment)
+  return `/spares-history?${params.toString()}`
+}
+
 export type RunningKm = {
   distance: number
   latestDate: string

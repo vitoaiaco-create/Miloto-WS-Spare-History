@@ -13,6 +13,7 @@ import {
   hasActiveSparesFilters,
   type SparesHistoryFilters,
 } from "@/lib/spares-history"
+import { normalizeSubEquipment } from "@/lib/spreadsheet"
 
 type SearchParams = { [key: string]: string | string[] | undefined }
 
@@ -43,7 +44,9 @@ export default async function SparesHistoryPage({
     fleetNo: toFilterString(resolvedSearchParams.fleetNo),
     partNumber: toFilterString(resolvedSearchParams.partNumber),
     materialName: toFilterString(resolvedSearchParams.materialName),
-    subEquipment: toFilterString(resolvedSearchParams.subEquipment),
+    subEquipment: normalizeSubEquipment(
+      toFilterString(resolvedSearchParams.subEquipment)
+    ),
     startDate: toFilterString(resolvedSearchParams.startDate),
     endDate: toFilterString(resolvedSearchParams.endDate),
   }
