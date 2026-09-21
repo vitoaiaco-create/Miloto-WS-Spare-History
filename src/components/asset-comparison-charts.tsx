@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, type CSSProperties } from "react"
+import { useMemo, useRef, useState, type CSSProperties } from "react"
 import { useRouter } from "next/navigation"
 import {
   Bar,
@@ -27,6 +27,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
+import { ExportMenu } from "@/components/ui/export-menu"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -231,6 +232,8 @@ export function AssetComparisonCharts({
     () => subEquipmentOptions(assets, subEquipmentAverages),
     [assets, subEquipmentAverages]
   )
+  const overallChartRef = useRef<HTMLDivElement>(null)
+  const subEqChartRef = useRef<HTMLDivElement>(null)
   const [selectedCategory, setSelectedCategory] = useState(
     categories.includes("ENGINE") ? "ENGINE" : (categories[0] ?? "ENGINE")
   )
@@ -252,12 +255,20 @@ export function AssetComparisonCharts({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <SpendBarChart
-            data={assets}
-            average={fleetOverallAverage}
-            averageLabel={`Fleet avg ${formatUsdAxis(fleetOverallAverage)}`}
-            emptyMessage="No asset spend to chart for this view."
-          />
+          <div className="relative border rounded-md p-4 bg-background">
+            <ExportMenu
+              targetRef={overallChartRef}
+              filename="overall-spend-cohort"
+            />
+            <div ref={overallChartRef} className="bg-background pt-2">
+              <SpendBarChart
+                data={assets}
+                average={fleetOverallAverage}
+                averageLabel={`Fleet avg ${formatUsdAxis(fleetOverallAverage)}`}
+                emptyMessage="No asset spend to chart for this view."
+              />
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -298,12 +309,20 @@ export function AssetComparisonCharts({
           </CardAction>
         </CardHeader>
         <CardContent>
-          <SpendBarChart
-            data={subEquipmentData}
-            average={categoryAverage}
-            averageLabel={`${normalizeSubEquipment(selectedCategory)} avg ${formatUsdAxis(categoryAverage)}`}
-            emptyMessage="No sub-equipment spend to chart for this view."
-          />
+          <div className="relative border rounded-md p-4 bg-background">
+            <ExportMenu
+              targetRef={subEqChartRef}
+              filename="sub-equipment-spend-cohort"
+            />
+            <div ref={subEqChartRef} className="bg-background pt-2">
+              <SpendBarChart
+                data={subEquipmentData}
+                average={categoryAverage}
+                averageLabel={`${normalizeSubEquipment(selectedCategory)} avg ${formatUsdAxis(categoryAverage)}`}
+                emptyMessage="No sub-equipment spend to chart for this view."
+              />
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>

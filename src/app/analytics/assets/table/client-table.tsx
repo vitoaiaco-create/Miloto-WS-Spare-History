@@ -20,6 +20,7 @@ import type {
 } from "@/actions/analytics"
 import { MasterCostingsControls } from "@/components/master-costings-controls"
 import { Button } from "@/components/ui/button"
+import { ExportMenu } from "@/components/ui/export-menu"
 import {
   Card,
   CardContent,
@@ -260,6 +261,20 @@ export function ClientTable({
   const rows = table.getRowModel().rows
   const columnCount = table.getAllLeafColumns().length
   const hasQuery = query.trim().length > 0
+  const csvData = useMemo(
+    () =>
+      filteredAssets.map((asset) => {
+        const row: Record<string, unknown> = {
+          assetId: asset.assetId,
+          totalUsd: asset.totalUsd,
+        }
+        for (const category of categories) {
+          row[category] = asset.subEquipmentSpend[category] ?? 0
+        }
+        return row
+      }),
+    [categories, filteredAssets]
+  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -279,7 +294,8 @@ export function ClientTable({
             timeframe.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="relative">
+          <ExportMenu tableData={csvData} filename="master-costings" />
           <Table containerClassName="relative w-full overflow-auto max-h-[70vh]">
             <TableHeader className="sticky top-0 z-20 bg-card shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]">
               {table.getHeaderGroups().map((headerGroup) => (
