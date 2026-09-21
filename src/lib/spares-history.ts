@@ -1,3 +1,5 @@
+import "server-only"
+
 import { desc, inArray, sql } from "drizzle-orm"
 
 import { db } from "@/db"
@@ -7,6 +9,8 @@ import {
   toCanonicalFleetNumber,
   toIsoDateString,
 } from "@/lib/spreadsheet"
+
+export { sparesHistoryHref } from "@/lib/spares-history-href"
 
 // The set of filters the Spares History page can be queried with. All
 // fields are optional strings straight out of URL search params — empty
@@ -25,19 +29,6 @@ export type SparesHistoryFilters = {
 // state key off this, so they can't disagree about what "unfiltered" means.
 export function hasActiveSparesFilters(filters: SparesHistoryFilters) {
   return Object.values(filters).some((value) => Boolean(value?.trim()))
-}
-
-export function sparesHistoryHref({
-  fleetNo,
-  subEquipment,
-}: {
-  fleetNo: string
-  subEquipment: string
-}) {
-  const params = new URLSearchParams()
-  params.set("fleetNo", fleetNo)
-  params.set("subEquipment", subEquipment)
-  return `/spares-history?${params.toString()}`
 }
 
 export type RunningKm = {

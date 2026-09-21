@@ -41,7 +41,7 @@ import {
   masterCostingsCategoryColumns,
   type AssetComparisonFleet,
 } from "@/lib/asset-comparison"
-import { sparesHistoryHref } from "@/lib/spares-history"
+import { sparesHistoryHref } from "@/lib/spares-history-href"
 import { normalizeSubEquipment } from "@/lib/spreadsheet"
 
 const masterCostingsTableFeatures = tableFeatures({
