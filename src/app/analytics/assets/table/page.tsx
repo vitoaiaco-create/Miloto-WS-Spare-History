@@ -64,8 +64,14 @@ export default async function AnalyticsAssetsTablePage({
     fleetTypeFromComparisonFleet(fleet),
     month
   )
+  const serializedData = JSON.parse(JSON.stringify(fetchedData))
 
   return (
-    <ClientTable data={fetchedData} fleet={fleet} year={year} month={month} />
+    <ClientTable
+      data={serializedData}
+      fleet={fleet}
+      year={year}
+      month={month}
+    />
   )
 }
