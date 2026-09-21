@@ -70,7 +70,14 @@ export default async function AnalyticsAssetsIndexPage({
     fleetTypeFromComparisonFleet(fleet),
     month
   )
-  const assets = filterAssetsForView(costings.assets, fleet, view).map(
+  const costingAssets = Array.isArray(costings) ? costings : costings.assets
+  const fleetOverallAverage = Array.isArray(costings)
+    ? 0
+    : costings.fleetOverallAverage
+  const subEquipmentAverages = Array.isArray(costings)
+    ? {}
+    : costings.subEquipmentAverages
+  const assets = filterAssetsForView(costingAssets, fleet, view).map(
     (asset) => ({
       ...asset,
       href: `/analytics/assets/${encodeURIComponent(asset.assetId)}${assetDetailSearchString(
@@ -90,8 +97,8 @@ export default async function AnalyticsAssetsIndexPage({
       />
       <AssetComparisonCharts
         assets={assets}
-        fleetOverallAverage={costings.fleetOverallAverage}
-        subEquipmentAverages={costings.subEquipmentAverages}
+        fleetOverallAverage={fleetOverallAverage}
+        subEquipmentAverages={subEquipmentAverages}
       />
     </div>
   )

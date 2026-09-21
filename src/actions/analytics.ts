@@ -663,7 +663,7 @@ export async function getFleetAssetCostings(
   year: number,
   fleetType: FleetAssetCostingsFleetType,
   month?: number
-): Promise<FleetAssetCostings> {
+): Promise<FleetAssetCostings | FleetAssetCosting[]> {
   await requireWorkshopAnalyticsAccess()
 
   const data = getFleetAssetCostingsSchema.parse({
@@ -693,83 +693,88 @@ export async function getFleetAssetCostings(
     ? and(yearFilter, identityFilter)
     : yearFilter
 
-  const [spendRows, [countRow]] = await Promise.all([
-    db
-      .select({
-        assetName: assetsTable.assetName,
-        subEquipment: normalizedSubEquipment.mapWith(String),
-        totalUsd: sum(mechanicalSparesTable.costUsd),
-      })
-      .from(mechanicalSparesTable)
-      .innerJoin(
-        assetsTable,
-        eq(mechanicalSparesTable.assetId, assetsTable.id)
+  try {
+    const [spendRows, [countRow]] = await Promise.all([
+      db
+        .select({
+          assetName: assetsTable.assetName,
+          subEquipment: normalizedSubEquipment.mapWith(String),
+          totalUsd: sum(mechanicalSparesTable.costUsd),
+        })
+        .from(mechanicalSparesTable)
+        .innerJoin(
+          assetsTable,
+          eq(mechanicalSparesTable.assetId, assetsTable.id)
+        )
+        .where(spendWhere)
+        .groupBy(assetsTable.assetName, normalizedSubEquipment)
+        .having(sql`btrim(${normalizedSubEquipment}) <> ''`)
+        .orderBy(asc(assetsTable.assetName)),
+      db
+        .select({
+          assetCount: sql<number>`count(distinct ${assetsTable.id})`.mapWith(
+            Number
+          ),
+        })
+        .from(mechanicalSparesTable)
+        .innerJoin(
+          assetsTable,
+          eq(mechanicalSparesTable.assetId, assetsTable.id)
+        )
+        .where(activeWhere),
+    ])
+
+    const byAsset = new Map<string, FleetAssetCosting>()
+    const categoryTotals = new Map<string, number>()
+
+    for (const row of spendRows) {
+      const subEquipment = (row.subEquipment ?? "").trim()
+      if (!subEquipment) continue
+
+      const assetId = toCanonicalFleetNumber(row.assetName)
+      const totalUsd = toNumber(row.totalUsd)
+      const existing = byAsset.get(assetId)
+
+      if (existing) {
+        existing.totalUsd += totalUsd
+        existing.subEquipmentSpend[subEquipment] =
+          (existing.subEquipmentSpend[subEquipment] ?? 0) + totalUsd
+      } else {
+        byAsset.set(assetId, {
+          assetId,
+          totalUsd,
+          subEquipmentSpend: { [subEquipment]: totalUsd },
+        })
+      }
+
+      categoryTotals.set(
+        subEquipment,
+        (categoryTotals.get(subEquipment) ?? 0) + totalUsd
       )
-      .where(spendWhere)
-      .groupBy(assetsTable.assetName, normalizedSubEquipment)
-      .having(sql`btrim(${normalizedSubEquipment}) <> ''`)
-      .orderBy(asc(assetsTable.assetName)),
-    db
-      .select({
-        assetCount: sql<number>`count(distinct ${assetsTable.id})`.mapWith(
-          Number
-        ),
-      })
-      .from(mechanicalSparesTable)
-      .innerJoin(
-        assetsTable,
-        eq(mechanicalSparesTable.assetId, assetsTable.id)
-      )
-      .where(activeWhere),
-  ])
-
-  const byAsset = new Map<string, FleetAssetCosting>()
-  const categoryTotals = new Map<string, number>()
-
-  for (const row of spendRows) {
-    const subEquipment = (row.subEquipment ?? "").trim()
-    if (!subEquipment) continue
-
-    const assetId = toCanonicalFleetNumber(row.assetName)
-    const totalUsd = toNumber(row.totalUsd)
-    const existing = byAsset.get(assetId)
-
-    if (existing) {
-      existing.totalUsd += totalUsd
-      existing.subEquipmentSpend[subEquipment] =
-        (existing.subEquipmentSpend[subEquipment] ?? 0) + totalUsd
-    } else {
-      byAsset.set(assetId, {
-        assetId,
-        totalUsd,
-        subEquipmentSpend: { [subEquipment]: totalUsd },
-      })
     }
 
-    categoryTotals.set(
-      subEquipment,
-      (categoryTotals.get(subEquipment) ?? 0) + totalUsd
+    const assets = [...byAsset.values()]
+    const fleetTotalUsd = assets.reduce(
+      (total, asset) => total + asset.totalUsd,
+      0
     )
-  }
+    const activeAssetCount = countRow?.assetCount ?? 0
+    const subEquipmentAverages: Record<string, number> = {}
 
-  const assets = [...byAsset.values()]
-  const fleetTotalUsd = assets.reduce(
-    (total, asset) => total + asset.totalUsd,
-    0
-  )
-  const activeAssetCount = countRow?.assetCount ?? 0
-  const subEquipmentAverages: Record<string, number> = {}
+    for (const [subEquipment, totalUsd] of categoryTotals) {
+      subEquipmentAverages[subEquipment] = meanSpendPerAsset(
+        totalUsd,
+        activeAssetCount
+      )
+    }
 
-  for (const [subEquipment, totalUsd] of categoryTotals) {
-    subEquipmentAverages[subEquipment] = meanSpendPerAsset(
-      totalUsd,
-      activeAssetCount
-    )
-  }
-
-  return {
-    assets,
-    fleetOverallAverage: meanSpendPerAsset(fleetTotalUsd, activeAssetCount),
-    subEquipmentAverages,
+    return {
+      assets,
+      fleetOverallAverage: meanSpendPerAsset(fleetTotalUsd, activeAssetCount),
+      subEquipmentAverages,
+    }
+  } catch (error) {
+    console.error(error)
+    return []
   }
 }

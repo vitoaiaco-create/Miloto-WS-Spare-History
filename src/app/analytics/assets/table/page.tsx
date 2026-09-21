@@ -2,12 +2,12 @@ import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 
 import { getFleetAssetCostings } from "@/actions/analytics"
-import { MasterCostingsTable } from "@/components/master-costings-table"
 import {
-  assetDetailSearchString,
   fleetTypeFromComparisonFleet,
   parseAssetComparisonFleet,
 } from "@/lib/asset-comparison"
+
+import { ClientTable } from "./client-table"
 
 type SearchParams = { [key: string]: string | string[] | undefined }
 
@@ -59,31 +59,13 @@ export default async function AnalyticsAssetsTablePage({
   const fleet = parseAssetComparisonFleet(
     toSearchString(resolvedSearchParams.fleet)
   )
-  const costings = await getFleetAssetCostings(
+  const fetchedData = await getFleetAssetCostings(
     year,
     fleetTypeFromComparisonFleet(fleet),
     month
   )
-  const assets = [...costings.assets]
-    .sort(
-      (left, right) =>
-        right.totalUsd - left.totalUsd ||
-        left.assetId.localeCompare(right.assetId)
-    )
-    .map((asset) => ({
-      ...asset,
-      href: `/analytics/assets/${encodeURIComponent(asset.assetId)}${assetDetailSearchString(
-        year,
-        month
-      )}`,
-    }))
 
   return (
-    <MasterCostingsTable
-      assets={assets}
-      fleet={fleet}
-      year={year}
-      month={month}
-    />
+    <ClientTable data={fetchedData} fleet={fleet} year={year} month={month} />
   )
 }
