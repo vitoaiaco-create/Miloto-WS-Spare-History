@@ -13,12 +13,25 @@ import {
   hasActiveSparesFilters,
   type SparesHistoryFilters,
 } from "@/lib/spares-history"
+import { toIsoDateParam } from "@/lib/iso-date"
 import { normalizeSubEquipment } from "@/lib/spreadsheet"
 
 type SearchParams = { [key: string]: string | string[] | undefined }
 
 function toFilterString(value: string | string[] | undefined) {
   return typeof value === "string" ? value : ""
+}
+
+function toFilterList(value: string | string[] | undefined) {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : []
+
+  return [
+    ...new Set(raw.map((item) => normalizeSubEquipment(item)).filter(Boolean)),
+  ]
 }
 
 export default async function SparesHistoryPage({
@@ -40,15 +53,21 @@ export default async function SparesHistoryPage({
 
   const resolvedSearchParams = await searchParams
 
+  const excludeFrom = toIsoDateParam(
+    toFilterString(resolvedSearchParams.excludeFrom)
+  )
+  const excludeTo = toIsoDateParam(toFilterString(resolvedSearchParams.excludeTo))
+  const hasExcludeRange = Boolean(excludeFrom && excludeTo)
+
   const filters: SparesHistoryFilters = {
     fleetNo: toFilterString(resolvedSearchParams.fleetNo),
     partNumber: toFilterString(resolvedSearchParams.partNumber),
     materialName: toFilterString(resolvedSearchParams.materialName),
-    subEquipment: normalizeSubEquipment(
-      toFilterString(resolvedSearchParams.subEquipment)
-    ),
+    subEquipment: toFilterList(resolvedSearchParams.subEquipment),
     startDate: toFilterString(resolvedSearchParams.startDate),
     endDate: toFilterString(resolvedSearchParams.endDate),
+    excludeFrom: hasExcludeRange ? excludeFrom : "",
+    excludeTo: hasExcludeRange ? excludeTo : "",
   }
 
   const spares = await getSparesHistory(filters)

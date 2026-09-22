@@ -1,9 +1,10 @@
 import "server-only"
 
-import { desc, inArray, sql } from "drizzle-orm"
+import { between, desc, inArray, not, sql } from "drizzle-orm"
 
 import { db } from "@/db"
 import { mileageLogsTable } from "@/db/schema"
+import { toIsoDateParam } from "@/lib/iso-date"
 import {
   normalizeSubEquipment,
   toCanonicalFleetNumber,
@@ -12,23 +13,36 @@ import {
 
 export { sparesHistoryHref } from "@/lib/spares-history-href"
 
-// The set of filters the Spares History page can be queried with. All
+// The set of filters the Spares History page can be queried with. Text
 // fields are optional strings straight out of URL search params — empty
-// string / undefined means "no filter" for that field.
+// string / undefined means "no filter" for that field. `subEquipment` is
+// every selected category (repeated `subEquipment` search params); an
+// empty list means no category filter.
 export type SparesHistoryFilters = {
   fleetNo?: string
   partNumber?: string
   materialName?: string
-  subEquipment?: string
+  subEquipment?: string[]
   startDate?: string
   endDate?: string
+  // Closed range of outward dates to drop from the table. Kept off the
+  // printed report header; the on-screen badge is the only reminder.
+  excludeFrom?: string
+  excludeTo?: string
+}
+
+function isActiveFilterValue(value: string | string[] | undefined) {
+  if (Array.isArray(value)) {
+    return value.some((item) => item.trim().length > 0)
+  }
+  return Boolean(value?.trim())
 }
 
 // The spares history runs to thousands of lines, so the page shows nothing
 // until the operator narrows it down. Both the query and the page's empty
 // state key off this, so they can't disagree about what "unfiltered" means.
 export function hasActiveSparesFilters(filters: SparesHistoryFilters) {
-  return Object.values(filters).some((value) => Boolean(value?.trim()))
+  return Object.values(filters).some((value) => isActiveFilterValue(value))
 }
 
 export type RunningKm = {
@@ -178,10 +192,32 @@ export async function calculateRunningKm(
 // displays, so the filter matches `tier1` alone. Both sides run through
 // `normalizeSubEquipment` because the source file is upper case
 // ("AIR SYSTEM") while the filter bar offers title case ("Air System").
+// Several categories at once become `tier1 IN (...)`, which Drizzle
+// compiles with `inArray`.
 export async function getSparesHistory(
   filters: SparesHistoryFilters
 ): Promise<SparesHistoryRow[]> {
   if (!hasActiveSparesFilters(filters)) return []
+
+  const categories = [
+    ...new Set(
+      (filters.subEquipment ?? [])
+        .map((category) => normalizeSubEquipment(category))
+        .filter(Boolean)
+    ),
+  ]
+
+  // Outward date is stored on `fitmentDate`. Both ends are required;
+  // `between` is inclusive, so `not(between(...))` drops every day in
+  // the range, including the first and last.
+  const excludeFromDate = toIsoDateParam(filters.excludeFrom)
+  const excludeToDate = toIsoDateParam(filters.excludeTo)
+  const [excludeStart, excludeEnd] =
+    excludeFromDate && excludeToDate
+      ? excludeFromDate <= excludeToDate
+        ? [excludeFromDate, excludeToDate]
+        : [excludeToDate, excludeFromDate]
+      : []
 
   const spares = await db.query.mechanicalSparesTable.findMany({
     where: {
@@ -194,15 +230,19 @@ export async function getSparesHistory(
       ...(filters.materialName
         ? { materialName: { ilike: `%${filters.materialName}%` } }
         : {}),
-      ...(filters.subEquipment
-        ? { tier1: normalizeSubEquipment(filters.subEquipment) }
-        : {}),
+      ...(categories.length > 0 ? { tier1: { in: categories } } : {}),
       ...(filters.startDate || filters.endDate
         ? {
             fitmentDate: {
               ...(filters.startDate ? { gte: filters.startDate } : {}),
               ...(filters.endDate ? { lte: filters.endDate } : {}),
             },
+          }
+        : {}),
+      ...(excludeStart && excludeEnd
+        ? {
+            RAW: (table) =>
+              not(between(table.fitmentDate, excludeStart, excludeEnd)),
           }
         : {}),
       ...(filters.fleetNo

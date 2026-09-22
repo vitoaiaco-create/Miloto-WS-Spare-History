@@ -73,12 +73,14 @@ function formatBurnRate(value: number | null) {
 // way to see the filter bar), so — same as the Share image export — the
 // active filters get baked into the document itself.
 function describeFilters(filters: SparesHistoryFilters) {
+  // `excludeFrom` / `excludeTo` stay off this line. The on-screen badge is
+  // the only reminder; printed reports must not mention the hidden range.
   const parts: string[] = []
   if (filters.fleetNo) parts.push(`Fleet No: ${filters.fleetNo}`)
   if (filters.partNumber) parts.push(`Part Number: ${filters.partNumber}`)
   if (filters.materialName) parts.push(`Material: ${filters.materialName}`)
-  if (filters.subEquipment)
-    parts.push(`Sub Equipment: ${filters.subEquipment}`)
+  if (filters.subEquipment?.length)
+    parts.push(`Sub Equipment: ${filters.subEquipment.join(", ")}`)
   if (filters.startDate || filters.endDate) {
     parts.push(
       `Date Range: ${filters.startDate ? formatDate(filters.startDate) : "…"} to ${
@@ -86,7 +88,7 @@ function describeFilters(filters: SparesHistoryFilters) {
       }`
     )
   }
-  return parts.join("   •   ")
+  return parts.join(" • ")
 }
 
 type ExportColumn<T> = {

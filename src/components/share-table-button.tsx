@@ -32,12 +32,14 @@ function formatRunningKm(distance: number | null) {
 // standalone document — this line bakes the active filters into the image
 // itself rather than relying on page context the recipient can't see.
 function describeFilters(filters: SparesHistoryFilters) {
+  // `excludeFrom` / `excludeTo` stay off this line. The on-screen badge is
+  // the only reminder; printed reports must not mention the hidden range.
   const parts: string[] = []
   if (filters.fleetNo) parts.push(`Fleet No: ${filters.fleetNo}`)
   if (filters.partNumber) parts.push(`Part Number: ${filters.partNumber}`)
   if (filters.materialName) parts.push(`Material: ${filters.materialName}`)
-  if (filters.subEquipment)
-    parts.push(`Sub Equipment: ${filters.subEquipment}`)
+  if (filters.subEquipment?.length)
+    parts.push(`Sub Equipment: ${filters.subEquipment.join(", ")}`)
   if (filters.startDate || filters.endDate) {
     parts.push(
       `Date Range: ${filters.startDate ? formatDate(filters.startDate) : "…"} to ${
@@ -45,7 +47,7 @@ function describeFilters(filters: SparesHistoryFilters) {
       }`
     )
   }
-  return parts.join("   •   ")
+  return parts.join(" • ")
 }
 
 // Width (px) the off-screen export layout is rendered at before capture.

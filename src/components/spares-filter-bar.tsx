@@ -1,8 +1,11 @@
 "use client"
 
+import { format } from "date-fns"
 import { useEffect, useRef, useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 
+import { DatePickerWithRange } from "@/components/date-picker-with-range"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -14,17 +17,22 @@ import {
 } from "@/components/ui/card"
 import {
   Combobox,
+  ComboboxChip,
+  ComboboxChips,
+  ComboboxChipsInput,
   ComboboxContent,
   ComboboxEmpty,
-  ComboboxInput,
   ComboboxItem,
   ComboboxList,
-  ComboboxTrigger,
   ComboboxValue,
+  useComboboxAnchor,
 } from "@/components/ui/combobox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { formatIsoDate, parseIsoDate } from "@/lib/iso-date"
 import type { SparesHistoryFilters } from "@/lib/spares-history"
+
+type ExcludeDateRange = { from: Date; to: Date }
 
 const SUB_EQUIPMENT_OPTIONS = [
   "Air System",
@@ -46,13 +54,18 @@ const SUB_EQUIPMENT_OPTIONS = [
   "Transmission",
 ]
 
-type Filters = Required<SparesHistoryFilters>
+type Filters = {
+  fleetNo: string
+  partNumber: string
+  materialName: string
+  startDate: string
+  endDate: string
+}
 
 const EMPTY_FILTERS: Filters = {
   fleetNo: "",
   partNumber: "",
   materialName: "",
-  subEquipment: "",
   startDate: "",
   endDate: "",
 }
@@ -61,14 +74,33 @@ const EMPTY_FILTERS: Filters = {
 // server-rendered table doesn't re-fetch on every keystroke.
 const FILTER_DEBOUNCE_MS = 300
 
-function buildQueryString(filters: Filters) {
+function excludeRangeFromFilters(
+  filters: SparesHistoryFilters
+): ExcludeDateRange | undefined {
+  const from = parseIsoDate(filters.excludeFrom)
+  const to = parseIsoDate(filters.excludeTo)
+  if (!from || !to) return undefined
+  return from <= to ? { from, to } : { from: to, to: from }
+}
+
+function buildQueryString(
+  filters: Filters,
+  categories: string[],
+  excludeDates: ExcludeDateRange | undefined
+) {
   const params = new URLSearchParams()
   if (filters.fleetNo) params.set("fleetNo", filters.fleetNo)
   if (filters.partNumber) params.set("partNumber", filters.partNumber)
   if (filters.materialName) params.set("materialName", filters.materialName)
-  if (filters.subEquipment) params.set("subEquipment", filters.subEquipment)
+  for (const category of categories) {
+    if (category) params.append("subEquipment", category)
+  }
   if (filters.startDate) params.set("startDate", filters.startDate)
   if (filters.endDate) params.set("endDate", filters.endDate)
+  if (excludeDates) {
+    params.set("excludeFrom", formatIsoDate(excludeDates.from))
+    params.set("excludeTo", formatIsoDate(excludeDates.to))
+  }
   return params.toString()
 }
 
@@ -80,17 +112,35 @@ export function SparesFilterBar({
   const router = useRouter()
   const pathname = usePathname()
 
+  const [categories, setCategories] = useState<string[]>(
+    initialFilters.subEquipment ?? []
+  )
+  const [excludeDates, setExcludeDates] = useState<
+    { from: Date; to: Date } | undefined
+  >(excludeRangeFromFilters(initialFilters))
   const [filters, setFilters] = useState<Filters>({
-    ...EMPTY_FILTERS,
-    ...initialFilters,
+    fleetNo: initialFilters.fleetNo ?? "",
+    partNumber: initialFilters.partNumber ?? "",
+    materialName: initialFilters.materialName ?? "",
+    startDate: initialFilters.startDate ?? "",
+    endDate: initialFilters.endDate ?? "",
   })
 
   const isFirstRender = useRef(true)
   const filtersRef = useRef(filters)
+  const categoriesRef = useRef(categories)
+  const excludeDatesRef = useRef(excludeDates)
   filtersRef.current = filters
+  categoriesRef.current = categories
+  excludeDatesRef.current = excludeDates
+  const subEquipmentAnchor = useComboboxAnchor()
 
-  function pushFiltersToUrl(next: Filters) {
-    const queryString = buildQueryString(next)
+  function pushFiltersToUrl(
+    next: Filters,
+    nextCategories: string[],
+    nextExcludeDates: ExcludeDateRange | undefined = excludeDatesRef.current
+  ) {
+    const queryString = buildQueryString(next, nextCategories, nextExcludeDates)
     router.replace(queryString ? `${pathname}?${queryString}` : pathname, {
       scroll: false,
     })
@@ -105,7 +155,7 @@ export function SparesFilterBar({
     }
 
     const timeout = setTimeout(() => {
-      pushFiltersToUrl(filtersRef.current)
+      pushFiltersToUrl(filtersRef.current, categoriesRef.current)
     }, FILTER_DEBOUNCE_MS)
 
     return () => clearTimeout(timeout)
@@ -115,37 +165,54 @@ export function SparesFilterBar({
     setFilters((current) => ({ ...current, [key]: value }))
   }
 
-  function updateDiscreteFilter<K extends "subEquipment" | "startDate" | "endDate">(
+  function updateDiscreteFilter<K extends "startDate" | "endDate">(
     key: K,
     value: Filters[K]
   ) {
     setFilters((current) => {
       const next = { ...current, [key]: value }
-      pushFiltersToUrl(next)
+      pushFiltersToUrl(next, categoriesRef.current)
       return next
     })
+  }
+
+  function updateCategories(nextCategories: string[]) {
+    setCategories(nextCategories)
+    pushFiltersToUrl(filtersRef.current, nextCategories)
+  }
+
+  function updateExcludeDates(next: ExcludeDateRange | undefined) {
+    setExcludeDates(next)
+    pushFiltersToUrl(filtersRef.current, categoriesRef.current, next)
   }
 
   // Clearing skips the debounce the effect above applies to typing, so the
   // table empties on the click rather than 300ms later.
   function clearFilters() {
     setFilters(EMPTY_FILTERS)
+    setCategories([])
+    setExcludeDates(undefined)
     router.replace(pathname, { scroll: false })
   }
 
-  const hasActiveFilters = Object.values(filters).some(Boolean)
-  const subEquipmentItems =
-    filters.subEquipment &&
-    !SUB_EQUIPMENT_OPTIONS.includes(filters.subEquipment)
-      ? [...SUB_EQUIPMENT_OPTIONS, filters.subEquipment]
-      : SUB_EQUIPMENT_OPTIONS
+  const hasActiveFilters =
+    Object.values(filters).some(Boolean) ||
+    categories.length > 0 ||
+    excludeDates !== undefined
+  const subEquipmentItems = [
+    ...SUB_EQUIPMENT_OPTIONS,
+    ...categories.filter(
+      (category) => !SUB_EQUIPMENT_OPTIONS.includes(category)
+    ),
+  ]
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Filters</CardTitle>
         <CardDescription>
-          Narrow the history by asset, part, sub equipment or date range.
+          Narrow the history by asset, part, one or more sub equipment
+          categories, or a date range.
         </CardDescription>
         <CardAction>
           <Button
@@ -193,28 +260,37 @@ export function SparesFilterBar({
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="filter-sub-equipment">Sub Equipment</Label>
             <Combobox
+              multiple
+              autoHighlight
               items={subEquipmentItems}
-              value={filters.subEquipment || null}
+              value={categories}
               onValueChange={(value) =>
-                updateDiscreteFilter("subEquipment", value ?? "")
+                updateCategories(Array.isArray(value) ? value : [])
               }
             >
-              <ComboboxTrigger
-                render={
-                  <Button
-                    id="filter-sub-equipment"
-                    variant="outline"
-                    className="w-full justify-between font-normal"
-                  />
-                }
-              >
-                <ComboboxValue placeholder="Select sub equipment" />
-              </ComboboxTrigger>
-              <ComboboxContent>
-                <ComboboxInput
-                  showTrigger={false}
-                  placeholder="Search sub equipment..."
-                />
+              <ComboboxChips ref={subEquipmentAnchor} className="w-full">
+                <ComboboxValue>
+                  {(selected: string[]) => {
+                    const values = Array.isArray(selected) ? selected : []
+                    return (
+                      <>
+                        {values.map((category) => (
+                          <ComboboxChip key={category}>{category}</ComboboxChip>
+                        ))}
+                        <ComboboxChipsInput
+                          id="filter-sub-equipment"
+                          placeholder={
+                            values.length === 0
+                              ? "Select sub equipment"
+                              : "Add sub equipment"
+                          }
+                        />
+                      </>
+                    )
+                  }}
+                </ComboboxValue>
+              </ComboboxChips>
+              <ComboboxContent anchor={subEquipmentAnchor}>
                 <ComboboxEmpty>No sub equipment found.</ComboboxEmpty>
                 <ComboboxList>
                   {(item) => (
@@ -245,6 +321,23 @@ export function SparesFilterBar({
               value={filters.endDate}
               onChange={(e) => updateDiscreteFilter("endDate", e.target.value)}
             />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="filter-exclude-dates">Exclude Dates</Label>
+            <DatePickerWithRange
+              id="filter-exclude-dates"
+              date={excludeDates}
+              setDate={updateExcludeDates}
+            />
+            {excludeDates ? (
+              <div className="print:hidden">
+                <Badge variant="destructive">
+                  Excluding: {format(excludeDates.from, "MMM d")} -{" "}
+                  {format(excludeDates.to, "MMM d")}
+                </Badge>
+              </div>
+            ) : null}
           </div>
         </div>
       </CardContent>
