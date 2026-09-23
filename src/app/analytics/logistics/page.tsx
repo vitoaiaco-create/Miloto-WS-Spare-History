@@ -1,11 +1,8 @@
 import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { LogisticsDashboard } from "@/components/logistics-dashboard"
+import { calculateMonthlyYield } from "@/lib/logistics-scoring"
 
 export default async function LogisticsAnalyticsPage() {
   const { userId, sessionClaims } = await auth()
@@ -27,13 +24,7 @@ export default async function LogisticsAnalyticsPage() {
     redirect("/")
   }
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          Logistics Analytics &amp; Driver Yields - Under Construction
-        </CardTitle>
-      </CardHeader>
-    </Card>
-  )
+  const yieldData = await calculateMonthlyYield(2026, 9)
+
+  return <LogisticsDashboard data={yieldData} />
 }

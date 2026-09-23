@@ -1,0 +1,549 @@
+"use client"
+
+import { useMemo, useState } from "react"
+import { Printer } from "lucide-react"
+import {
+  CartesianGrid,
+  Label as RechartsLabel,
+  Scatter,
+  ScatterChart,
+  XAxis,
+  YAxis,
+  ZAxis,
+} from "recharts"
+
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  ChartContainer,
+  ChartTooltip,
+  type ChartConfig,
+} from "@/components/ui/chart"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import type {
+  LogisticsEntityType,
+  MatrixClass,
+  MonthlyYieldScore,
+} from "@/lib/logistics-scoring"
+
+const PERIOD_LABEL = "September 2026"
+
+const MATRIX_CLASSES = [
+  "Class A",
+  "Class B",
+  "Class C",
+  "Class D",
+] as const satisfies readonly MatrixClass[]
+
+const CLASS_FILL: Record<MatrixClass, string> = {
+  "Class A": "#16a34a",
+  "Class B": "#2563eb",
+  "Class C": "#ea580c",
+  "Class D": "#dc2626",
+}
+
+const CLASS_BADGE: Record<MatrixClass, string> = {
+  "Class A": "border-transparent bg-green-600 text-white",
+  "Class B": "border-transparent bg-blue-600 text-white",
+  "Class C": "border-transparent bg-orange-500 text-white",
+  "Class D": "border-transparent bg-red-600 text-white",
+}
+
+const CLASS_DETAIL: Record<MatrixClass, string> = {
+  "Class A": "High yield",
+  "Class B": "Target",
+  "Class C": "Underperforming",
+  "Class D": "Liability",
+}
+
+const chartConfig = {
+  classA: { label: "Class A", color: CLASS_FILL["Class A"] },
+  classB: { label: "Class B", color: CLASS_FILL["Class B"] },
+  classC: { label: "Class C", color: CLASS_FILL["Class C"] },
+  classD: { label: "Class D", color: CLASS_FILL["Class D"] },
+} satisfies ChartConfig
+
+type EntityFilter = "all" | LogisticsEntityType
+
+const ENTITY_FILTERS: { value: EntityFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "Truck", label: "Trucks" },
+  { value: "Trailer", label: "Trailers" },
+  { value: "Driver", label: "Drivers" },
+]
+
+const SCORING_RULES: {
+  category: string
+  rows: { rule: string; score: string; matrixClass?: MatrixClass }[]
+}[] = [
+  {
+    category: "Productivity",
+    rows: [
+      { rule: "< 4,000 km", score: "0 pts" },
+      { rule: "4,001–6,000 km", score: "+10 pts" },
+      { rule: "> 6,000 km", score: "+20 pts" },
+    ],
+  },
+  {
+    category: "Penalties",
+    rows: [
+      { rule: "Tire damage", score: "Variable based on type" },
+      { rule: "Suspension job card", score: "−5 pts per card" },
+    ],
+  },
+  {
+    category: "Matrix classes",
+    rows: [
+      { rule: "Class A", score: "≥ 15 pts", matrixClass: "Class A" },
+      { rule: "Class B", score: "≥ 10 pts", matrixClass: "Class B" },
+      { rule: "Class C", score: "≥ 0 pts", matrixClass: "Class C" },
+      { rule: "Class D", score: "< 0 pts", matrixClass: "Class D" },
+    ],
+  },
+]
+
+function formatKm(km: number) {
+  return `${km.toLocaleString("en-US", { maximumFractionDigits: 2 })} km`
+}
+
+function formatPoints(points: number) {
+  const formatted = points.toLocaleString("en-US", { maximumFractionDigits: 0 })
+  return points > 0 ? `+${formatted}` : formatted
+}
+
+function penaltyPoints(score: MonthlyYieldScore) {
+  return score.tirePenaltyPoints + score.suspensionPenaltyPoints
+}
+
+function isEntityFilter(value: string | null): value is EntityFilter {
+  return (
+    value === "all" ||
+    value === "Truck" ||
+    value === "Trailer" ||
+    value === "Driver"
+  )
+}
+
+function isYieldScore(value: unknown): value is MonthlyYieldScore {
+  if (!value || typeof value !== "object") return false
+
+  const point = value as Partial<MonthlyYieldScore>
+  return (
+    (point.entityType === "Truck" ||
+      point.entityType === "Trailer" ||
+      point.entityType === "Driver") &&
+    typeof point.name === "string" &&
+    typeof point.totalMileageKm === "number" &&
+    typeof point.productivityPoints === "number" &&
+    typeof point.tirePenaltyPoints === "number" &&
+    typeof point.suspensionPenaltyPoints === "number" &&
+    typeof point.netScore === "number" &&
+    (point.matrixClass === "Class A" ||
+      point.matrixClass === "Class B" ||
+      point.matrixClass === "Class C" ||
+      point.matrixClass === "Class D")
+  )
+}
+
+function ClassBadge({ matrixClass }: { matrixClass: MatrixClass }) {
+  return (
+    <Badge className={CLASS_BADGE[matrixClass]}>{matrixClass}</Badge>
+  )
+}
+
+function YieldDot({
+  cx,
+  cy,
+  payload,
+}: {
+  cx?: number
+  cy?: number
+  payload?: MonthlyYieldScore
+}) {
+  if (typeof cx !== "number" || typeof cy !== "number" || !isYieldScore(payload)) {
+    return <g />
+  }
+
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={6}
+      fill={CLASS_FILL[payload.matrixClass]}
+      stroke="var(--background)"
+      strokeWidth={1.5}
+    />
+  )
+}
+
+function YieldTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean
+  payload?: ReadonlyArray<{ payload?: unknown }>
+}) {
+  const point = payload?.[0]?.payload
+  if (!active || !isYieldScore(point)) return null
+
+  const rows = [
+    ["Mileage", formatKm(point.totalMileageKm)],
+    ["Productivity", formatPoints(point.productivityPoints)],
+    ["Tire penalty", formatPoints(point.tirePenaltyPoints)],
+    ["Suspension penalty", formatPoints(point.suspensionPenaltyPoints)],
+    ["Net score", formatPoints(point.netScore)],
+  ] as const
+
+  return (
+    <div className="grid min-w-52 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs shadow-xl">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-medium">{point.name}</span>
+        <ClassBadge matrixClass={point.matrixClass} />
+      </div>
+      <p className="text-muted-foreground">{point.entityType}</p>
+      <dl className="grid gap-1">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex items-center justify-between gap-4">
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="font-mono font-medium text-foreground tabular-nums">
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
+function YieldMatrix({ data }: { data: MonthlyYieldScore[] }) {
+  const [entityFilter, setEntityFilter] = useState<EntityFilter>("all")
+  const points = useMemo(
+    () =>
+      entityFilter === "all"
+        ? data
+        : data.filter((score) => score.entityType === entityFilter),
+    [data, entityFilter]
+  )
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Yield Matrix (Chart)</CardTitle>
+        <CardDescription>
+          Net score from −20 to +20 against total mileage for {PERIOD_LABEL}.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="logistics-entity-type">Entity type</Label>
+            <Select
+              value={entityFilter}
+              onValueChange={(value) => {
+                if (isEntityFilter(value)) setEntityFilter(value)
+              }}
+            >
+              <SelectTrigger id="logistics-entity-type" className="w-[180px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ENTITY_FILTERS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <ul className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+            {MATRIX_CLASSES.map((matrixClass) => (
+              <li key={matrixClass} className="flex items-center gap-1.5">
+                <span
+                  className="size-2.5 rounded-full"
+                  style={{ backgroundColor: CLASS_FILL[matrixClass] }}
+                />
+                {matrixClass}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {points.length === 0 ? (
+          <p className="py-16 text-center text-sm text-muted-foreground">
+            No yield scores for this entity type in {PERIOD_LABEL}.
+          </p>
+        ) : (
+          <ChartContainer
+            config={chartConfig}
+            className="aspect-auto h-[420px] w-full"
+          >
+            <ScatterChart margin={{ top: 12, right: 16, bottom: 28, left: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                type="number"
+                dataKey="netScore"
+                name="Net score"
+                domain={[-20, 20]}
+                allowDataOverflow
+                ticks={[-20, -10, 0, 10, 20]}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+              >
+                <RechartsLabel
+                  value="Net score"
+                  position="bottom"
+                  offset={12}
+                  style={{ fill: "var(--muted-foreground)", fontSize: 12 }}
+                />
+              </XAxis>
+              <YAxis
+                type="number"
+                dataKey="totalMileageKm"
+                name="Total mileage"
+                domain={[0, "auto"]}
+                width={72}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(value: number) =>
+                  Number(value).toLocaleString("en-US", {
+                    maximumFractionDigits: 0,
+                  })
+                }
+              >
+                <RechartsLabel
+                  value="Total mileage"
+                  angle={-90}
+                  position="insideLeft"
+                  offset={-4}
+                  style={{
+                    fill: "var(--muted-foreground)",
+                    fontSize: 12,
+                    textAnchor: "middle",
+                  }}
+                />
+              </YAxis>
+              <ZAxis range={[80, 80]} />
+              <ChartTooltip
+                cursor={{ strokeDasharray: "3 3" }}
+                content={<YieldTooltip />}
+              />
+              <Scatter data={points} shape={<YieldDot />} />
+            </ScatterChart>
+          </ChartContainer>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function AssetRankings({ data }: { data: MonthlyYieldScore[] }) {
+  const ranked = useMemo(
+    () =>
+      [...data].sort(
+        (a, b) =>
+          b.netScore - a.netScore ||
+          a.name.localeCompare(b.name) ||
+          a.entityType.localeCompare(b.entityType) ||
+          a.entityId - b.entityId
+      ),
+    [data]
+  )
+
+  return (
+    <Card id="logistics-rankings">
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #logistics-rankings,
+          #logistics-rankings * { visibility: visible; }
+          #logistics-rankings {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            overflow: visible;
+            box-shadow: none;
+          }
+        }
+      `}</style>
+      <CardHeader>
+        <CardTitle>Asset Rankings (Table)</CardTitle>
+        <CardDescription>
+          {PERIOD_LABEL}, sorted by net score. Penalty pts combine tire damage
+          and suspension job cards.
+        </CardDescription>
+        <CardAction>
+          <Button
+            type="button"
+            variant="outline"
+            className="print:hidden"
+            onClick={() => window.print()}
+          >
+            <Printer data-icon="inline-start" />
+            Print
+          </Button>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Type</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead className="text-right">Mileage</TableHead>
+              <TableHead className="text-right">Productivity Pts</TableHead>
+              <TableHead className="text-right">Penalty Pts</TableHead>
+              <TableHead className="text-right">Net Score</TableHead>
+              <TableHead>Class</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {ranked.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={7}
+                  className="py-10 text-center text-muted-foreground"
+                >
+                  No yield scores for {PERIOD_LABEL}.
+                </TableCell>
+              </TableRow>
+            ) : (
+              ranked.map((score) => (
+                <TableRow key={`${score.entityType}-${score.entityId}`}>
+                  <TableCell>{score.entityType}</TableCell>
+                  <TableCell className="font-medium">{score.name}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatKm(score.totalMileageKm)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatPoints(score.productivityPoints)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatPoints(penaltyPoints(score))}
+                  </TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">
+                    {formatPoints(score.netScore)}
+                  </TableCell>
+                  <TableCell>
+                    <ClassBadge matrixClass={score.matrixClass} />
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ScoringRules() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Scoring Rules</CardTitle>
+        <CardDescription>
+          Classes are assigned from the top. A net score takes the first
+          threshold it meets.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Category</TableHead>
+              <TableHead>Rule</TableHead>
+              <TableHead>Score</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {SCORING_RULES.map((group) =>
+              group.rows.map((row, index) => (
+                <TableRow key={`${group.category}-${row.rule}`}>
+                  {index === 0 ? (
+                    <TableCell
+                      rowSpan={group.rows.length}
+                      className="align-top font-medium"
+                    >
+                      {group.category}
+                    </TableCell>
+                  ) : null}
+                  <TableCell>
+                    {row.matrixClass ? (
+                      <span className="flex flex-wrap items-center gap-2">
+                        <ClassBadge matrixClass={row.matrixClass} />
+                        <span className="text-muted-foreground">
+                          {CLASS_DETAIL[row.matrixClass]}
+                        </span>
+                      </span>
+                    ) : (
+                      row.rule
+                    )}
+                  </TableCell>
+                  <TableCell className="tabular-nums">{row.score}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+          <TableCaption className="text-left">
+            Net score is productivity points plus penalty points.
+          </TableCaption>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+export function LogisticsDashboard({ data }: { data: MonthlyYieldScore[] }) {
+  return (
+    <Tabs defaultValue="matrix" className="gap-6">
+      <TabsList className="h-9 w-full max-w-3xl justify-start overflow-x-auto group-data-horizontal/tabs:h-9">
+        <TabsTrigger className="px-3" value="matrix">
+          Yield Matrix (Chart)
+        </TabsTrigger>
+        <TabsTrigger className="px-3" value="rankings">
+          Asset Rankings (Table)
+        </TabsTrigger>
+        <TabsTrigger className="px-3" value="rules">
+          Scoring Rules
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent value="matrix">
+        <YieldMatrix data={data} />
+      </TabsContent>
+      <TabsContent value="rankings">
+        <AssetRankings data={data} />
+      </TabsContent>
+      <TabsContent value="rules">
+        <ScoringRules />
+      </TabsContent>
+    </Tabs>
+  )
+}
