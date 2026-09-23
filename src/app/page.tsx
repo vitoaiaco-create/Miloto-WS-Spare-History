@@ -106,7 +106,7 @@ export default async function Home() {
 
             {!isOilsOnly &&
               (isAdmin || allowedModules.includes("logistics_analytics")) && (
-              <Link href="/analytics/logistics">
+              <Link href="/logistics">
                 <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
                   <CardHeader>
                     <TrendingUp

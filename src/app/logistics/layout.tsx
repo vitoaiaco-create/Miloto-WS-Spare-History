@@ -3,12 +3,12 @@ import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
-import { AnalyticsNav } from "@/components/analytics-nav"
+import { LogisticsNav } from "@/components/logistics-nav"
 import { Button } from "@/components/ui/button"
 
-export default async function AnalyticsLayout({
+export default async function LogisticsLayout({
   children,
-}: LayoutProps<"/analytics">) {
+}: LayoutProps<"/logistics">) {
   const { userId, sessionClaims } = await auth()
 
   if (!userId) {
@@ -18,9 +18,9 @@ export default async function AnalyticsLayout({
   const role = sessionClaims?.metadata?.role
   const isAdmin = role === "admin"
   const modules = sessionClaims?.metadata?.modules
-  const hasWorkshopModule = modules?.includes("workshop_analytics") ?? false
+  const hasLogisticsModule = modules?.includes("logistics_analytics") ?? false
 
-  if (role === "oils_only" || (!isAdmin && !hasWorkshopModule)) {
+  if (role === "oils_only" || (!isAdmin && !hasLogisticsModule)) {
     redirect("/")
   }
 
@@ -38,11 +38,7 @@ export default async function AnalyticsLayout({
           Central Hub
         </Button>
 
-        <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
-          Workshop Analytics
-        </h1>
-
-        <AnalyticsNav />
+        <LogisticsNav />
 
         {children}
       </section>

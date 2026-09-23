@@ -13,14 +13,10 @@ export default async function LogisticsAnalyticsPage() {
 
   const role = sessionClaims?.metadata?.role
   const isAdmin = role === "admin"
-  const modules = sessionClaims?.metadata?.modules
-  const hasWorkshopModule = modules?.includes("workshop_analytics") ?? false
-  const hasLogisticsModule = modules?.includes("logistics_analytics") ?? false
+  const hasLogisticsModule =
+    sessionClaims?.metadata?.modules?.includes("logistics_analytics") ?? false
 
-  if (
-    role === "oils_only" ||
-    (!isAdmin && !hasWorkshopModule && !hasLogisticsModule)
-  ) {
+  if (role === "oils_only" || (!isAdmin && !hasLogisticsModule)) {
     redirect("/")
   }
 

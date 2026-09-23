@@ -5,12 +5,9 @@ import {
   countDistinct,
   eq,
   gte,
-  ilike,
-  lt,
+  lte,
   max,
   min,
-  not,
-  or,
   sql,
   sum,
 } from "drizzle-orm"
@@ -68,34 +65,19 @@ function assertCalendarMonth(year: number, month: number) {
   }
 }
 
-function monthWindow(year: number, month: number) {
-  const activeMonth = `${year}-${String(month).padStart(2, "0")}-01`
-  const nextYear = month === 12 ? year + 1 : year
-  const nextMonth = month === 12 ? 1 : month + 1
-  const nextMonthStart = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`
+function monthBounds(year: number, month: number) {
+  const startOfMonth = `${year}-${String(month).padStart(2, "0")}-01`
+  // Day 0 of the following month is the last calendar day of `month`.
+  const endOfMonth = new Date(Date.UTC(year, month, 0))
+    .toISOString()
+    .slice(0, 10)
 
-  return { activeMonth, nextMonthStart }
-}
-
-// Same motive/towed split as workshop analytics: stored trailers are
-// `assetType = "Trailer"`, and older identities can still carry "TRAILER"
-// in the fleet name.
-function motiveUnitFilter() {
-  const trailer = or(
-    ilike(assetsTable.assetName, "%TRAILER%"),
-    eq(assetsTable.assetType, "Trailer")
-  )
-
-  if (!trailer) {
-    throw new Error("Trailer identity filter is required")
-  }
-
-  return not(trailer)
+  return { startOfMonth, endOfMonth }
 }
 
 function isTrailerAsset(asset: AssetInfo) {
   return (
-    asset.assetType === "Trailer" ||
+    asset.assetType.trim().toLowerCase() === "trailer" ||
     asset.name.toUpperCase().includes("TRAILER")
   )
 }
@@ -119,11 +101,10 @@ function odometerDelta(
   return Math.max(0, high - low)
 }
 
-// < 4 000 km scores 0. The +10 band starts at the next kilometre (4 001)
-// and runs through 6 000. Anything above 6 000 scores +20.
+// < 4 000 km scores 0. 4 001–6 000 km scores +10. Above 6 000 km scores +20.
 function productivityPointsForKm(km: number) {
   if (km > HIGH_YIELD_KM) return 20
-  if (km > TARGET_YIELD_KM) return 10
+  if (km >= TARGET_YIELD_KM + 1) return 10
   return 0
 }
 
@@ -172,131 +153,120 @@ export async function calculateMonthlyYield(
 ): Promise<MonthlyYieldScore[]> {
   assertCalendarMonth(year, month)
 
-  const { activeMonth, nextMonthStart } = monthWindow(year, month)
+  const { startOfMonth, endOfMonth } = monthBounds(year, month)
   const loggedInMonth = and(
-    sql`(${tireIncidentsTable.incidentDate})::date >= ${activeMonth}::date`,
-    sql`(${tireIncidentsTable.incidentDate})::date < ${nextMonthStart}::date`
+    sql`(${tireIncidentsTable.incidentDate})::date >= ${startOfMonth}::date`,
+    sql`(${tireIncidentsTable.incidentDate})::date <= ${endOfMonth}::date`
   )
 
-  const [distanceRows, pairings, tireByAssetRows, tireByDriverRows, suspensionRows] =
-    await Promise.all([
-      db
-        .select({
-          assetId: mileageLogsTable.assetId,
-          assetName: assetsTable.assetName,
-          assetType: assetsTable.assetType,
-          minOdometer: min(mileageLogsTable.odometer),
-          maxOdometer: max(mileageLogsTable.odometer),
-        })
-        .from(mileageLogsTable)
-        .innerJoin(
-          assetsTable,
-          eq(mileageLogsTable.assetId, assetsTable.id)
+  const [distanceRows, pairings, tireRows, suspensionRows] = await Promise.all([
+    db
+      .select({
+        assetId: mileageLogsTable.assetId,
+        assetName: assetsTable.assetName,
+        assetType: assetsTable.assetType,
+        minOdometer: min(mileageLogsTable.odometer),
+        maxOdometer: max(mileageLogsTable.odometer),
+      })
+      .from(mileageLogsTable)
+      .innerJoin(assetsTable, eq(mileageLogsTable.assetId, assetsTable.id))
+      .where(
+        and(
+          gte(mileageLogsTable.date, startOfMonth),
+          lte(mileageLogsTable.date, endOfMonth)
         )
-        .where(
-          and(
-            gte(mileageLogsTable.date, activeMonth),
-            lt(mileageLogsTable.date, nextMonthStart),
-            motiveUnitFilter()
-          )
-        )
-        .groupBy(
-          mileageLogsTable.assetId,
-          assetsTable.assetName,
-          assetsTable.assetType
-        ),
-      db.query.monthlyPairingsTable.findMany({
-        where: { activeMonth },
-        with: {
-          truck: true,
-          trailer: true,
-          driver: true,
+      )
+      .groupBy(
+        mileageLogsTable.assetId,
+        assetsTable.assetName,
+        assetsTable.assetType
+      ),
+    db.query.monthlyPairingsTable.findMany({
+      where: {
+        activeMonth: {
+          gte: startOfMonth,
+          lte: endOfMonth,
         },
-      }),
-      db
-        .select({
-          assetId: tireIncidentsTable.assetId,
-          assetName: assetsTable.assetName,
-          assetType: assetsTable.assetType,
-          points: sum(tireIncidentsTable.penaltyPoints),
-        })
-        .from(tireIncidentsTable)
-        .innerJoin(
-          assetsTable,
-          eq(tireIncidentsTable.assetId, assetsTable.id)
+      },
+      with: {
+        truck: true,
+        trailer: true,
+        driver: true,
+      },
+    }),
+    db
+      .select({
+        assetId: tireIncidentsTable.assetId,
+        assetName: assetsTable.assetName,
+        assetType: assetsTable.assetType,
+        driverId: tireIncidentsTable.driverId,
+        driverName: driversTable.name,
+        points: sum(tireIncidentsTable.penaltyPoints),
+      })
+      .from(tireIncidentsTable)
+      .innerJoin(assetsTable, eq(tireIncidentsTable.assetId, assetsTable.id))
+      .innerJoin(
+        driversTable,
+        eq(tireIncidentsTable.driverId, driversTable.id)
+      )
+      .where(loggedInMonth)
+      .groupBy(
+        tireIncidentsTable.assetId,
+        assetsTable.assetName,
+        assetsTable.assetType,
+        tireIncidentsTable.driverId,
+        driversTable.name
+      ),
+    db
+      .select({
+        assetId: mechanicalSparesTable.assetId,
+        assetName: assetsTable.assetName,
+        assetType: assetsTable.assetType,
+        jobCards: countDistinct(mechanicalSparesTable.jobCardNo),
+      })
+      .from(mechanicalSparesTable)
+      .innerJoin(
+        assetsTable,
+        eq(mechanicalSparesTable.assetId, assetsTable.id)
+      )
+      .where(
+        and(
+          gte(mechanicalSparesTable.fitmentDate, startOfMonth),
+          lte(mechanicalSparesTable.fitmentDate, endOfMonth),
+          // Ingestion title-cases Sub Equipment ("Suspension"); match the
+          // category either way.
+          sql`upper(${mechanicalSparesTable.tier1}) = 'SUSPENSION'`
         )
-        .where(loggedInMonth)
-        .groupBy(
-          tireIncidentsTable.assetId,
-          assetsTable.assetName,
-          assetsTable.assetType
-        ),
-      db
-        .select({
-          driverId: tireIncidentsTable.driverId,
-          driverName: driversTable.name,
-          points: sum(tireIncidentsTable.penaltyPoints),
-        })
-        .from(tireIncidentsTable)
-        .innerJoin(
-          driversTable,
-          eq(tireIncidentsTable.driverId, driversTable.id)
-        )
-        .where(loggedInMonth)
-        .groupBy(tireIncidentsTable.driverId, driversTable.name),
-      db
-        .select({
-          assetId: mechanicalSparesTable.assetId,
-          assetName: assetsTable.assetName,
-          assetType: assetsTable.assetType,
-          jobCards: countDistinct(mechanicalSparesTable.jobCardNo),
-        })
-        .from(mechanicalSparesTable)
-        .innerJoin(
-          assetsTable,
-          eq(mechanicalSparesTable.assetId, assetsTable.id)
-        )
-        .where(
-          and(
-            gte(mechanicalSparesTable.fitmentDate, activeMonth),
-            lt(mechanicalSparesTable.fitmentDate, nextMonthStart),
-            // Ingestion title-cases Sub Equipment ("Suspension"); match the
-            // category either way.
-            sql`upper(${mechanicalSparesTable.tier1}) = 'SUSPENSION'`
-          )
-        )
-        .groupBy(
-          mechanicalSparesTable.assetId,
-          assetsTable.assetName,
-          assetsTable.assetType
-        ),
-    ])
+      )
+      .groupBy(
+        mechanicalSparesTable.assetId,
+        assetsTable.assetName,
+        assetsTable.assetType
+      ),
+  ])
 
   const assets = new Map<number, AssetInfo>()
-  const truckMovement = new Map<number, Movement>()
+  const monthlyKm = new Map<number, number>()
 
   for (const row of distanceRows) {
-    const asset = {
+    assets.set(row.assetId, {
       id: row.assetId,
       name: row.assetName,
       assetType: row.assetType,
-    }
-    assets.set(asset.id, asset)
-
-    const km = odometerDelta(row.minOdometer, row.maxOdometer)
-    truckMovement.set(asset.id, {
-      km,
-      productivity: productivityPointsForKm(km),
     })
+    // Min and max are taken only from rows inside startOfMonth..endOfMonth,
+    // so this is the month's distance, not a lifetime odometer.
+    monthlyKm.set(
+      row.assetId,
+      odometerDelta(row.minOdometer, row.maxOdometer)
+    )
   }
 
-  const trailerMovement = new Map<number, Movement>()
-  const driverMovement = new Map<number, Movement>()
   const driverNames = new Map<number, string>()
   const driversByAsset = new Map<number, Set<number>>()
-  const trucksSeenByDriver = new Map<number, Set<number>>()
   const pairedTruckIds = new Set<number>()
   const pairedTrailerIds = new Set<number>()
+  const pairingsByTruck = new Map<number, typeof pairings>()
 
   function rememberAsset(asset: AssetInfo) {
     assets.set(asset.id, asset)
@@ -329,32 +299,68 @@ export async function calculateMonthlyYield(
     rememberDriverOnAsset(truck.id, driver.id)
     rememberDriverOnAsset(trailer.id, driver.id)
 
-    const movement = truckMovement.get(truck.id) ?? {
-      km: 0,
-      productivity: 0,
-    }
-    if (!truckMovement.has(truck.id)) {
-      truckMovement.set(truck.id, movement)
-    }
+    const links = pairingsByTruck.get(truck.id) ?? []
+    links.push(pairing)
+    pairingsByTruck.set(truck.id, links)
+  }
 
-    // A trailer has one pairing per month, so it takes that truck's
-    // distance and productivity in full.
-    trailerMovement.set(trailer.id, {
-      km: movement.km,
-      productivity: movement.productivity,
+  function usesOwnOdometer(assetId: number, asset: AssetInfo) {
+    if (pairedTruckIds.has(assetId)) return true
+    if (pairedTrailerIds.has(assetId)) return false
+    return !isTrailerAsset(asset)
+  }
+
+  const truckMovement = new Map<number, Movement>()
+
+  for (const [assetId, km] of monthlyKm) {
+    const asset = assets.get(assetId)
+    if (!asset || !usesOwnOdometer(assetId, asset)) continue
+
+    truckMovement.set(assetId, {
+      km,
+      productivity: productivityPointsForKm(km),
     })
+  }
 
-    // Two trailers on the same truck must not credit the driver twice.
-    const seenTrucks = trucksSeenByDriver.get(driver.id) ?? new Set<number>()
-    if (!seenTrucks.has(truck.id)) {
-      seenTrucks.add(truck.id)
-      trucksSeenByDriver.set(driver.id, seenTrucks)
+  for (const truckId of pairedTruckIds) {
+    if (truckMovement.has(truckId)) continue
 
-      const current = driverMovement.get(driver.id) ?? {
+    const km = monthlyKm.get(truckId) ?? 0
+    truckMovement.set(truckId, {
+      km,
+      productivity: productivityPointsForKm(km),
+    })
+  }
+
+  const trailerMovement = new Map<number, Movement>()
+  const driverMovement = new Map<number, Movement>()
+  const trucksSeenByDriver = new Map<number, Set<number>>()
+
+  for (const [truckId, movement] of truckMovement) {
+    for (const pairing of pairingsByTruck.get(truckId) ?? []) {
+      const trailerId = pairing.trailer.id
+      const driverId = pairing.driver.id
+
+      // One trailer has one pairing per month, so it takes that truck's
+      // distance and productivity in full.
+      trailerMovement.set(trailerId, {
+        km: movement.km,
+        productivity: movement.productivity,
+      })
+
+      // Two trailers on the same truck must not credit the driver twice.
+      // A second truck adds its own mileage and its own productivity.
+      const seenTrucks = trucksSeenByDriver.get(driverId) ?? new Set<number>()
+      if (seenTrucks.has(truckId)) continue
+
+      seenTrucks.add(truckId)
+      trucksSeenByDriver.set(driverId, seenTrucks)
+
+      const current = driverMovement.get(driverId) ?? {
         km: 0,
         productivity: 0,
       }
-      driverMovement.set(driver.id, {
+      driverMovement.set(driverId, {
         km: current.km + movement.km,
         productivity: current.productivity + movement.productivity,
       })
@@ -362,23 +368,58 @@ export async function calculateMonthlyYield(
   }
 
   const tireByAsset = new Map<number, number>()
-  for (const row of tireByAssetRows) {
+  const tirePortionByAssetDriver = new Map<number, Map<number, number>>()
+
+  for (const row of tireRows) {
     rememberAsset({
       id: row.assetId,
       name: row.assetName,
       assetType: row.assetType,
     })
-    tireByAsset.set(row.assetId, asDeduction(toFiniteNumber(row.points)))
+    driverNames.set(row.driverId, row.driverName)
+
+    const deduction = asDeduction(toFiniteNumber(row.points))
+    tireByAsset.set(row.assetId, (tireByAsset.get(row.assetId) ?? 0) + deduction)
+
+    const portions =
+      tirePortionByAssetDriver.get(row.assetId) ?? new Map<number, number>()
+    portions.set(row.driverId, (portions.get(row.driverId) ?? 0) + deduction)
+    tirePortionByAssetDriver.set(row.assetId, portions)
   }
 
   const tireByDriver = new Map<number, number>()
-  for (const row of tireByDriverRows) {
-    driverNames.set(row.driverId, row.driverName)
-    tireByDriver.set(row.driverId, asDeduction(toFiniteNumber(row.points)))
-  }
-
   const suspensionByAsset = new Map<number, number>()
   const suspensionByDriver = new Map<number, number>()
+
+  function chargeDrivers(
+    assetId: number,
+    deduction: number,
+    bucket: Map<number, number>,
+    fallback?: Map<number, number>
+  ) {
+    const paired = driversByAsset.get(assetId)
+    if (paired && paired.size > 0) {
+      for (const driverId of paired) {
+        bucket.set(driverId, (bucket.get(driverId) ?? 0) + deduction)
+      }
+      return
+    }
+
+    if (!fallback) return
+
+    for (const [driverId, portion] of fallback) {
+      bucket.set(driverId, (bucket.get(driverId) ?? 0) + portion)
+    }
+  }
+
+  for (const [assetId, deduction] of tireByAsset) {
+    chargeDrivers(
+      assetId,
+      deduction,
+      tireByDriver,
+      tirePortionByAssetDriver.get(assetId)
+    )
+  }
 
   for (const row of suspensionRows) {
     const jobCards = toFiniteNumber(row.jobCards)
@@ -392,47 +433,37 @@ export async function calculateMonthlyYield(
 
     const deduction = -SUSPENSION_DEDUCTION_PER_JOB_CARD * jobCards
     suspensionByAsset.set(row.assetId, deduction)
+    chargeDrivers(row.assetId, deduction, suspensionByDriver)
+  }
 
-    for (const driverId of driversByAsset.get(row.assetId) ?? []) {
-      suspensionByDriver.set(
-        driverId,
-        (suspensionByDriver.get(driverId) ?? 0) + deduction
-      )
+  function entityTypeForAsset(
+    assetId: number,
+    asset: AssetInfo
+  ): "Truck" | "Trailer" {
+    if (pairedTrailerIds.has(assetId) && !pairedTruckIds.has(assetId)) {
+      return "Trailer"
     }
+    if (pairedTruckIds.has(assetId)) return "Truck"
+    return isTrailerAsset(asset) ? "Trailer" : "Truck"
   }
 
-  const truckIds = new Set<number>(pairedTruckIds)
-  const trailerIds = new Set<number>(pairedTrailerIds)
-
-  for (const assetId of truckMovement.keys()) {
-    if (!pairedTrailerIds.has(assetId)) truckIds.add(assetId)
-  }
-
-  for (const assetId of assets.keys()) {
-    const hasPenalty =
-      tireByAsset.has(assetId) || suspensionByAsset.has(assetId)
-    if (!hasPenalty || truckIds.has(assetId) || trailerIds.has(assetId)) {
-      continue
-    }
-
-    const asset = assets.get(assetId)
-    if (asset && isTrailerAsset(asset)) trailerIds.add(assetId)
-    else truckIds.add(assetId)
-  }
-
+  const emittedAssets = new Set<number>()
   const scores: MonthlyYieldScore[] = []
 
-  for (const assetId of truckIds) {
-    const asset = assets.get(assetId)
-    if (!asset) continue
+  function pushAsset(
+    entityType: "Truck" | "Trailer",
+    assetId: number,
+    movement: Movement
+  ) {
+    if (emittedAssets.has(assetId)) return
 
-    const movement = truckMovement.get(assetId) ?? {
-      km: 0,
-      productivity: 0,
-    }
+    const asset = assets.get(assetId)
+    if (!asset) return
+
+    emittedAssets.add(assetId)
     scores.push(
       finalize({
-        entityType: "Truck",
+        entityType,
         entityId: assetId,
         name: asset.name,
         totalMileageKm: movement.km,
@@ -443,25 +474,27 @@ export async function calculateMonthlyYield(
     )
   }
 
-  for (const assetId of trailerIds) {
+  for (const [assetId, movement] of truckMovement) {
     const asset = assets.get(assetId)
-    if (!asset) continue
+    if (!asset || entityTypeForAsset(assetId, asset) !== "Truck") continue
+    pushAsset("Truck", assetId, movement)
+  }
 
-    const movement = trailerMovement.get(assetId) ?? {
-      km: 0,
-      productivity: 0,
-    }
-    scores.push(
-      finalize({
-        entityType: "Trailer",
-        entityId: assetId,
-        name: asset.name,
-        totalMileageKm: movement.km,
-        productivityPoints: movement.productivity,
-        tirePenaltyPoints: tireByAsset.get(assetId) ?? 0,
-        suspensionPenaltyPoints: suspensionByAsset.get(assetId) ?? 0,
-      })
-    )
+  for (const [assetId, movement] of trailerMovement) {
+    pushAsset("Trailer", assetId, movement)
+  }
+
+  for (const [assetId, asset] of assets) {
+    const hasPenalty =
+      tireByAsset.has(assetId) || suspensionByAsset.has(assetId)
+    if (!hasPenalty) continue
+
+    const entityType = entityTypeForAsset(assetId, asset)
+    const movement =
+      entityType === "Trailer"
+        ? (trailerMovement.get(assetId) ?? { km: 0, productivity: 0 })
+        : (truckMovement.get(assetId) ?? { km: 0, productivity: 0 })
+    pushAsset(entityType, assetId, movement)
   }
 
   const driverIds = new Set<number>([
