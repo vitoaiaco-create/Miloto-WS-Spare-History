@@ -2,12 +2,11 @@ import "server-only"
 
 import {
   and,
+  asc,
   countDistinct,
   eq,
   gte,
   lte,
-  max,
-  min,
   sql,
   sum,
 } from "drizzle-orm"
@@ -43,6 +42,8 @@ export type MonthlyYieldScore = {
 const HIGH_YIELD_KM = 6_000
 const TARGET_YIELD_KM = 4_000
 const SUSPENSION_DEDUCTION_PER_JOB_CARD = 5
+// Physically plausible ceiling for one daily hop (~800 km round trip).
+const MAX_VALID_DAILY_KM = 800
 
 type AssetInfo = {
   id: number
@@ -92,13 +93,18 @@ function roundKm(value: number) {
   return Math.round(value * 100) / 100
 }
 
-function odometerDelta(
-  minOdometer: string | null,
-  maxOdometer: string | null
-) {
-  const low = toFiniteNumber(minOdometer)
-  const high = toFiniteNumber(maxOdometer)
-  return Math.max(0, high - low)
+// Sum consecutive odometer hops, dropping backward typing and ghost jumps.
+function sumValidDailyDeltas(odometers: Array<string | number>) {
+  let totalValidDistance = 0
+
+  for (let i = 1; i < odometers.length; i++) {
+    const delta = toFiniteNumber(odometers[i]) - toFiniteNumber(odometers[i - 1])
+    if (delta > 0 && delta <= MAX_VALID_DAILY_KM) {
+      totalValidDistance += delta
+    }
+  }
+
+  return totalValidDistance
 }
 
 // < 4 000 km scores 0. 4 001–6 000 km scores +10. Above 6 000 km scores +20.
@@ -159,14 +165,14 @@ export async function calculateMonthlyYield(
     sql`(${tireIncidentsTable.incidentDate})::date <= ${endOfMonth}::date`
   )
 
-  const [distanceRows, pairings, tireRows, suspensionRows] = await Promise.all([
+  const [mileageLogs, pairings, tireRows, suspensionRows] = await Promise.all([
     db
       .select({
         assetId: mileageLogsTable.assetId,
         assetName: assetsTable.assetName,
         assetType: assetsTable.assetType,
-        minOdometer: min(mileageLogsTable.odometer),
-        maxOdometer: max(mileageLogsTable.odometer),
+        date: mileageLogsTable.date,
+        odometer: mileageLogsTable.odometer,
       })
       .from(mileageLogsTable)
       .innerJoin(assetsTable, eq(mileageLogsTable.assetId, assetsTable.id))
@@ -176,11 +182,7 @@ export async function calculateMonthlyYield(
           lte(mileageLogsTable.date, endOfMonth)
         )
       )
-      .groupBy(
-        mileageLogsTable.assetId,
-        assetsTable.assetName,
-        assetsTable.assetType
-      ),
+      .orderBy(asc(mileageLogsTable.assetId), asc(mileageLogsTable.date)),
     db.query.monthlyPairingsTable.findMany({
       where: {
         activeMonth: {
@@ -247,19 +249,21 @@ export async function calculateMonthlyYield(
 
   const assets = new Map<number, AssetInfo>()
   const monthlyKm = new Map<number, number>()
+  const odometersByAsset = new Map<number, Array<string | number>>()
 
-  for (const row of distanceRows) {
+  for (const row of mileageLogs) {
     assets.set(row.assetId, {
       id: row.assetId,
       name: row.assetName,
       assetType: row.assetType,
     })
-    // Min and max are taken only from rows inside startOfMonth..endOfMonth,
-    // so this is the month's distance, not a lifetime odometer.
-    monthlyKm.set(
-      row.assetId,
-      odometerDelta(row.minOdometer, row.maxOdometer)
-    )
+    const readings = odometersByAsset.get(row.assetId) ?? []
+    readings.push(row.odometer)
+    odometersByAsset.set(row.assetId, readings)
+  }
+
+  for (const [assetId, odometers] of odometersByAsset) {
+    monthlyKm.set(assetId, sumValidDailyDeltas(odometers))
   }
 
   const driverNames = new Map<number, string>()
