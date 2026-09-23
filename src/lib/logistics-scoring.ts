@@ -39,6 +39,24 @@ export type MonthlyYieldScore = {
   matrixClass: MatrixClass
 }
 
+export type YTDMonthYield = {
+  month: number
+  mileage: number
+  prodPts: number
+  tyrePts: number
+  suspPts: number
+  netScore: number
+}
+
+export type YTDYieldScore = {
+  id: number
+  type: "Truck" | "Trailer"
+  displayName: string
+  ytdNetScore: number
+  currentClass: MatrixClass
+  monthlyData: YTDMonthYield[]
+}
+
 const HIGH_YIELD_KM = 6_000
 const TARGET_YIELD_KM = 4_000
 const SUSPENSION_DEDUCTION_PER_JOB_CARD = 5
@@ -539,4 +557,121 @@ export async function calculateMonthlyYield(
   )
 
   return scores
+}
+
+type AssetYtdDraft = {
+  id: number
+  type: "Truck" | "Trailer"
+  name: string
+  ytdNetScore: number
+  ytdProdPts: number
+  monthlyData: YTDMonthYield[]
+}
+
+function displayNameFor(assetName: string, driverName: string | undefined) {
+  return driverName ? `${assetName} - ${driverName}` : assetName
+}
+
+export async function calculateYTDYield(
+  year: number,
+  endMonth: number
+): Promise<YTDYieldScore[]> {
+  assertCalendarMonth(year, endMonth)
+
+  const { startOfMonth: ytdStart } = monthBounds(year, 1)
+  const { endOfMonth: ytdEnd } = monthBounds(year, endMonth)
+
+  const [pairings, ...monthlyResults] = await Promise.all([
+    db.query.monthlyPairingsTable.findMany({
+      where: {
+        activeMonth: {
+          gte: ytdStart,
+          lte: ytdEnd,
+        },
+      },
+      with: {
+        truck: true,
+        trailer: true,
+        driver: true,
+      },
+    }),
+    ...Array.from({ length: endMonth }, (_, index) =>
+      calculateMonthlyYield(year, index + 1)
+    ),
+  ])
+
+  // Later pairings overwrite earlier ones so each asset keeps the driver
+  // from its most recent month in the YTD window.
+  const latestDriverByAsset = new Map<number, string>()
+  const chronologicalPairings = [...pairings].sort((a, b) => {
+    const byMonth = a.activeMonth.localeCompare(b.activeMonth)
+    return byMonth !== 0 ? byMonth : a.id - b.id
+  })
+
+  for (const pairing of chronologicalPairings) {
+    latestDriverByAsset.set(pairing.truck.id, pairing.driver.name)
+    latestDriverByAsset.set(pairing.trailer.id, pairing.driver.name)
+  }
+
+  const byAsset = new Map<number, AssetYtdDraft>()
+
+  for (let month = 1; month <= endMonth; month++) {
+    const scores = monthlyResults[month - 1]
+
+    for (const score of scores) {
+      if (score.entityType === "Driver") continue
+
+      const monthRow: YTDMonthYield = {
+        month,
+        mileage: score.totalMileageKm,
+        prodPts: score.productivityPoints,
+        tyrePts: score.tirePenaltyPoints,
+        suspPts: score.suspensionPenaltyPoints,
+        netScore: score.netScore,
+      }
+
+      const existing = byAsset.get(score.entityId)
+      if (!existing) {
+        byAsset.set(score.entityId, {
+          id: score.entityId,
+          type: score.entityType,
+          name: score.name,
+          ytdNetScore: score.netScore,
+          ytdProdPts: score.productivityPoints,
+          monthlyData: [monthRow],
+        })
+        continue
+      }
+
+      existing.type = score.entityType
+      existing.name = score.name
+      existing.ytdNetScore += score.netScore
+      existing.ytdProdPts += score.productivityPoints
+      existing.monthlyData.push(monthRow)
+    }
+  }
+
+  const kindOrder: Record<"Truck" | "Trailer", number> = {
+    Truck: 0,
+    Trailer: 1,
+  }
+
+  return [...byAsset.values()]
+    .map((draft) => ({
+      id: draft.id,
+      type: draft.type,
+      displayName: displayNameFor(
+        draft.name,
+        latestDriverByAsset.get(draft.id)
+      ),
+      ytdNetScore: draft.ytdNetScore,
+      currentClass: matrixClassFor(draft.ytdNetScore, draft.ytdProdPts),
+      monthlyData: draft.monthlyData,
+    }))
+    .sort(
+      (a, b) =>
+        kindOrder[a.type] - kindOrder[b.type] ||
+        a.displayName.localeCompare(b.displayName) ||
+        a.id - b.id
+    )
 }

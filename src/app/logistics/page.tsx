@@ -2,7 +2,10 @@ import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 
 import { LogisticsDashboard } from "@/components/logistics-dashboard"
-import { calculateMonthlyYield } from "@/lib/logistics-scoring"
+import {
+  calculateMonthlyYield,
+  calculateYTDYield,
+} from "@/lib/logistics-scoring"
 
 export default async function LogisticsAnalyticsPage() {
   const { userId, sessionClaims } = await auth()
@@ -20,7 +23,10 @@ export default async function LogisticsAnalyticsPage() {
     redirect("/")
   }
 
-  const yieldData = await calculateMonthlyYield(2026, 9)
+  const [yieldData, ytdData] = await Promise.all([
+    calculateMonthlyYield(2026, 9),
+    calculateYTDYield(2026, 8),
+  ])
 
-  return <LogisticsDashboard data={yieldData} />
+  return <LogisticsDashboard data={yieldData} ytdData={ytdData} />
 }

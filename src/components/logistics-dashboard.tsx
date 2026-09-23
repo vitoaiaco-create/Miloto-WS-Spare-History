@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { Fragment, useMemo, useState } from "react"
 import { Printer } from "lucide-react"
 import {
   CartesianGrid,
@@ -49,9 +49,23 @@ import type {
   LogisticsEntityType,
   MatrixClass,
   MonthlyYieldScore,
+  YTDMonthYield,
+  YTDYieldScore,
 } from "@/lib/logistics-scoring"
 
 const PERIOD_LABEL = "September 2026"
+const YTD_PERIOD_LABEL = "January–August 2026"
+
+const YTD_MONTHS = [
+  { month: 1, label: "Jan" },
+  { month: 2, label: "Feb" },
+  { month: 3, label: "Mar" },
+  { month: 4, label: "Apr" },
+  { month: 5, label: "May" },
+  { month: 6, label: "Jun" },
+  { month: 7, label: "Jul" },
+  { month: 8, label: "Aug" },
+] as const
 
 const MATRIX_CLASSES = [
   "Class A",
@@ -136,8 +150,13 @@ function formatPoints(points: number) {
   return points > 0 ? `+${formatted}` : formatted
 }
 
-function penaltyPoints(score: MonthlyYieldScore) {
-  return score.tirePenaltyPoints + score.suspensionPenaltyPoints
+function monthNetScore(monthlyData: YTDMonthYield[], month: number) {
+  const row = monthlyData.find((entry) => entry.month === month)
+  return row ? formatPoints(row.netScore) : "-"
+}
+
+function monthName(month: number) {
+  return YTD_MONTHS.find((column) => column.month === month)?.label ?? String(month)
 }
 
 function isEntityFilter(value: string | null): value is EntityFilter {
@@ -363,18 +382,21 @@ function YieldMatrix({ data }: { data: MonthlyYieldScore[] }) {
   )
 }
 
-function AssetRankings({ data }: { data: MonthlyYieldScore[] }) {
+function AssetRankings({ data }: { data: YTDYieldScore[] }) {
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({})
   const ranked = useMemo(
     () =>
       [...data].sort(
         (a, b) =>
-          b.netScore - a.netScore ||
-          a.name.localeCompare(b.name) ||
-          a.entityType.localeCompare(b.entityType) ||
-          a.entityId - b.entityId
+          b.ytdNetScore - a.ytdNetScore ||
+          a.displayName.localeCompare(b.displayName) ||
+          a.id - b.id
       ),
     [data]
   )
+
+  const toggleRow = (id: string | number) =>
+    setExpandedRows((prev) => ({ ...prev, [id]: !prev[id] }))
 
   return (
     <Card id="logistics-rankings">
@@ -396,8 +418,7 @@ function AssetRankings({ data }: { data: MonthlyYieldScore[] }) {
       <CardHeader>
         <CardTitle>Asset Rankings (Table)</CardTitle>
         <CardDescription>
-          {PERIOD_LABEL}, sorted by net score. Penalty pts combine tire damage
-          and suspension job cards.
+          Monthly net scores for {YTD_PERIOD_LABEL}, sorted by YTD score.
         </CardDescription>
         <CardAction>
           <Button
@@ -411,50 +432,108 @@ function AssetRankings({ data }: { data: MonthlyYieldScore[] }) {
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent>
+      <CardContent className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Type</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead className="text-right">Mileage</TableHead>
-              <TableHead className="text-right">Productivity Pts</TableHead>
-              <TableHead className="text-right">Penalty Pts</TableHead>
-              <TableHead className="text-right">Net Score</TableHead>
-              <TableHead>Class</TableHead>
+              <TableHead>Asset & Driver</TableHead>
+              {YTD_MONTHS.map((column) => (
+                <TableHead key={column.month} className="text-right">
+                  {column.label}
+                </TableHead>
+              ))}
+              <TableHead className="text-right">YTD Score</TableHead>
+              <TableHead>Current Class</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {ranked.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={YTD_MONTHS.length + 3}
                   className="py-10 text-center text-muted-foreground"
                 >
-                  No yield scores for {PERIOD_LABEL}.
+                  No year-to-date yield scores for {YTD_PERIOD_LABEL}.
                 </TableCell>
               </TableRow>
             ) : (
-              ranked.map((score) => (
-                <TableRow key={`${score.entityType}-${score.entityId}`}>
-                  <TableCell>{score.entityType}</TableCell>
-                  <TableCell className="font-medium">{score.name}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatKm(score.totalMileageKm)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatPoints(score.productivityPoints)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatPoints(penaltyPoints(score))}
-                  </TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">
-                    {formatPoints(score.netScore)}
-                  </TableCell>
-                  <TableCell>
-                    <ClassBadge matrixClass={score.matrixClass} />
-                  </TableCell>
-                </TableRow>
+              ranked.map((asset) => (
+                <Fragment key={`${asset.type}-${asset.id}`}>
+                  <TableRow
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => toggleRow(asset.id)}
+                  >
+                    <TableCell className="font-medium">
+                      {asset.displayName}
+                    </TableCell>
+                    {YTD_MONTHS.map((column) => (
+                      <TableCell
+                        key={column.month}
+                        className="text-right tabular-nums"
+                      >
+                        {monthNetScore(asset.monthlyData, column.month)}
+                      </TableCell>
+                    ))}
+                    <TableCell className="text-right font-medium tabular-nums">
+                      {formatPoints(asset.ytdNetScore)}
+                    </TableCell>
+                    <TableCell>
+                      <ClassBadge matrixClass={asset.currentClass} />
+                    </TableCell>
+                  </TableRow>
+                  {expandedRows[asset.id] ? (
+                    <TableRow>
+                      <TableCell colSpan={11} className="bg-muted/30">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Month</TableHead>
+                              <TableHead className="text-right">
+                                Distance (km)
+                              </TableHead>
+                              <TableHead className="text-right">
+                                Productivity Pts
+                              </TableHead>
+                              <TableHead className="text-right">
+                                Tyre Deduction
+                              </TableHead>
+                              <TableHead className="text-right">
+                                Suspension Deduction
+                              </TableHead>
+                              <TableHead className="text-right">
+                                Net Points
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {asset.monthlyData.map((month) => (
+                              <TableRow key={month.month}>
+                                <TableCell>{monthName(month.month)}</TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {month.mileage.toLocaleString("en-US", {
+                                    maximumFractionDigits: 2,
+                                  })}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatPoints(month.prodPts)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatPoints(month.tyrePts)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatPoints(month.suspPts)}
+                                </TableCell>
+                                <TableCell className="text-right font-medium tabular-nums">
+                                  {formatPoints(month.netScore)}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </Fragment>
               ))
             )}
           </TableBody>
@@ -521,7 +600,13 @@ function ScoringRules() {
   )
 }
 
-export function LogisticsDashboard({ data }: { data: MonthlyYieldScore[] }) {
+export function LogisticsDashboard({
+  data,
+  ytdData,
+}: {
+  data: MonthlyYieldScore[]
+  ytdData: YTDYieldScore[]
+}) {
   return (
     <Tabs defaultValue="matrix" className="gap-6">
       <TabsList className="h-9 w-full max-w-3xl justify-start overflow-x-auto group-data-horizontal/tabs:h-9">
@@ -539,7 +624,7 @@ export function LogisticsDashboard({ data }: { data: MonthlyYieldScore[] }) {
         <YieldMatrix data={data} />
       </TabsContent>
       <TabsContent value="rankings">
-        <AssetRankings data={data} />
+        <AssetRankings data={ytdData} />
       </TabsContent>
       <TabsContent value="rules">
         <ScoringRules />
