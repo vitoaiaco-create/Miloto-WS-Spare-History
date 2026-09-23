@@ -17,10 +17,14 @@ export default async function AnalyticsLayout({
 
   const role = sessionClaims?.metadata?.role
   const isAdmin = role === "admin"
-  const hasAnalyticsModule =
-    sessionClaims?.metadata?.modules?.includes("workshop_analytics") ?? false
+  const modules = sessionClaims?.metadata?.modules
+  const hasWorkshopModule = modules?.includes("workshop_analytics") ?? false
+  const hasLogisticsModule = modules?.includes("logistics_analytics") ?? false
 
-  if (role === "oils_only" || (!isAdmin && !hasAnalyticsModule)) {
+  if (
+    role === "oils_only" ||
+    (!isAdmin && !hasWorkshopModule && !hasLogisticsModule)
+  ) {
     redirect("/")
   }
 

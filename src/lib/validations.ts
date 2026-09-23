@@ -40,6 +40,7 @@ const MAX_MATERIAL_NAME = 255
 const MAX_JOB_CARD_NO = 50
 const MAX_TIER = 100
 const MAX_INSTALLATION_POINT = 255
+const MAX_DRIVER_NAME = 255
 
 // Workshop staff identify an asset by its fleet number, stored as
 // `assetsTable.assetName`. Spreadsheets don't know the internal numeric
@@ -218,3 +219,38 @@ export const oilConsumptionRowSchema = z.preprocess((row) => {
 }))
 
 export type OilConsumptionRow = z.infer<typeof oilConsumptionRowSchema>
+
+// A single row of the monthly truck-trailer-driver pairing CSV, mapped onto
+// `monthlyPairingsTable`. The file's columns are Trailer, Truck, Driver, and
+// Active_Month. Active_Month is the first of that month (`YYYY-MM-01`).
+// Trailer and Truck stay fleet-number strings here; `ingestMonthlyPairings`
+// resolves them to `assetsTable.id`.
+export const pairingRowSchema = z.preprocess((row) => {
+  const cells = indexRowByHeader(row)
+
+  return {
+    trailer: toTrimmedString(cells.get("trailer")),
+    truck: toTrimmedString(cells.get("truck")),
+    driver: toTrimmedString(cells.get("driver")),
+    activeMonth: toTrimmedString(cells.get("active_month")),
+  }
+}, z.object({
+  trailer: fleetNumberSchema("Trailer"),
+  truck: fleetNumberSchema("Truck"),
+  driver: z
+    .string()
+    .min(1, "Driver is required")
+    .max(
+      MAX_DRIVER_NAME,
+      `Driver must be ${MAX_DRIVER_NAME} characters or fewer`
+    ),
+  activeMonth: z
+    .string()
+    .min(1, "Active_Month is required")
+    .regex(
+      /^\d{4}-(0[1-9]|1[0-2])-01$/,
+      "Active_Month must be formatted as YYYY-MM-01"
+    ),
+}))
+
+export type PairingRow = z.infer<typeof pairingRowSchema>

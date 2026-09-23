@@ -2,15 +2,17 @@
 
 import { auth } from "@clerk/nextjs/server"
 import { format } from "date-fns"
-import { and, desc, eq, inArray, lte } from "drizzle-orm"
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 
 import { db } from "@/db"
 import {
   assetsTable,
+  driversTable,
   mechanicalSparesTable,
   mileageLogsTable,
+  monthlyPairingsTable,
   oilConsumptionLogsTable,
   oilSamplesTable,
 } from "@/db/schema"
@@ -26,8 +28,10 @@ import {
 import {
   assetRowSchema,
   oilConsumptionRowSchema,
+  pairingRowSchema,
   sparesRowSchema,
   type OilConsumptionRow,
+  type PairingRow,
   type SparesRow,
 } from "@/lib/validations"
 
@@ -466,6 +470,188 @@ export async function ingestOils(input: IngestInput): Promise<IngestResult> {
     duplicates: valid.length - imported,
     skipped,
     createdAssets: createdFleetNumbers,
+  }
+}
+
+type MonthlyPairingInsert = {
+  trailerId: number
+  truckId: number
+  driverId: number
+  activeMonth: string
+  rowNumber: number
+}
+
+// Bulk-imports the monthly truck-trailer-driver pairing CSV into
+// `monthlyPairingsTable`. Drivers are registered first (existing names are
+// left as they are). Trailer and Truck cells are canonical fleet numbers
+// looked up on `assetsTable`; a row whose trailer or truck is not on the
+// fleet list is skipped. Re-importing the same trailer and month overwrites
+// that pairing's truck and driver.
+export async function ingestMonthlyPairings(
+  input: IngestInput
+): Promise<IngestResult> {
+  await requireAdmin()
+
+  const { rows, firstRowNumber } = ingestInputSchema.parse(input)
+  const valid: { data: PairingRow; rowNumber: number }[] = []
+  const skipped: SkippedRow[] = []
+
+  for (const [index, row] of rows.entries()) {
+    const parsed = pairingRowSchema.safeParse(row)
+
+    if (parsed.success) {
+      valid.push({ data: parsed.data, rowNumber: firstRowNumber + index })
+    } else {
+      skipped.push({
+        rowNumber: firstRowNumber + index,
+        error: parsed.error.issues[0]?.message ?? "Row could not be validated",
+      })
+    }
+  }
+
+  if (valid.length === 0) {
+    return { imported: 0, duplicates: 0, skipped, createdAssets: [] }
+  }
+
+  const driverNames = [...new Set(valid.map(({ data }) => data.driver))]
+
+  for (const batch of chunk(driverNames, INSERT_CHUNK_SIZE)) {
+    await db
+      .insert(driversTable)
+      .values(batch.map((name) => ({ name })))
+      .onConflictDoNothing({ target: driversTable.name })
+  }
+
+  const driverIdByName = new Map<string, number>()
+
+  for (const batch of chunk(driverNames, INSERT_CHUNK_SIZE)) {
+    const drivers = await db
+      .select({ id: driversTable.id, name: driversTable.name })
+      .from(driversTable)
+      .where(inArray(driversTable.name, batch))
+
+    for (const driver of drivers) {
+      driverIdByName.set(driver.name, driver.id)
+    }
+  }
+
+  const fleetNumbers = [
+    ...new Set(
+      valid.flatMap(({ data }) => [
+        toCanonicalFleetNumber(data.trailer),
+        toCanonicalFleetNumber(data.truck),
+      ])
+    ),
+  ]
+  const assetIdByFleetNumber = new Map<string, number>()
+
+  for (const batch of chunk(fleetNumbers, INSERT_CHUNK_SIZE)) {
+    const assets = await selectAssetsByName(batch)
+
+    for (const asset of assets) {
+      assetIdByFleetNumber.set(asset.assetName, asset.id)
+    }
+  }
+
+  const matched: MonthlyPairingInsert[] = []
+
+  for (const { data, rowNumber } of valid) {
+    const trailerFleetNumber = toCanonicalFleetNumber(data.trailer)
+    const truckFleetNumber = toCanonicalFleetNumber(data.truck)
+    const trailerId = assetIdByFleetNumber.get(trailerFleetNumber)
+    const truckId = assetIdByFleetNumber.get(truckFleetNumber)
+    const driverId = driverIdByName.get(data.driver)
+
+    if (trailerId === undefined) {
+      skipped.push({
+        rowNumber,
+        error: `No fleet asset found for trailer ${data.trailer}`,
+      })
+      continue
+    }
+
+    if (truckId === undefined) {
+      skipped.push({
+        rowNumber,
+        error: `No fleet asset found for truck ${data.truck}`,
+      })
+      continue
+    }
+
+    if (driverId === undefined) {
+      skipped.push({
+        rowNumber,
+        error: `No driver found for ${data.driver}`,
+      })
+      continue
+    }
+
+    matched.push({
+      trailerId,
+      truckId,
+      driverId,
+      activeMonth: data.activeMonth,
+      rowNumber,
+    })
+  }
+
+  // One INSERT cannot update the same (trailer, month) twice. A later row
+  // in the file wins; the earlier one is reported as skipped.
+  const byTrailerMonth = new Map<string, MonthlyPairingInsert>()
+
+  for (const pairing of matched) {
+    const key = `${pairing.trailerId}:${pairing.activeMonth}`
+    const previous = byTrailerMonth.get(key)
+
+    if (previous) {
+      skipped.push({
+        rowNumber: previous.rowNumber,
+        error: "A later row in this file pairs the same trailer for this month",
+      })
+    }
+
+    byTrailerMonth.set(key, pairing)
+  }
+
+  const pairings = [...byTrailerMonth.values()]
+  let imported = 0
+
+  for (const batch of chunk(pairings, INSERT_CHUNK_SIZE)) {
+    const inserted = await db
+      .insert(monthlyPairingsTable)
+      .values(
+        batch.map(({ trailerId, truckId, driverId, activeMonth }) => ({
+          trailerId,
+          truckId,
+          driverId,
+          activeMonth,
+        }))
+      )
+      // Unique index `monthly_pairings_trailer_id_active_month_idx`.
+      .onConflictDoUpdate({
+        target: [
+          monthlyPairingsTable.trailerId,
+          monthlyPairingsTable.activeMonth,
+        ],
+        set: {
+          truckId: sql`excluded.truck_id`,
+          driverId: sql`excluded.driver_id`,
+        },
+      })
+      .returning({ id: monthlyPairingsTable.id })
+
+    imported += inserted.length
+  }
+
+  skipped.sort((a, b) => a.rowNumber - b.rowNumber)
+
+  revalidatePath("/data-ingestion")
+
+  return {
+    imported,
+    duplicates: 0,
+    skipped,
+    createdAssets: [],
   }
 }
 

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   date,
   integer,
@@ -162,3 +163,52 @@ export const monthlyFleetKmTable = pgTable(
     ),
   ]
 );
+
+// Drivers assigned to truck/trailer pairings and credited on tire penalties.
+export const driversTable = pgTable("drivers", {
+  id: integer().primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 255 }).notNull().unique(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Which trailer, truck, and driver operated together in a given month.
+// One trailer has at most one pairing per month.
+export const monthlyPairingsTable = pgTable(
+  "monthly_pairings",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    trailerId: integer("trailer_id")
+      .notNull()
+      .references(() => assetsTable.id, { onDelete: "cascade" }),
+    truckId: integer("truck_id")
+      .notNull()
+      .references(() => assetsTable.id, { onDelete: "cascade" }),
+    driverId: integer("driver_id")
+      .notNull()
+      .references(() => driversTable.id, { onDelete: "cascade" }),
+    activeMonth: date("active_month").notNull(),
+  },
+  (table) => [
+    uniqueIndex("monthly_pairings_trailer_id_active_month_idx").on(
+      table.trailerId,
+      table.activeMonth
+    ),
+  ]
+);
+
+// Manual tire-penalty log. `assetId` is the fleet unit the incident is
+// charged against; `driverId` is the driver credited with the penalty.
+export const tireIncidentsTable = pgTable("tire_incidents", {
+  id: uuid().primaryKey().defaultRandom(),
+  assetId: integer("asset_id")
+    .notNull()
+    .references(() => assetsTable.id, { onDelete: "cascade" }),
+  driverId: integer("driver_id")
+    .notNull()
+    .references(() => driversTable.id, { onDelete: "cascade" }),
+  incidentDate: timestamp("incident_date").notNull(),
+  penaltyType: varchar("penalty_type", { length: 255 }).notNull(),
+  penaltyPoints: integer("penalty_points").notNull(),
+  notes: text("notes"),
+});

@@ -21,6 +21,7 @@ const LOCATION_BY_SEGMENT: Record<string, string> = {
   operations: "Operational Health",
   compliance: "Compliance & Audit",
   "cross-module": "Cross-Module",
+  logistics: "Logistics & Yield",
   settings: "Settings (Fleet KM)",
 }
 
@@ -107,6 +108,13 @@ export function AnalyticsNav({ className }: { className?: string }) {
             aria-current={section === "cross-module" ? "page" : undefined}
           >
             Cross-Module (Coming Soon)
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            nativeButton={false}
+            render={<Link href="/analytics/logistics" />}
+            aria-current={section === "logistics" ? "page" : undefined}
+          >
+            Logistics & Yield
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

@@ -21,6 +21,32 @@ export const relations = defineRelations(schema, (r) => ({
       from: r.assetsTable.id,
       to: r.oilSamplesTable.assetId,
     }),
+    // Two foreign keys on monthly pairings both point at assets, so each
+    // side carries the same alias to keep trailer and truck distinct.
+    trailerPairings: r.many.monthlyPairingsTable({
+      from: r.assetsTable.id,
+      to: r.monthlyPairingsTable.trailerId,
+      alias: "trailer",
+    }),
+    truckPairings: r.many.monthlyPairingsTable({
+      from: r.assetsTable.id,
+      to: r.monthlyPairingsTable.truckId,
+      alias: "truck",
+    }),
+    tireIncidents: r.many.tireIncidentsTable({
+      from: r.assetsTable.id,
+      to: r.tireIncidentsTable.assetId,
+    }),
+  },
+  driversTable: {
+    monthlyPairings: r.many.monthlyPairingsTable({
+      from: r.driversTable.id,
+      to: r.monthlyPairingsTable.driverId,
+    }),
+    tireIncidents: r.many.tireIncidentsTable({
+      from: r.driversTable.id,
+      to: r.tireIncidentsTable.driverId,
+    }),
   },
   mileageLogsTable: {
     // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so a
@@ -55,6 +81,37 @@ export const relations = defineRelations(schema, (r) => ({
     asset: r.one.assetsTable({
       from: r.oilSamplesTable.assetId,
       to: r.assetsTable.id,
+      optional: false,
+    }),
+  },
+  monthlyPairingsTable: {
+    trailer: r.one.assetsTable({
+      from: r.monthlyPairingsTable.trailerId,
+      to: r.assetsTable.id,
+      optional: false,
+      alias: "trailer",
+    }),
+    truck: r.one.assetsTable({
+      from: r.monthlyPairingsTable.truckId,
+      to: r.assetsTable.id,
+      optional: false,
+      alias: "truck",
+    }),
+    driver: r.one.driversTable({
+      from: r.monthlyPairingsTable.driverId,
+      to: r.driversTable.id,
+      optional: false,
+    }),
+  },
+  tireIncidentsTable: {
+    asset: r.one.assetsTable({
+      from: r.tireIncidentsTable.assetId,
+      to: r.assetsTable.id,
+      optional: false,
+    }),
+    driver: r.one.driversTable({
+      from: r.tireIncidentsTable.driverId,
+      to: r.driversTable.id,
       optional: false,
     }),
   },

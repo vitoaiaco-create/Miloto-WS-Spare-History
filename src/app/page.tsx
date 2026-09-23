@@ -1,5 +1,11 @@
 import { auth } from "@clerk/nextjs/server";
-import { BarChart3, Droplets, PackageSearch, UploadCloud } from "lucide-react";
+import {
+  BarChart3,
+  Droplets,
+  PackageSearch,
+  TrendingUp,
+  UploadCloud,
+} from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -92,6 +98,29 @@ export default async function Home() {
                     <CardDescription className="text-sm leading-relaxed">
                       Explore trends, costs, and performance metrics across
                       the workshop.
+                    </CardDescription>
+                  </CardContent>
+                </Card>
+              </Link>
+            )}
+
+            {!isOilsOnly &&
+              (isAdmin || allowedModules.includes("logistics_analytics")) && (
+              <Link href="/analytics/logistics">
+                <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                  <CardHeader>
+                    <TrendingUp
+                      className="mb-2 size-6 text-foreground"
+                      strokeWidth={1.75}
+                    />
+                    <CardTitle className="text-lg">
+                      Logistics Analytics
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription className="text-sm leading-relaxed">
+                      Track driver performance and the asset yield matrix
+                      across the fleet.
                     </CardDescription>
                   </CardContent>
                 </Card>

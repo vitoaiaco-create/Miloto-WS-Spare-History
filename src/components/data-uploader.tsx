@@ -8,6 +8,7 @@ import * as XLSX from "xlsx"
 
 import {
   ingestAssets,
+  ingestMonthlyPairings,
   ingestSpares,
   type IngestResult,
 } from "@/actions/ingestion"
@@ -43,6 +44,7 @@ import {
 const INGEST_ACTIONS = {
   assets: ingestAssets,
   spares: ingestSpares,
+  pairings: ingestMonthlyPairings,
 } as const
 
 type DataType = keyof typeof INGEST_ACTIONS
@@ -50,6 +52,7 @@ type DataType = keyof typeof INGEST_ACTIONS
 const DATA_TYPE_LABELS: Record<DataType, string> = {
   assets: "Fleet Asset List",
   spares: "Job Cards Outward Report",
+  pairings: "Asset Pairings",
 }
 
 // Rows sent per Server Action call. A Server Action body is capped at 1 MB by
@@ -199,7 +202,8 @@ export function DataUploader() {
       <CardHeader>
         <CardTitle>Import Data</CardTitle>
         <CardDescription>
-          Pick the fleet list or job cards report you are uploading, choose a
+          Pick the fleet list, job cards report, or monthly asset pairings
+          (trailer, truck, driver, and month) you are uploading, choose a
           .csv, .xlsx or .xls file, then parse it into the database. Mileage
           logs belong on the Mileage tab.
         </CardDescription>
