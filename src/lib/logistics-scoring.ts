@@ -40,6 +40,13 @@ export type MonthlyYieldScore = {
   matrixClass: MatrixClass
 }
 
+export type PenaltyDetail = {
+  date: string
+  reason: string
+  amount: number
+  visualId?: string
+}
+
 export type MotiveUnitMonthYield = {
   month: number
   driverName: string
@@ -48,6 +55,8 @@ export type MotiveUnitMonthYield = {
   prodPts: number
   truckPen: number
   trailerPen: number
+  truckPenaltyDetails: PenaltyDetail[]
+  trailerPenaltyDetails: PenaltyDetail[]
   netScore: number
 }
 
@@ -66,6 +75,7 @@ export type OperatorMonthYield = {
   distance: number
   prodPts: number
   penalties: number
+  penaltyDetails: PenaltyDetail[]
   netScore: number
 }
 
@@ -128,9 +138,22 @@ function isTruckAsset(asset: AssetInfo) {
   return type === "truck" || type === "prime mover"
 }
 
-function calendarMonthFromDate(value: string | Date) {
+function toIsoDate(value: string | Date) {
   const iso = typeof value === "string" ? value : value.toISOString()
-  return Number(iso.slice(5, 7))
+  return iso.slice(0, 10)
+}
+
+function calendarMonthFromDate(value: string | Date) {
+  return Number(toIsoDate(value).slice(5, 7))
+}
+
+function sortPenaltyDetails(details: PenaltyDetail[]) {
+  return [...details].sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) ||
+      a.reason.localeCompare(b.reason) ||
+      (a.visualId ?? "").localeCompare(b.visualId ?? "")
+  )
 }
 
 function assetMonthKey(assetId: number, month: number) {
@@ -704,7 +727,9 @@ async function loadYtdWindow(year: number, endMonth: number) {
       db
         .select({
           assetId: tireIncidentsTable.assetId,
+          date: sql<string>`(${tireIncidentsTable.incidentDate})::date::text`,
           month: sql<number>`extract(month from (${tireIncidentsTable.incidentDate})::date)::int`,
+          reason: tireIncidentsTable.penaltyType,
           points: tireIncidentsTable.penaltyPoints,
         })
         .from(tireIncidentsTable)
@@ -717,7 +742,10 @@ async function loadYtdWindow(year: number, endMonth: number) {
       db
         .select({
           assetId: tirePenaltiesTable.assetId,
+          date: sql<string>`(${tirePenaltiesTable.date})::date::text`,
           month: sql<number>`extract(month from (${tirePenaltiesTable.date})::date)::int`,
+          reason: tirePenaltiesTable.reason,
+          visualId: tirePenaltiesTable.visualId,
           points: tirePenaltiesTable.amount,
         })
         .from(tirePenaltiesTable)
@@ -795,27 +823,53 @@ async function loadYtdWindow(year: number, endMonth: number) {
   }
 
   const tireByAssetMonth = new Map<string, number>()
+  const detailsByAssetMonth = new Map<string, PenaltyDetail[]>()
 
-  for (const row of [...tireRows, ...scrapRows]) {
+  function addTirePenalty(row: {
+    assetId: number
+    month: number
+    date: string
+    reason: string
+    points: string | number | null
+    visualId?: string | null
+  }) {
     const month = toFiniteNumber(row.month)
-    if (month < 1 || month > endMonth) continue
+    if (month < 1 || month > endMonth) return
 
+    const amount = asDeduction(toFiniteNumber(row.points))
     const key = assetMonthKey(row.assetId, month)
-    tireByAssetMonth.set(
-      key,
-      (tireByAssetMonth.get(key) ?? 0) + asDeduction(toFiniteNumber(row.points))
-    )
+    tireByAssetMonth.set(key, (tireByAssetMonth.get(key) ?? 0) + amount)
+
+    const detail: PenaltyDetail = {
+      date: row.date,
+      reason: row.reason,
+      amount,
+    }
+    if (row.visualId) {
+      detail.visualId = row.visualId
+    }
+
+    const list = detailsByAssetMonth.get(key) ?? []
+    list.push(detail)
+    detailsByAssetMonth.set(key, list)
   }
 
-  const jobCardsByAssetMonth = new Map<string, Set<string>>()
+  for (const row of tireRows) addTirePenalty(row)
+  for (const row of scrapRows) addTirePenalty(row)
+
+  const jobCardsByAssetMonth = new Map<string, Map<string, string>>()
 
   for (const row of suspensionRows) {
     const month = calendarMonthFromDate(row.fitmentDate)
     if (month < 1 || month > endMonth) continue
 
     const key = assetMonthKey(row.assetId, month)
-    const jobCards = jobCardsByAssetMonth.get(key) ?? new Set<string>()
-    jobCards.add(row.jobCardNo)
+    const jobCards = jobCardsByAssetMonth.get(key) ?? new Map<string, string>()
+    const date = toIsoDate(row.fitmentDate)
+    const existing = jobCards.get(row.jobCardNo)
+    if (!existing || date < existing) {
+      jobCards.set(row.jobCardNo, date)
+    }
     jobCardsByAssetMonth.set(key, jobCards)
   }
 
@@ -827,6 +881,20 @@ async function loadYtdWindow(year: number, endMonth: number) {
       (penaltyByAssetMonth.get(key) ?? 0) -
         SUSPENSION_DEDUCTION_PER_JOB_CARD * jobCards.size
     )
+
+    const list = detailsByAssetMonth.get(key) ?? []
+    for (const [jobCardNo, date] of jobCards) {
+      list.push({
+        date,
+        reason: `Suspension (${jobCardNo})`,
+        amount: -SUSPENSION_DEDUCTION_PER_JOB_CARD,
+      })
+    }
+    detailsByAssetMonth.set(key, list)
+  }
+
+  for (const [key, details] of detailsByAssetMonth) {
+    detailsByAssetMonth.set(key, sortPenaltyDetails(details))
   }
 
   return {
@@ -836,6 +904,7 @@ async function loadYtdWindow(year: number, endMonth: number) {
     kmByTruckMonth,
     pairingsByMonth,
     penaltyByAssetMonth,
+    detailsByAssetMonth,
   }
 }
 
@@ -847,6 +916,27 @@ function assetPenalty(
   month: number
 ) {
   return penaltyByAssetMonth.get(assetMonthKey(assetId, month)) ?? 0
+}
+
+function assetPenaltyDetails(
+  detailsByAssetMonth: Map<string, PenaltyDetail[]>,
+  assetId: number,
+  month: number
+) {
+  const details = detailsByAssetMonth.get(assetMonthKey(assetId, month))
+  return details ? details.slice() : []
+}
+
+function collectAssetPenaltyDetails(
+  detailsByAssetMonth: Map<string, PenaltyDetail[]>,
+  assets: Array<{ id: number }>,
+  month: number
+) {
+  return sortPenaltyDetails(
+    assets.flatMap((asset) =>
+      assetPenaltyDetails(detailsByAssetMonth, asset.id, month)
+    )
+  )
 }
 
 function monthPairingsForTruck(
@@ -907,8 +997,19 @@ export async function calculateMotiveUnitYield(
         )
         const distance = window.kmByTruckMonth.get(assetMonthKey(truck.id, month)) ?? 0
         const prodPts = productivityPointsForKm(distance)
+        const pairedTrailers = uniqueById(pairings.map((pairing) => pairing.trailer))
+        const truckPenaltyDetails = assetPenaltyDetails(
+          window.detailsByAssetMonth,
+          truck.id,
+          month
+        )
+        const trailerPenaltyDetails = collectAssetPenaltyDetails(
+          window.detailsByAssetMonth,
+          pairedTrailers,
+          month
+        )
         const truckPen = assetPenalty(window.penaltyByAssetMonth, truck.id, month)
-        const trailerPen = uniqueById(pairings.map((pairing) => pairing.trailer)).reduce(
+        const trailerPen = pairedTrailers.reduce(
           (total, trailer) =>
             total + assetPenalty(window.penaltyByAssetMonth, trailer.id, month),
           0
@@ -924,6 +1025,8 @@ export async function calculateMotiveUnitYield(
           prodPts,
           truckPen,
           trailerPen,
+          truckPenaltyDetails,
+          trailerPenaltyDetails,
           netScore,
         }
 
@@ -980,6 +1083,11 @@ export async function calculateOperatorYield(
           0
         )
         const prodPts = productivityPointsForKm(distance)
+        const penaltyDetails = collectAssetPenaltyDetails(
+          window.detailsByAssetMonth,
+          [...trucks, ...trailers],
+          month
+        )
         const penalties =
           trucks.reduce(
             (total, truck) =>
@@ -1002,6 +1110,7 @@ export async function calculateOperatorYield(
           distance: roundKm(distance),
           prodPts,
           penalties,
+          penaltyDetails,
           netScore,
         })
         ytdNetScore += netScore

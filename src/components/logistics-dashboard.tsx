@@ -44,6 +44,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type {
   LogisticsEntityType,
@@ -51,6 +56,7 @@ import type {
   MonthlyYieldScore,
   MotiveUnitYieldScore,
   OperatorYieldScore,
+  PenaltyDetail,
 } from "@/lib/logistics-scoring"
 
 const PERIOD_LABEL = "September 2026"
@@ -196,6 +202,57 @@ function ClassBadge({ matrixClass }: { matrixClass: MatrixClass }) {
   return (
     <Badge className={CLASS_BADGE[matrixClass]}>{matrixClass}</Badge>
   )
+}
+
+function PenaltyHoverCard({
+  amount,
+  details,
+}: {
+  amount: number
+  details: PenaltyDetail[]
+}) {
+  if (amount === 0) {
+    return <span>0</span>
+  }
+
+  if (amount < 0) {
+    return (
+      <HoverCard>
+        <HoverCardTrigger
+          className="cursor-help font-semibold text-red-600 underline decoration-dotted"
+          render={<span />}
+        >
+          {formatPoints(amount)}
+        </HoverCardTrigger>
+        <HoverCardContent
+          align="end"
+          className="max-h-64 w-72 overflow-y-auto"
+        >
+          <ul className="space-y-1.5 text-xs">
+            {details.map((detail, index) => (
+              <li
+                key={`${detail.date}-${detail.reason}-${detail.visualId ?? ""}-${index}`}
+                className="flex items-start justify-between gap-3"
+              >
+                <div className="min-w-0">
+                  <div className="text-muted-foreground">{detail.date}</div>
+                  <div>
+                    {detail.reason}
+                    {detail.visualId ? ` (${detail.visualId})` : null}
+                  </div>
+                </div>
+                <span className="shrink-0 font-medium tabular-nums text-red-600">
+                  {formatPoints(detail.amount)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </HoverCardContent>
+      </HoverCard>
+    )
+  }
+
+  return <span>{formatPoints(amount)}</span>
 }
 
 function YieldDot({
@@ -514,10 +571,16 @@ function MotiveUnitDetails({ truck }: { truck: MotiveUnitYieldScore }) {
               {formatPoints(month.prodPts)}
             </TableCell>
             <TableCell className="text-right tabular-nums">
-              {formatPoints(month.truckPen)}
+              <PenaltyHoverCard
+                amount={month.truckPen}
+                details={month.truckPenaltyDetails}
+              />
             </TableCell>
             <TableCell className="text-right tabular-nums">
-              {formatPoints(month.trailerPen)}
+              <PenaltyHoverCard
+                amount={month.trailerPen}
+                details={month.trailerPenaltyDetails}
+              />
             </TableCell>
             <TableCell className="text-right font-medium tabular-nums">
               {formatPoints(month.netScore)}
@@ -558,7 +621,10 @@ function OperatorDetails({ driver }: { driver: OperatorYieldScore }) {
               {formatPoints(month.prodPts)}
             </TableCell>
             <TableCell className="text-right tabular-nums">
-              {formatPoints(month.penalties)}
+              <PenaltyHoverCard
+                amount={month.penalties}
+                details={month.penaltyDetails}
+              />
             </TableCell>
             <TableCell className="text-right font-medium tabular-nums">
               {formatPoints(month.netScore)}
