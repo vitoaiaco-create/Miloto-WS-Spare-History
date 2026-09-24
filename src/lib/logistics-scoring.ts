@@ -39,22 +39,41 @@ export type MonthlyYieldScore = {
   matrixClass: MatrixClass
 }
 
-export type YTDMonthYield = {
+export type MotiveUnitMonthYield = {
   month: number
-  mileage: number
+  driverName: string
+  trailerName: string
+  distance: number
   prodPts: number
-  tyrePts: number
-  suspPts: number
+  truckPen: number
+  trailerPen: number
   netScore: number
 }
 
-export type YTDYieldScore = {
+export type MotiveUnitYieldScore = {
   id: number
-  type: "Truck" | "Trailer"
   displayName: string
   ytdNetScore: number
   currentClass: MatrixClass
-  monthlyData: YTDMonthYield[]
+  monthlyData: MotiveUnitMonthYield[]
+}
+
+export type OperatorMonthYield = {
+  month: number
+  trucksOperated: string
+  trailersPulled: string
+  distance: number
+  prodPts: number
+  penalties: number
+  netScore: number
+}
+
+export type OperatorYieldScore = {
+  id: number
+  displayName: string
+  ytdNetScore: number
+  currentClass: MatrixClass
+  monthlyData: OperatorMonthYield[]
 }
 
 const HIGH_YIELD_KM = 6_000
@@ -99,6 +118,41 @@ function isTrailerAsset(asset: AssetInfo) {
     asset.assetType.trim().toLowerCase() === "trailer" ||
     asset.name.toUpperCase().includes("TRAILER")
   )
+}
+
+// Fleet motive units are stored as "Prime Mover"; treat an explicit "Truck"
+// type the same way so both match type = Truck.
+function isTruckAsset(asset: AssetInfo) {
+  const type = asset.assetType.trim().toLowerCase()
+  return type === "truck" || type === "prime mover"
+}
+
+function calendarMonthFromDate(value: string | Date) {
+  const iso = typeof value === "string" ? value : value.toISOString()
+  return Number(iso.slice(5, 7))
+}
+
+function assetMonthKey(assetId: number, month: number) {
+  return `${assetId}:${month}`
+}
+
+function uniqueById<T extends { id: number }>(items: T[]) {
+  const seen = new Set<number>()
+  const unique: T[] = []
+
+  for (const item of items) {
+    if (seen.has(item.id)) continue
+    seen.add(item.id)
+    unique.push(item)
+  }
+
+  return unique
+}
+
+function uniqueJoinedNames(names: string[]) {
+  return [...new Set(names.filter((name) => name.trim().length > 0))]
+    .sort((a, b) => a.localeCompare(b))
+    .join(", ")
 }
 
 function toFiniteNumber(value: string | number | null | undefined) {
@@ -559,119 +613,357 @@ export async function calculateMonthlyYield(
   return scores
 }
 
-type AssetYtdDraft = {
-  id: number
-  type: "Truck" | "Trailer"
-  name: string
-  ytdNetScore: number
-  ytdProdPts: number
-  monthlyData: YTDMonthYield[]
-}
-
-function displayNameFor(assetName: string, driverName: string | undefined) {
-  return driverName ? `${assetName} - ${driverName}` : assetName
-}
-
-export async function calculateYTDYield(
-  year: number,
-  endMonth: number
-): Promise<YTDYieldScore[]> {
-  assertCalendarMonth(year, endMonth)
-
+async function loadYtdWindow(year: number, endMonth: number) {
   const { startOfMonth: ytdStart } = monthBounds(year, 1)
   const { endOfMonth: ytdEnd } = monthBounds(year, endMonth)
 
-  const [pairings, ...monthlyResults] = await Promise.all([
-    db.query.monthlyPairingsTable.findMany({
-      where: {
-        activeMonth: {
-          gte: ytdStart,
-          lte: ytdEnd,
-        },
-      },
-      with: {
-        truck: true,
-        trailer: true,
-        driver: true,
-      },
-    }),
-    ...Array.from({ length: endMonth }, (_, index) =>
-      calculateMonthlyYield(year, index + 1)
-    ),
-  ])
-
-  // Later pairings overwrite earlier ones so each asset keeps the driver
-  // from its most recent month in the YTD window.
-  const latestDriverByAsset = new Map<number, string>()
-  const chronologicalPairings = [...pairings].sort((a, b) => {
-    const byMonth = a.activeMonth.localeCompare(b.activeMonth)
-    return byMonth !== 0 ? byMonth : a.id - b.id
-  })
-
-  for (const pairing of chronologicalPairings) {
-    latestDriverByAsset.set(pairing.truck.id, pairing.driver.name)
-    latestDriverByAsset.set(pairing.trailer.id, pairing.driver.name)
-  }
-
-  const byAsset = new Map<number, AssetYtdDraft>()
-
-  for (let month = 1; month <= endMonth; month++) {
-    const scores = monthlyResults[month - 1]
-
-    for (const score of scores) {
-      if (score.entityType === "Driver") continue
-
-      const monthRow: YTDMonthYield = {
-        month,
-        mileage: score.totalMileageKm,
-        prodPts: score.productivityPoints,
-        tyrePts: score.tirePenaltyPoints,
-        suspPts: score.suspensionPenaltyPoints,
-        netScore: score.netScore,
-      }
-
-      const existing = byAsset.get(score.entityId)
-      if (!existing) {
-        byAsset.set(score.entityId, {
-          id: score.entityId,
-          type: score.entityType,
-          name: score.name,
-          ytdNetScore: score.netScore,
-          ytdProdPts: score.productivityPoints,
-          monthlyData: [monthRow],
+  const [assets, activeDrivers, mileageLogs, pairings, tireRows, suspensionRows] =
+    await Promise.all([
+      db
+        .select({
+          id: assetsTable.id,
+          name: assetsTable.assetName,
+          assetType: assetsTable.assetType,
         })
-        continue
+        .from(assetsTable),
+      db
+        .select({
+          id: driversTable.id,
+          name: driversTable.name,
+        })
+        .from(driversTable)
+        .where(eq(driversTable.isActive, true))
+        .orderBy(asc(driversTable.name)),
+      db
+        .select({
+          assetId: mileageLogsTable.assetId,
+          date: mileageLogsTable.date,
+          odometer: mileageLogsTable.odometer,
+        })
+        .from(mileageLogsTable)
+        .where(
+          and(
+            gte(mileageLogsTable.date, ytdStart),
+            lte(mileageLogsTable.date, ytdEnd)
+          )
+        )
+        .orderBy(asc(mileageLogsTable.assetId), asc(mileageLogsTable.date)),
+      db.query.monthlyPairingsTable.findMany({
+        where: {
+          activeMonth: {
+            gte: ytdStart,
+            lte: ytdEnd,
+          },
+        },
+        with: {
+          truck: true,
+          trailer: true,
+          driver: true,
+        },
+      }),
+      db
+        .select({
+          assetId: tireIncidentsTable.assetId,
+          month: sql<number>`extract(month from (${tireIncidentsTable.incidentDate})::date)::int`,
+          points: tireIncidentsTable.penaltyPoints,
+        })
+        .from(tireIncidentsTable)
+        .where(
+          and(
+            sql`(${tireIncidentsTable.incidentDate})::date >= ${ytdStart}::date`,
+            sql`(${tireIncidentsTable.incidentDate})::date <= ${ytdEnd}::date`
+          )
+        ),
+      db
+        .select({
+          assetId: mechanicalSparesTable.assetId,
+          fitmentDate: mechanicalSparesTable.fitmentDate,
+          jobCardNo: mechanicalSparesTable.jobCardNo,
+        })
+        .from(mechanicalSparesTable)
+        .where(
+          and(
+            gte(mechanicalSparesTable.fitmentDate, ytdStart),
+            lte(mechanicalSparesTable.fitmentDate, ytdEnd),
+            sql`upper(${mechanicalSparesTable.tier1}) = 'SUSPENSION'`
+          )
+        ),
+    ])
+
+  const trucksById = new Map<number, AssetInfo>()
+
+  for (const asset of assets) {
+    if (!isTruckAsset(asset)) continue
+    trucksById.set(asset.id, asset)
+  }
+
+  for (const pairing of pairings) {
+    trucksById.set(pairing.truck.id, {
+      id: pairing.truck.id,
+      name: pairing.truck.assetName,
+      assetType: pairing.truck.assetType,
+    })
+  }
+
+  const trucks = [...trucksById.values()].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.id - b.id
+  )
+  const truckIds = new Set(trucks.map((truck) => truck.id))
+
+  const odometersByTruckMonth = new Map<string, Array<string | number>>()
+
+  for (const row of mileageLogs) {
+    if (!truckIds.has(row.assetId)) continue
+
+    const month = calendarMonthFromDate(row.date)
+    if (month < 1 || month > endMonth) continue
+
+    const key = assetMonthKey(row.assetId, month)
+    const readings = odometersByTruckMonth.get(key) ?? []
+    readings.push(row.odometer)
+    odometersByTruckMonth.set(key, readings)
+  }
+
+  const kmByTruckMonth = new Map<string, number>()
+
+  for (const [key, odometers] of odometersByTruckMonth) {
+    kmByTruckMonth.set(key, sumValidDailyDeltas(odometers))
+  }
+
+  const pairingsByMonth = new Map<number, typeof pairings>()
+
+  for (const pairing of pairings) {
+    const month = calendarMonthFromDate(pairing.activeMonth)
+    if (month < 1 || month > endMonth) continue
+
+    const monthPairings = pairingsByMonth.get(month) ?? []
+    monthPairings.push(pairing)
+    pairingsByMonth.set(month, monthPairings)
+  }
+
+  const tireByAssetMonth = new Map<string, number>()
+
+  for (const row of tireRows) {
+    const month = toFiniteNumber(row.month)
+    if (month < 1 || month > endMonth) continue
+
+    const key = assetMonthKey(row.assetId, month)
+    tireByAssetMonth.set(
+      key,
+      (tireByAssetMonth.get(key) ?? 0) + asDeduction(toFiniteNumber(row.points))
+    )
+  }
+
+  const jobCardsByAssetMonth = new Map<string, Set<string>>()
+
+  for (const row of suspensionRows) {
+    const month = calendarMonthFromDate(row.fitmentDate)
+    if (month < 1 || month > endMonth) continue
+
+    const key = assetMonthKey(row.assetId, month)
+    const jobCards = jobCardsByAssetMonth.get(key) ?? new Set<string>()
+    jobCards.add(row.jobCardNo)
+    jobCardsByAssetMonth.set(key, jobCards)
+  }
+
+  const penaltyByAssetMonth = new Map<string, number>(tireByAssetMonth)
+
+  for (const [key, jobCards] of jobCardsByAssetMonth) {
+    penaltyByAssetMonth.set(
+      key,
+      (penaltyByAssetMonth.get(key) ?? 0) -
+        SUSPENSION_DEDUCTION_PER_JOB_CARD * jobCards.size
+    )
+  }
+
+  return {
+    endMonth,
+    trucks,
+    activeDrivers,
+    kmByTruckMonth,
+    pairingsByMonth,
+    penaltyByAssetMonth,
+  }
+}
+
+type YtdWindow = Awaited<ReturnType<typeof loadYtdWindow>>
+
+function assetPenalty(
+  penaltyByAssetMonth: Map<string, number>,
+  assetId: number,
+  month: number
+) {
+  return penaltyByAssetMonth.get(assetMonthKey(assetId, month)) ?? 0
+}
+
+function monthPairingsForTruck(
+  pairingsByMonth: YtdWindow["pairingsByMonth"],
+  truckId: number,
+  month: number
+) {
+  return (pairingsByMonth.get(month) ?? []).filter(
+    (pairing) => pairing.truck.id === truckId
+  )
+}
+
+function monthPairingsForDriver(
+  pairingsByMonth: YtdWindow["pairingsByMonth"],
+  driverId: number,
+  month: number
+) {
+  return (pairingsByMonth.get(month) ?? []).filter(
+    (pairing) => pairing.driver.id === driverId
+  )
+}
+
+function hasMotiveUnitActivity(row: {
+  distance: number
+  driverName: string
+  trailerName: string
+  truckPen: number
+  trailerPen: number
+}) {
+  return (
+    row.distance > 0 ||
+    row.driverName.length > 0 ||
+    row.trailerName.length > 0 ||
+    row.truckPen !== 0 ||
+    row.trailerPen !== 0
+  )
+}
+
+export async function calculateMotiveUnitYield(
+  year: number,
+  endMonth: number
+): Promise<MotiveUnitYieldScore[]> {
+  assertCalendarMonth(year, endMonth)
+
+  const window = await loadYtdWindow(year, endMonth)
+
+  return window.trucks
+    .map((truck) => {
+      const monthlyData: MotiveUnitMonthYield[] = []
+      let ytdNetScore = 0
+      let ytdProdPts = 0
+
+      for (let month = 1; month <= window.endMonth; month++) {
+        const pairings = monthPairingsForTruck(
+          window.pairingsByMonth,
+          truck.id,
+          month
+        )
+        const distance = window.kmByTruckMonth.get(assetMonthKey(truck.id, month)) ?? 0
+        const prodPts = productivityPointsForKm(distance)
+        const truckPen = assetPenalty(window.penaltyByAssetMonth, truck.id, month)
+        const trailerPen = uniqueById(pairings.map((pairing) => pairing.trailer)).reduce(
+          (total, trailer) =>
+            total + assetPenalty(window.penaltyByAssetMonth, trailer.id, month),
+          0
+        )
+        const netScore = prodPts + truckPen + trailerPen
+        const row: MotiveUnitMonthYield = {
+          month,
+          driverName: uniqueJoinedNames(pairings.map((pairing) => pairing.driver.name)),
+          trailerName: uniqueJoinedNames(
+            pairings.map((pairing) => pairing.trailer.assetName)
+          ),
+          distance: roundKm(distance),
+          prodPts,
+          truckPen,
+          trailerPen,
+          netScore,
+        }
+
+        if (!hasMotiveUnitActivity(row)) continue
+
+        monthlyData.push(row)
+        ytdNetScore += netScore
+        ytdProdPts += prodPts
       }
 
-      existing.type = score.entityType
-      existing.name = score.name
-      existing.ytdNetScore += score.netScore
-      existing.ytdProdPts += score.productivityPoints
-      existing.monthlyData.push(monthRow)
-    }
-  }
-
-  const kindOrder: Record<"Truck" | "Trailer", number> = {
-    Truck: 0,
-    Trailer: 1,
-  }
-
-  return [...byAsset.values()]
-    .map((draft) => ({
-      id: draft.id,
-      type: draft.type,
-      displayName: displayNameFor(
-        draft.name,
-        latestDriverByAsset.get(draft.id)
-      ),
-      ytdNetScore: draft.ytdNetScore,
-      currentClass: matrixClassFor(draft.ytdNetScore, draft.ytdProdPts),
-      monthlyData: draft.monthlyData,
-    }))
+      return {
+        id: truck.id,
+        displayName: truck.name,
+        ytdNetScore,
+        currentClass: matrixClassFor(ytdNetScore, ytdProdPts),
+        monthlyData,
+      }
+    })
     .sort(
-      (a, b) =>
-        kindOrder[a.type] - kindOrder[b.type] ||
-        a.displayName.localeCompare(b.displayName) ||
-        a.id - b.id
+      (a, b) => a.displayName.localeCompare(b.displayName) || a.id - b.id
+    )
+}
+
+export async function calculateOperatorYield(
+  year: number,
+  endMonth: number
+): Promise<OperatorYieldScore[]> {
+  assertCalendarMonth(year, endMonth)
+
+  const window = await loadYtdWindow(year, endMonth)
+
+  return window.activeDrivers
+    .map((driver) => {
+      const monthlyData: OperatorMonthYield[] = []
+      let ytdNetScore = 0
+      let ytdProdPts = 0
+
+      for (let month = 1; month <= window.endMonth; month++) {
+        const pairings = monthPairingsForDriver(
+          window.pairingsByMonth,
+          driver.id,
+          month
+        )
+        if (pairings.length === 0) continue
+
+        const trucks = uniqueById(pairings.map((pairing) => pairing.truck))
+        const trailers = uniqueById(pairings.map((pairing) => pairing.trailer))
+        // Sum every truck's smoothed distance first, then score the driver
+        // once so two mid-yield trucks can still clear a productivity band.
+        const distance = trucks.reduce(
+          (total, truck) =>
+            total +
+            (window.kmByTruckMonth.get(assetMonthKey(truck.id, month)) ?? 0),
+          0
+        )
+        const prodPts = productivityPointsForKm(distance)
+        const penalties =
+          trucks.reduce(
+            (total, truck) =>
+              total + assetPenalty(window.penaltyByAssetMonth, truck.id, month),
+            0
+          ) +
+          trailers.reduce(
+            (total, trailer) =>
+              total + assetPenalty(window.penaltyByAssetMonth, trailer.id, month),
+            0
+          )
+        const netScore = prodPts + penalties
+
+        monthlyData.push({
+          month,
+          trucksOperated: uniqueJoinedNames(trucks.map((truck) => truck.assetName)),
+          trailersPulled: uniqueJoinedNames(
+            trailers.map((trailer) => trailer.assetName)
+          ),
+          distance: roundKm(distance),
+          prodPts,
+          penalties,
+          netScore,
+        })
+        ytdNetScore += netScore
+        ytdProdPts += prodPts
+      }
+
+      return {
+        id: driver.id,
+        displayName: driver.name,
+        ytdNetScore,
+        currentClass: matrixClassFor(ytdNetScore, ytdProdPts),
+        monthlyData,
+      }
+    })
+    .sort(
+      (a, b) => a.displayName.localeCompare(b.displayName) || a.id - b.id
     )
 }

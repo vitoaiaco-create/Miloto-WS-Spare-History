@@ -4,7 +4,8 @@ import { redirect } from "next/navigation"
 import { LogisticsDashboard } from "@/components/logistics-dashboard"
 import {
   calculateMonthlyYield,
-  calculateYTDYield,
+  calculateMotiveUnitYield,
+  calculateOperatorYield,
 } from "@/lib/logistics-scoring"
 
 export default async function LogisticsAnalyticsPage() {
@@ -23,10 +24,17 @@ export default async function LogisticsAnalyticsPage() {
     redirect("/")
   }
 
-  const [yieldData, ytdData] = await Promise.all([
+  const [yieldData, motiveData, operatorData] = await Promise.all([
     calculateMonthlyYield(2026, 9),
-    calculateYTDYield(2026, 8),
+    calculateMotiveUnitYield(2026, 8),
+    calculateOperatorYield(2026, 8),
   ])
 
-  return <LogisticsDashboard data={yieldData} ytdData={ytdData} />
+  return (
+    <LogisticsDashboard
+      data={yieldData}
+      motiveData={motiveData}
+      operatorData={operatorData}
+    />
+  )
 }
