@@ -18,6 +18,7 @@ import {
   mechanicalSparesTable,
   mileageLogsTable,
   tireIncidentsTable,
+  tirePenaltiesTable,
 } from "@/db/schema"
 
 export type LogisticsEntityType = "Truck" | "Trailer" | "Driver"
@@ -237,7 +238,8 @@ export async function calculateMonthlyYield(
     sql`(${tireIncidentsTable.incidentDate})::date <= ${endOfMonth}::date`
   )
 
-  const [mileageLogs, pairings, tireRows, suspensionRows] = await Promise.all([
+  const [mileageLogs, pairings, tireRows, scrapRows, suspensionRows] =
+    await Promise.all([
     db
       .select({
         assetId: mileageLogsTable.assetId,
@@ -290,6 +292,26 @@ export async function calculateMonthlyYield(
         assetsTable.assetType,
         tireIncidentsTable.driverId,
         driversTable.name
+      ),
+    db
+      .select({
+        assetId: tirePenaltiesTable.assetId,
+        assetName: assetsTable.assetName,
+        assetType: assetsTable.assetType,
+        points: sum(tirePenaltiesTable.amount),
+      })
+      .from(tirePenaltiesTable)
+      .innerJoin(assetsTable, eq(tirePenaltiesTable.assetId, assetsTable.id))
+      .where(
+        and(
+          sql`(${tirePenaltiesTable.date})::date >= ${startOfMonth}::date`,
+          sql`(${tirePenaltiesTable.date})::date <= ${endOfMonth}::date`
+        )
+      )
+      .groupBy(
+        tirePenaltiesTable.assetId,
+        assetsTable.assetName,
+        assetsTable.assetType
       ),
     db
       .select({
@@ -463,6 +485,17 @@ export async function calculateMonthlyYield(
     tirePortionByAssetDriver.set(row.assetId, portions)
   }
 
+  for (const row of scrapRows) {
+    rememberAsset({
+      id: row.assetId,
+      name: row.assetName,
+      assetType: row.assetType,
+    })
+
+    const deduction = asDeduction(toFiniteNumber(row.points))
+    tireByAsset.set(row.assetId, (tireByAsset.get(row.assetId) ?? 0) + deduction)
+  }
+
   const tireByDriver = new Map<number, number>()
   const suspensionByAsset = new Map<number, number>()
   const suspensionByDriver = new Map<number, number>()
@@ -617,8 +650,15 @@ async function loadYtdWindow(year: number, endMonth: number) {
   const { startOfMonth: ytdStart } = monthBounds(year, 1)
   const { endOfMonth: ytdEnd } = monthBounds(year, endMonth)
 
-  const [assets, activeDrivers, mileageLogs, pairings, tireRows, suspensionRows] =
-    await Promise.all([
+  const [
+    assets,
+    activeDrivers,
+    mileageLogs,
+    pairings,
+    tireRows,
+    scrapRows,
+    suspensionRows,
+  ] = await Promise.all([
       db
         .select({
           id: assetsTable.id,
@@ -672,6 +712,19 @@ async function loadYtdWindow(year: number, endMonth: number) {
           and(
             sql`(${tireIncidentsTable.incidentDate})::date >= ${ytdStart}::date`,
             sql`(${tireIncidentsTable.incidentDate})::date <= ${ytdEnd}::date`
+          )
+        ),
+      db
+        .select({
+          assetId: tirePenaltiesTable.assetId,
+          month: sql<number>`extract(month from (${tirePenaltiesTable.date})::date)::int`,
+          points: tirePenaltiesTable.amount,
+        })
+        .from(tirePenaltiesTable)
+        .where(
+          and(
+            sql`(${tirePenaltiesTable.date})::date >= ${ytdStart}::date`,
+            sql`(${tirePenaltiesTable.date})::date <= ${ytdEnd}::date`
           )
         ),
       db
@@ -743,7 +796,7 @@ async function loadYtdWindow(year: number, endMonth: number) {
 
   const tireByAssetMonth = new Map<string, number>()
 
-  for (const row of tireRows) {
+  for (const row of [...tireRows, ...scrapRows]) {
     const month = toFiniteNumber(row.month)
     if (month < 1 || month > endMonth) continue
 

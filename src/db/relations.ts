@@ -37,6 +37,10 @@ export const relations = defineRelations(schema, (r) => ({
       from: r.assetsTable.id,
       to: r.tireIncidentsTable.assetId,
     }),
+    tirePenalties: r.many.tirePenaltiesTable({
+      from: r.assetsTable.id,
+      to: r.tirePenaltiesTable.assetId,
+    }),
   },
   driversTable: {
     monthlyPairings: r.many.monthlyPairingsTable({
@@ -112,6 +116,13 @@ export const relations = defineRelations(schema, (r) => ({
     driver: r.one.driversTable({
       from: r.tireIncidentsTable.driverId,
       to: r.driversTable.id,
+      optional: false,
+    }),
+  },
+  tirePenaltiesTable: {
+    asset: r.one.assetsTable({
+      from: r.tirePenaltiesTable.assetId,
+      to: r.assetsTable.id,
       optional: false,
     }),
   },

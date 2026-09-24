@@ -6,6 +6,7 @@ import { redirect } from "next/navigation"
 import { DataUploader } from "@/components/data-uploader"
 import { MileageUploader } from "@/components/mileage-uploader"
 import { OilUploader } from "@/components/oil-uploader"
+import { TirePenaltyUploader } from "@/components/tire-penalty-uploader"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -39,7 +40,7 @@ export default async function DataIngestionPage() {
 
         {isAdmin ? (
           <Tabs defaultValue="spares" className="gap-6">
-            <TabsList className="mx-auto h-12 w-full max-w-2xl group-data-horizontal/tabs:h-12">
+            <TabsList className="mx-auto h-12 w-full max-w-3xl group-data-horizontal/tabs:h-12">
               <TabsTrigger className="px-6 text-base" value="spares">
                 Spares
               </TabsTrigger>
@@ -48,6 +49,9 @@ export default async function DataIngestionPage() {
               </TabsTrigger>
               <TabsTrigger className="px-6 text-base" value="oils">
                 Oils Ingestion
+              </TabsTrigger>
+              <TabsTrigger className="px-6 text-base" value="tire-penalties">
+                Tire Penalties
               </TabsTrigger>
             </TabsList>
             <TabsContent value="spares">
@@ -58,6 +62,9 @@ export default async function DataIngestionPage() {
             </TabsContent>
             <TabsContent value="oils">
               <OilUploader />
+            </TabsContent>
+            <TabsContent value="tire-penalties">
+              <TirePenaltyUploader />
             </TabsContent>
           </Tabs>
         ) : (

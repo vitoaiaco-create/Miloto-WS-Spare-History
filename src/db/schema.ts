@@ -197,6 +197,28 @@ export const monthlyPairingsTable = pgTable(
   ]
 );
 
+// Processed tire-scrapping penalties imported from the scrap CSV.
+// `assetId` is the fleet unit the scrap is charged against; `amount` is
+// the penalty points (only non-zero deductions are stored). `visualId`
+// is the scrap's identifier in the source file, so re-importing tops up
+// rather than duplicating.
+export const tirePenaltiesTable = pgTable(
+  "tire_penalties",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => assetsTable.id, { onDelete: "cascade" }),
+    amount: integer("amount").notNull(),
+    date: timestamp("date").notNull(),
+    reason: varchar("reason", { length: 255 }).notNull(),
+    visualId: varchar("visual_id", { length: 100 }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("tire_penalties_visual_id_idx").on(table.visualId),
+  ]
+);
+
 // Manual tire-penalty log. `assetId` is the fleet unit the incident is
 // charged against; `driverId` is the driver credited with the penalty.
 export const tireIncidentsTable = pgTable("tire_incidents", {

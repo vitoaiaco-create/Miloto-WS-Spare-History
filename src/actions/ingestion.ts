@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server"
 import { format } from "date-fns"
 import { and, desc, eq, inArray, lte, sql } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
+import Papa from "papaparse"
 import { z } from "zod"
 
 import { db } from "@/db"
@@ -15,6 +16,7 @@ import {
   monthlyPairingsTable,
   oilConsumptionLogsTable,
   oilSamplesTable,
+  tirePenaltiesTable,
 } from "@/db/schema"
 import {
   indexRowByHeader,
@@ -30,9 +32,11 @@ import {
   oilConsumptionRowSchema,
   pairingRowSchema,
   sparesRowSchema,
+  tirePenaltyRowSchema,
   type OilConsumptionRow,
   type PairingRow,
   type SparesRow,
+  type TirePenaltyRow,
 } from "@/lib/validations"
 
 // Postgres caps a statement at 65535 bound parameters, and the mileage log
@@ -650,6 +654,142 @@ export async function ingestMonthlyPairings(
   return {
     imported,
     duplicates: 0,
+    skipped,
+    createdAssets: [],
+  }
+}
+
+const uploadTirePenaltiesSchema = z.object({
+  csvText: z.string().min(1, "CSV file is required"),
+})
+
+export type UploadTirePenaltiesInput = z.infer<typeof uploadTirePenaltiesSchema>
+
+function isPopulatedCsvRow(row: unknown) {
+  return (
+    !!row &&
+    typeof row === "object" &&
+    Object.values(row).some((value) => String(value ?? "").trim() !== "")
+  )
+}
+
+function toTirePenaltyInsertValues(
+  row: TirePenaltyRow,
+  assetIdByFleetNumber: Map<string, number>
+) {
+  return {
+    assetId: assetIdByFleetNumber.get(row.fleetNumber)!,
+    amount: row.penaltyPoints,
+    date: row.scrapDate,
+    reason: row.reason,
+    visualId: row.visualId,
+  }
+}
+
+// Bulk-imports processed tire-scrapping penalties into `tirePenaltiesTable`.
+// The client reads the uploaded CSV and passes its text; rows with 0 penalty
+// points are dropped (we only store actual deductions). An Asset ID that
+// does not match `assetsTable.assetName` is reported as skipped rather than
+// registered as a new fleet unit. Re-importing the same Visual Id is a no-op.
+export async function uploadTirePenalties(
+  input: UploadTirePenaltiesInput
+): Promise<IngestResult> {
+  await requireAdmin()
+
+  const { csvText } = uploadTirePenaltiesSchema.parse(input)
+  const parsed = Papa.parse<Record<string, unknown>>(csvText, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (header) => header.replace(/^\uFEFF/, "").trim(),
+  })
+
+  const fatalParseError = parsed.errors.find(
+    (error) => error.type === "Quotes" || error.type === "Delimiter"
+  )
+
+  if (fatalParseError) {
+    throw new Error(
+      fatalParseError.row !== undefined
+        ? `CSV could not be parsed at row ${fatalParseError.row + 1}: ${fatalParseError.message}`
+        : `CSV could not be parsed: ${fatalParseError.message}`
+    )
+  }
+
+  const rows = parsed.data.filter(isPopulatedCsvRow)
+  // Row 1 of the sheet is the header, so the first data row is row 2.
+  const firstRowNumber = 2
+  const valid: { data: TirePenaltyRow; rowNumber: number }[] = []
+  const skipped: SkippedRow[] = []
+
+  for (const [index, row] of rows.entries()) {
+    const rowNumber = firstRowNumber + index
+    const parsedRow = tirePenaltyRowSchema.safeParse(row)
+
+    if (!parsedRow.success) {
+      skipped.push({
+        rowNumber,
+        error: parsedRow.error.issues[0]?.message ?? "Row could not be validated",
+      })
+      continue
+    }
+
+    // Zero-point lines are well-formed rows that just are not deductions.
+    if (parsedRow.data.penaltyPoints === 0) continue
+
+    valid.push({ data: parsedRow.data, rowNumber })
+  }
+
+  if (valid.length === 0) {
+    return { imported: 0, duplicates: 0, skipped, createdAssets: [] }
+  }
+
+  const fleetNumbers = [...new Set(valid.map(({ data }) => data.fleetNumber))]
+  const assetIdByFleetNumber = new Map<string, number>()
+
+  for (const batch of chunk(fleetNumbers, INSERT_CHUNK_SIZE)) {
+    const assets = await selectAssetsByName(batch)
+
+    for (const asset of assets) {
+      assetIdByFleetNumber.set(asset.assetName, asset.id)
+    }
+  }
+
+  const matched: TirePenaltyRow[] = []
+
+  for (const { data, rowNumber } of valid) {
+    if (!assetIdByFleetNumber.has(data.fleetNumber)) {
+      skipped.push({
+        rowNumber,
+        error: `No fleet asset found for Asset ID ${data.fleetNumber}`,
+      })
+      continue
+    }
+
+    matched.push(data)
+  }
+
+  let imported = 0
+
+  for (const batch of chunk(matched, INSERT_CHUNK_SIZE)) {
+    const inserted = await db
+      .insert(tirePenaltiesTable)
+      .values(
+        batch.map((row) => toTirePenaltyInsertValues(row, assetIdByFleetNumber))
+      )
+      .onConflictDoNothing({ target: tirePenaltiesTable.visualId })
+      .returning({ id: tirePenaltiesTable.id })
+
+    imported += inserted.length
+  }
+
+  skipped.sort((a, b) => a.rowNumber - b.rowNumber)
+
+  revalidatePath("/logistics")
+  revalidatePath("/data-ingestion")
+
+  return {
+    imported,
+    duplicates: matched.length - imported,
     skipped,
     createdAssets: [],
   }

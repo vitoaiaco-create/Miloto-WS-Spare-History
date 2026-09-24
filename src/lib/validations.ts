@@ -254,3 +254,40 @@ export const pairingRowSchema = z.preprocess((row) => {
 }))
 
 export type PairingRow = z.infer<typeof pairingRowSchema>
+
+const MAX_SCRAP_REASON = 255
+const MAX_VISUAL_ID = 100
+
+// A single row of the processed tire-scrapping penalties CSV, mapped onto
+// `tirePenaltiesTable`. Asset ID stays a fleet-number string here;
+// `uploadTirePenalties` resolves it to `assetsTable.id`.
+export const tirePenaltyRowSchema = z.preprocess((row) => {
+  const cells = indexRowByHeader(row)
+
+  return {
+    visualId: toTrimmedString(cells.get("visual id")),
+    scrapDate: parseSpreadsheetDate(cells.get("scrap date")),
+    reason: toTrimmedString(cells.get("scrap reason")),
+    penaltyPoints: toNumber(cells.get("penalty points")),
+    fleetNumber: toCanonicalFleetNumber(toTrimmedString(cells.get("asset id"))),
+  }
+}, z.object({
+  visualId: z
+    .string()
+    .min(1, "Visual Id is required")
+    .max(MAX_VISUAL_ID, `Visual Id must be ${MAX_VISUAL_ID} characters or fewer`),
+  scrapDate: z.date({ error: "Scrap Date must be a valid date (DD/MM/YYYY)" }),
+  reason: z
+    .string()
+    .min(1, "Scrap Reason is required")
+    .max(
+      MAX_SCRAP_REASON,
+      `Scrap Reason must be ${MAX_SCRAP_REASON} characters or fewer`
+    ),
+  penaltyPoints: z
+    .number("Penalty Points must be a number")
+    .int("Penalty Points must be a whole number"),
+  fleetNumber: fleetNumberSchema("Asset ID"),
+}))
+
+export type TirePenaltyRow = z.infer<typeof tirePenaltyRowSchema>
