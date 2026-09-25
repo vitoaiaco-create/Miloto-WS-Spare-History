@@ -45,10 +45,10 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card"
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type {
   LogisticsEntityType,
@@ -204,7 +204,7 @@ function ClassBadge({ matrixClass }: { matrixClass: MatrixClass }) {
   )
 }
 
-function PenaltyHoverCard({
+function PenaltyPopover({
   amount,
   details,
 }: {
@@ -217,14 +217,14 @@ function PenaltyHoverCard({
 
   if (amount < 0) {
     return (
-      <HoverCard>
-        <HoverCardTrigger
+      <Popover>
+        <PopoverTrigger
           className="cursor-help font-semibold text-red-600 underline decoration-dotted"
           render={<span />}
         >
           {formatPoints(amount)}
-        </HoverCardTrigger>
-        <HoverCardContent
+        </PopoverTrigger>
+        <PopoverContent
           align="end"
           className="max-h-64 w-72 overflow-y-auto"
         >
@@ -247,8 +247,8 @@ function PenaltyHoverCard({
               </li>
             ))}
           </ul>
-        </HoverCardContent>
-      </HoverCard>
+        </PopoverContent>
+      </Popover>
     )
   }
 
@@ -571,13 +571,13 @@ function MotiveUnitDetails({ truck }: { truck: MotiveUnitYieldScore }) {
               {formatPoints(month.prodPts)}
             </TableCell>
             <TableCell className="text-right tabular-nums">
-              <PenaltyHoverCard
+              <PenaltyPopover
                 amount={month.truckPen}
                 details={month.truckPenaltyDetails}
               />
             </TableCell>
             <TableCell className="text-right tabular-nums">
-              <PenaltyHoverCard
+              <PenaltyPopover
                 amount={month.trailerPen}
                 details={month.trailerPenaltyDetails}
               />
@@ -621,7 +621,7 @@ function OperatorDetails({ driver }: { driver: OperatorYieldScore }) {
               {formatPoints(month.prodPts)}
             </TableCell>
             <TableCell className="text-right tabular-nums">
-              <PenaltyHoverCard
+              <PenaltyPopover
                 amount={month.penalties}
                 details={month.penaltyDetails}
               />

@@ -3,7 +3,6 @@ import "server-only"
 import {
   and,
   asc,
-  countDistinct,
   eq,
   gte,
   lte,
@@ -89,9 +88,109 @@ export type OperatorYieldScore = {
 
 const HIGH_YIELD_KM = 6_000
 const TARGET_YIELD_KM = 4_000
-const SUSPENSION_DEDUCTION_PER_JOB_CARD = 5
 // Physically plausible ceiling for one daily hop (~800 km round trip).
 const MAX_VALID_DAILY_KM = 800
+
+type SuspensionPenaltyBand = {
+  readonly points: 20 | 10 | 5
+  readonly patterns: readonly string[]
+}
+
+// Most severe band first so an overlapping description takes the heavier hit.
+const TRUCK_SUSPENSION_MATRIX: readonly SuspensionPenaltyBand[] = [
+  {
+    points: 20,
+    patterns: ["FRONT LEAF SPRING D13A", "SECOND-HAND FRONT LEAF SPRI"],
+  },
+  {
+    points: 10,
+    patterns: [
+      "V-STAY",
+      "DRAG LINK",
+      "KING PIN",
+      "ENGINE MOUNT",
+      "RUBBER MOUNTING",
+      "FRONT AXLE SHOCK",
+      "REAR DIFF SHOCK",
+      "SHOCK ABSORBER FOR VOLVO",
+      "SHOCK ABSORBER CB0204",
+      "SHOCK ABSORBER FH REAR",
+      "SHOCK ABSORBER CB0040",
+      "SHOCK ABSORBER 312706",
+      "TIE ROD",
+      "TRACK ROD",
+      "HOLLOW SPRING",
+      "STABILIZER",
+      "REPAIR KIT, BOGIE",
+    ],
+  },
+  {
+    points: 5,
+    patterns: ["CABIN", "SMALL FRONT CABIN SHOCK"],
+  },
+]
+
+const TRAILER_SUSPENSION_MATRIX: readonly SuspensionPenaltyBand[] = [
+  {
+    points: 20,
+    patterns: ["8 BLADES HEAVY DUTY", "LEAF SPRING HENRED"],
+  },
+  {
+    points: 10,
+    patterns: [
+      "BOTTOM PLATE",
+      "WEAR PLATE",
+      "FIXED SOLID ARM",
+      "HANGER",
+      "ROCKER BOX",
+      "ROCKER HANGER",
+      "ADJUSTABLE TORQ",
+      "TOP SADDLE",
+    ],
+  },
+  {
+    points: 5,
+    patterns: [
+      "CENTRE BOLT",
+      "RADIUS ROD",
+      "RADIUS PIN",
+      "ROCKER PIN",
+      "U-BOLT",
+    ],
+  },
+]
+
+function matchSuspensionPenalty(
+  materialName: string,
+  matrix: readonly SuspensionPenaltyBand[]
+): number {
+  const haystack = materialName.toUpperCase()
+
+  for (const band of matrix) {
+    if (band.patterns.some((pattern) => haystack.includes(pattern))) {
+      return -band.points
+    }
+  }
+
+  return 0
+}
+
+function truckSuspensionPenaltyPoints(materialName: string): number {
+  return matchSuspensionPenalty(materialName, TRUCK_SUSPENSION_MATRIX)
+}
+
+function trailerSuspensionPenaltyPoints(materialName: string): number {
+  return matchSuspensionPenalty(materialName, TRAILER_SUSPENSION_MATRIX)
+}
+
+function suspensionPenaltyPointsForKind(
+  materialName: string,
+  kind: "Truck" | "Trailer"
+): number {
+  return kind === "Trailer"
+    ? trailerSuspensionPenaltyPoints(materialName)
+    : truckSuspensionPenaltyPoints(materialName)
+}
 
 type AssetInfo = {
   id: number
@@ -341,7 +440,7 @@ export async function calculateMonthlyYield(
         assetId: mechanicalSparesTable.assetId,
         assetName: assetsTable.assetName,
         assetType: assetsTable.assetType,
-        jobCards: countDistinct(mechanicalSparesTable.jobCardNo),
+        materialName: mechanicalSparesTable.materialName,
       })
       .from(mechanicalSparesTable)
       .innerJoin(
@@ -356,11 +455,6 @@ export async function calculateMonthlyYield(
           // category either way.
           sql`upper(${mechanicalSparesTable.tier1}) = 'SUSPENSION'`
         )
-      )
-      .groupBy(
-        mechanicalSparesTable.assetId,
-        assetsTable.assetName,
-        assetsTable.assetType
       ),
   ])
 
@@ -553,21 +647,6 @@ export async function calculateMonthlyYield(
     )
   }
 
-  for (const row of suspensionRows) {
-    const jobCards = toFiniteNumber(row.jobCards)
-    if (jobCards <= 0) continue
-
-    rememberAsset({
-      id: row.assetId,
-      name: row.assetName,
-      assetType: row.assetType,
-    })
-
-    const deduction = -SUSPENSION_DEDUCTION_PER_JOB_CARD * jobCards
-    suspensionByAsset.set(row.assetId, deduction)
-    chargeDrivers(row.assetId, deduction, suspensionByDriver)
-  }
-
   function entityTypeForAsset(
     assetId: number,
     asset: AssetInfo
@@ -577,6 +656,27 @@ export async function calculateMonthlyYield(
     }
     if (pairedTruckIds.has(assetId)) return "Truck"
     return isTrailerAsset(asset) ? "Trailer" : "Truck"
+  }
+
+  for (const row of suspensionRows) {
+    const asset: AssetInfo = {
+      id: row.assetId,
+      name: row.assetName,
+      assetType: row.assetType,
+    }
+    rememberAsset(asset)
+
+    const deduction = suspensionPenaltyPointsForKind(
+      row.materialName,
+      entityTypeForAsset(row.assetId, asset)
+    )
+    if (deduction === 0) continue
+
+    suspensionByAsset.set(
+      row.assetId,
+      (suspensionByAsset.get(row.assetId) ?? 0) + deduction
+    )
+    chargeDrivers(row.assetId, deduction, suspensionByDriver)
   }
 
   const emittedAssets = new Set<number>()
@@ -760,6 +860,7 @@ async function loadYtdWindow(year: number, endMonth: number) {
           assetId: mechanicalSparesTable.assetId,
           fitmentDate: mechanicalSparesTable.fitmentDate,
           jobCardNo: mechanicalSparesTable.jobCardNo,
+          materialName: mechanicalSparesTable.materialName,
         })
         .from(mechanicalSparesTable)
         .where(
@@ -857,39 +958,53 @@ async function loadYtdWindow(year: number, endMonth: number) {
   for (const row of tireRows) addTirePenalty(row)
   for (const row of scrapRows) addTirePenalty(row)
 
-  const jobCardsByAssetMonth = new Map<string, Map<string, string>>()
+  const assetsById = new Map<number, AssetInfo>()
+  const trailerIds = new Set<number>()
+
+  for (const asset of assets) {
+    assetsById.set(asset.id, asset)
+  }
+
+  for (const pairing of pairings) {
+    assetsById.set(pairing.truck.id, {
+      id: pairing.truck.id,
+      name: pairing.truck.assetName,
+      assetType: pairing.truck.assetType,
+    })
+    assetsById.set(pairing.trailer.id, {
+      id: pairing.trailer.id,
+      name: pairing.trailer.assetName,
+      assetType: pairing.trailer.assetType,
+    })
+    trailerIds.add(pairing.trailer.id)
+  }
+
+  const penaltyByAssetMonth = new Map<string, number>(tireByAssetMonth)
 
   for (const row of suspensionRows) {
     const month = calendarMonthFromDate(row.fitmentDate)
     if (month < 1 || month > endMonth) continue
 
+    const asset = assetsById.get(row.assetId)
+    if (!asset) continue
+
+    const kind: "Truck" | "Trailer" = trucksById.has(row.assetId)
+      ? "Truck"
+      : trailerIds.has(row.assetId) || isTrailerAsset(asset)
+        ? "Trailer"
+        : "Truck"
+    const amount = suspensionPenaltyPointsForKind(row.materialName, kind)
+    if (amount === 0) continue
+
     const key = assetMonthKey(row.assetId, month)
-    const jobCards = jobCardsByAssetMonth.get(key) ?? new Map<string, string>()
-    const date = toIsoDate(row.fitmentDate)
-    const existing = jobCards.get(row.jobCardNo)
-    if (!existing || date < existing) {
-      jobCards.set(row.jobCardNo, date)
-    }
-    jobCardsByAssetMonth.set(key, jobCards)
-  }
-
-  const penaltyByAssetMonth = new Map<string, number>(tireByAssetMonth)
-
-  for (const [key, jobCards] of jobCardsByAssetMonth) {
-    penaltyByAssetMonth.set(
-      key,
-      (penaltyByAssetMonth.get(key) ?? 0) -
-        SUSPENSION_DEDUCTION_PER_JOB_CARD * jobCards.size
-    )
+    penaltyByAssetMonth.set(key, (penaltyByAssetMonth.get(key) ?? 0) + amount)
 
     const list = detailsByAssetMonth.get(key) ?? []
-    for (const [jobCardNo, date] of jobCards) {
-      list.push({
-        date,
-        reason: `Suspension (${jobCardNo})`,
-        amount: -SUSPENSION_DEDUCTION_PER_JOB_CARD,
-      })
-    }
+    list.push({
+      date: toIsoDate(row.fitmentDate),
+      reason: `${row.materialName} - ${row.jobCardNo}`,
+      amount,
+    })
     detailsByAssetMonth.set(key, list)
   }
 
