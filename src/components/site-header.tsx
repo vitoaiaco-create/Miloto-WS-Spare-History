@@ -28,7 +28,7 @@ export async function SiteHeader() {
   const showDataIngestion = Boolean(userId) && !isOilsOnly && isAdmin;
 
   return (
-    <header className="flex h-16 w-full items-center border-b border-border">
+    <header className="flex h-16 w-full items-center border-b border-border print:hidden">
       <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 sm:px-10 lg:px-16">
         <Link href={homeHref} className="flex min-w-0 shrink items-center gap-2">
           <Image

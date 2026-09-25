@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 
 export function LogisticsNav({ className }: { className?: string }) {
   return (
-    <div className={cn("flex flex-col gap-6", className)}>
+    <div className={cn("flex flex-col gap-6 print:hidden", className)}>
       <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
         Logistics Analytics
       </h1>

@@ -198,7 +198,7 @@ export function DataUploader() {
   }
 
   return (
-    <Card>
+    <Card className="print:hidden">
       <CardHeader>
         <CardTitle>Import Data</CardTitle>
         <CardDescription>

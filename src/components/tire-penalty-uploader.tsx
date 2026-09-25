@@ -105,7 +105,7 @@ export function TirePenaltyUploader() {
   }
 
   return (
-    <Card>
+    <Card className="print:hidden">
       <CardHeader>
         <CardTitle>Tire Scrap Penalties</CardTitle>
         <CardDescription>

@@ -122,11 +122,18 @@ const SCORING_RULES: {
   rows: { rule: string; score: string; matrixClass?: MatrixClass }[]
 }[] = [
   {
-    category: "Productivity",
+    category: "Distance",
     rows: [
-      { rule: "< 4,000 km", score: "0 pts" },
-      { rule: "4,001–6,000 km", score: "+10 pts" },
-      { rule: "> 6,000 km", score: "+20 pts" },
+      { rule: "≤ 4,000 km", score: "0 pts" },
+      { rule: "> 4,000 km", score: "+5 pts" },
+      { rule: "> 7,000 km", score: "+10 pts" },
+    ],
+  },
+  {
+    category: "Safe driving stipend",
+    rows: [
+      { rule: "0 penalty points in the month", score: "+20 pts" },
+      { rule: "Any penalty (even −5)", score: "0 pts" },
     ],
   },
   {
@@ -139,10 +146,10 @@ const SCORING_RULES: {
   {
     category: "Matrix classes",
     rows: [
-      { rule: "Class A", score: "≥ 15 pts", matrixClass: "Class A" },
-      { rule: "Class B", score: "≥ 10 pts", matrixClass: "Class B" },
-      { rule: "Class C", score: "≥ 0 pts", matrixClass: "Class C" },
-      { rule: "Class D", score: "< 0 pts", matrixClass: "Class D" },
+      { rule: "Class A", score: "Avg ≥ 20 pts", matrixClass: "Class A" },
+      { rule: "Class B", score: "Avg ≥ 10 pts", matrixClass: "Class B" },
+      { rule: "Class C", score: "Avg ≥ 0 pts", matrixClass: "Class C" },
+      { rule: "Class D", score: "Avg < 0 pts", matrixClass: "Class D" },
     ],
   },
 ]
@@ -188,6 +195,7 @@ function isYieldScore(value: unknown): value is MonthlyYieldScore {
     typeof point.name === "string" &&
     typeof point.totalMileageKm === "number" &&
     typeof point.productivityPoints === "number" &&
+    typeof point.safeDrivingBonus === "number" &&
     typeof point.tirePenaltyPoints === "number" &&
     typeof point.suspensionPenaltyPoints === "number" &&
     typeof point.netScore === "number" &&
@@ -292,7 +300,8 @@ function YieldTooltip({
 
   const rows = [
     ["Mileage", formatKm(point.totalMileageKm)],
-    ["Productivity", formatPoints(point.productivityPoints)],
+    ["Distance points", formatPoints(point.productivityPoints)],
+    ["Safe driving", formatPoints(point.safeDrivingBonus)],
     ["Tire penalty", formatPoints(point.tirePenaltyPoints)],
     ["Suspension penalty", formatPoints(point.suspensionPenaltyPoints)],
     ["Net score", formatPoints(point.netScore)],
@@ -334,7 +343,7 @@ function YieldMatrix({ data }: { data: MonthlyYieldScore[] }) {
       <CardHeader>
         <CardTitle>Yield Matrix (Chart)</CardTitle>
         <CardDescription>
-          Net score from −20 to +20 against total mileage for {PERIOD_LABEL}.
+          Net score from −20 to +30 against total mileage for {PERIOD_LABEL}.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -387,9 +396,9 @@ function YieldMatrix({ data }: { data: MonthlyYieldScore[] }) {
                 type="number"
                 dataKey="netScore"
                 name="Net score"
-                domain={[-20, 20]}
+                domain={[-20, 30]}
                 allowDataOverflow
-                ticks={[-20, -10, 0, 10, 20]}
+                ticks={[-20, -10, 0, 10, 20, 30]}
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
@@ -550,7 +559,8 @@ function MotiveUnitDetails({ truck }: { truck: MotiveUnitYieldScore }) {
           <TableHead>Driver</TableHead>
           <TableHead>Trailer</TableHead>
           <TableHead className="text-right">Distance</TableHead>
-          <TableHead className="text-right">Prod Pts</TableHead>
+          <TableHead className="text-right">Dist. Pts</TableHead>
+          <TableHead className="text-right">Safe Driving</TableHead>
           <TableHead className="text-right">Truck Pen.</TableHead>
           <TableHead className="text-right">Trailer Pen.</TableHead>
           <TableHead className="text-right">Net Pts</TableHead>
@@ -569,6 +579,9 @@ function MotiveUnitDetails({ truck }: { truck: MotiveUnitYieldScore }) {
             </TableCell>
             <TableCell className="text-right tabular-nums">
               {formatPoints(month.prodPts)}
+            </TableCell>
+            <TableCell className="text-right tabular-nums">
+              {formatPoints(month.safeDrivingBonus)}
             </TableCell>
             <TableCell className="text-right tabular-nums">
               <PenaltyPopover
@@ -601,7 +614,8 @@ function OperatorDetails({ driver }: { driver: OperatorYieldScore }) {
           <TableHead>Truck(s)</TableHead>
           <TableHead>Trailer(s)</TableHead>
           <TableHead className="text-right">Distance</TableHead>
-          <TableHead className="text-right">Prod Pts</TableHead>
+          <TableHead className="text-right">Dist. Pts</TableHead>
+          <TableHead className="text-right">Safe Driving</TableHead>
           <TableHead className="text-right">Penalties</TableHead>
           <TableHead className="text-right">Net Pts</TableHead>
         </TableRow>
@@ -619,6 +633,9 @@ function OperatorDetails({ driver }: { driver: OperatorYieldScore }) {
             </TableCell>
             <TableCell className="text-right tabular-nums">
               {formatPoints(month.prodPts)}
+            </TableCell>
+            <TableCell className="text-right tabular-nums">
+              {formatPoints(month.safeDrivingBonus)}
             </TableCell>
             <TableCell className="text-right tabular-nums">
               <PenaltyPopover
@@ -679,7 +696,7 @@ function AssetRankings({
       </CardHeader>
       <CardContent className="flex flex-col gap-4 overflow-x-auto">
         <Tabs defaultValue="motive" className="gap-4">
-          <TabsList className="grid w-full max-w-[360px] grid-cols-2">
+          <TabsList className="grid w-full max-w-[360px] grid-cols-2 print:hidden">
             <TabsTrigger value="motive">Motive Units</TabsTrigger>
             <TabsTrigger value="operators">Operators</TabsTrigger>
           </TabsList>
@@ -696,7 +713,7 @@ function AssetRankings({
           </TabsContent>
           <TabsContent value="operators">
             <p className="mb-4 text-sm text-muted-foreground">
-              Driver-anchored scores. Productivity uses the combined valid
+              Driver-anchored scores. Distance points use the combined valid
               distance across every truck the driver operated that month.
             </p>
             <RankingsMacroTable
@@ -717,8 +734,9 @@ function ScoringRules() {
       <CardHeader>
         <CardTitle>Scoring Rules</CardTitle>
         <CardDescription>
-          Classes are assigned from the top. A net score takes the first
-          threshold it meets.
+          Year-to-date class uses the average monthly score across active
+          months (distance over 0 km or any penalty). Thresholds are applied
+          from the top.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -760,7 +778,8 @@ function ScoringRules() {
             )}
           </TableBody>
           <TableCaption className="text-left">
-            Net score is productivity points plus penalty points.
+            Monthly net score is distance points plus the safe-driving
+            stipend plus penalties.
           </TableCaption>
         </Table>
       </CardContent>
@@ -779,7 +798,7 @@ export function LogisticsDashboard({
 }) {
   return (
     <Tabs defaultValue="matrix" className="gap-6">
-      <TabsList className="h-9 w-full max-w-3xl justify-start overflow-x-auto group-data-horizontal/tabs:h-9">
+      <TabsList className="h-9 w-full max-w-3xl justify-start overflow-x-auto print:hidden group-data-horizontal/tabs:h-9">
         <TabsTrigger className="px-3" value="matrix">
           Yield Matrix (Chart)
         </TabsTrigger>

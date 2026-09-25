@@ -30,7 +30,7 @@ export default async function LogisticsLayout({
         <Button
           variant="ghost"
           size="sm"
-          className="self-start"
+          className="self-start print:hidden"
           nativeButton={false}
           render={<Link href="/" />}
         >

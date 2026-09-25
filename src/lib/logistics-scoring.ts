@@ -22,9 +22,7 @@ import {
 
 export type LogisticsEntityType = "Truck" | "Trailer" | "Driver"
 
-// Class A is high yield with a small penalty. Class B is the 4 001–6 000 km
-// baseline (or a high-yield unit pulled back to that score). Class C is
-// still non-negative but below the baseline. Class D is a net liability.
+// Class is the average monthly score: A ≥ 20, B ≥ 10, C ≥ 0, D < 0.
 export type MatrixClass = "Class A" | "Class B" | "Class C" | "Class D"
 
 export type MonthlyYieldScore = {
@@ -33,6 +31,7 @@ export type MonthlyYieldScore = {
   name: string
   totalMileageKm: number
   productivityPoints: number
+  safeDrivingBonus: number
   tirePenaltyPoints: number
   suspensionPenaltyPoints: number
   netScore: number
@@ -52,6 +51,7 @@ export type MotiveUnitMonthYield = {
   trailerName: string
   distance: number
   prodPts: number
+  safeDrivingBonus: number
   truckPen: number
   trailerPen: number
   truckPenaltyDetails: PenaltyDetail[]
@@ -73,6 +73,7 @@ export type OperatorMonthYield = {
   trailersPulled: string
   distance: number
   prodPts: number
+  safeDrivingBonus: number
   penalties: number
   penaltyDetails: PenaltyDetail[]
   netScore: number
@@ -86,8 +87,9 @@ export type OperatorYieldScore = {
   monthlyData: OperatorMonthYield[]
 }
 
-const HIGH_YIELD_KM = 6_000
+const HIGH_YIELD_KM = 7_000
 const TARGET_YIELD_KM = 4_000
+const SAFE_DRIVING_BONUS = 20
 // Physically plausible ceiling for one daily hop (~800 km round trip).
 const MAX_VALID_DAILY_KM = 800
 
@@ -302,11 +304,16 @@ function sumValidDailyDeltas(odometers: Array<string | number>) {
   return totalValidDistance
 }
 
-// < 4 000 km scores 0. 4 001–6 000 km scores +10. Above 6 000 km scores +20.
+// > 7 000 km scores +10. > 4 000 km scores +5. 4 000 km and below scores 0.
 function productivityPointsForKm(km: number) {
-  if (km > HIGH_YIELD_KM) return 20
-  if (km >= TARGET_YIELD_KM + 1) return 10
+  if (km > HIGH_YIELD_KM) return 10
+  if (km > TARGET_YIELD_KM) return 5
   return 0
+}
+
+// Zero-penalty months earn the stipend. Any deduction (even −5) zeros it.
+function safeDrivingBonusFor(penalties: number) {
+  return penalties === 0 ? SAFE_DRIVING_BONUS : 0
 }
 
 // Logged tire points are a penalty magnitude. Already-negative values are
@@ -316,14 +323,15 @@ function asDeduction(points: number) {
   return points > 0 ? -points : points
 }
 
-function matrixClassFor(
-  netScore: number,
-  productivityPoints: number
-): MatrixClass {
-  if (netScore < 0) return "Class D"
-  if (productivityPoints >= 20 && netScore >= 15) return "Class A"
-  if (netScore >= 10) return "Class B"
-  return "Class C"
+function matrixClassFor(averageMonthlyScore: number): MatrixClass {
+  if (averageMonthlyScore >= 20) return "Class A"
+  if (averageMonthlyScore >= 10) return "Class B"
+  if (averageMonthlyScore >= 0) return "Class C"
+  return "Class D"
+}
+
+function isActiveScoringMonth(distance: number, penalties: number) {
+  return distance > 0 || penalties < 0
 }
 
 function finalize(draft: {
@@ -335,16 +343,16 @@ function finalize(draft: {
   tirePenaltyPoints: number
   suspensionPenaltyPoints: number
 }): MonthlyYieldScore {
-  const netScore =
-    draft.productivityPoints +
-    draft.tirePenaltyPoints +
-    draft.suspensionPenaltyPoints
+  const penalties = draft.tirePenaltyPoints + draft.suspensionPenaltyPoints
+  const safeDrivingBonus = safeDrivingBonusFor(penalties)
+  const netScore = draft.productivityPoints + safeDrivingBonus + penalties
 
   return {
     ...draft,
     totalMileageKm: roundKm(draft.totalMileageKm),
+    safeDrivingBonus,
     netScore,
-    matrixClass: matrixClassFor(netScore, draft.productivityPoints),
+    matrixClass: matrixClassFor(netScore),
   }
 }
 
@@ -1102,7 +1110,7 @@ export async function calculateMotiveUnitYield(
     .map((truck) => {
       const monthlyData: MotiveUnitMonthYield[] = []
       let ytdNetScore = 0
-      let ytdProdPts = 0
+      let activeMonths = 0
 
       for (let month = 1; month <= window.endMonth; month++) {
         const pairings = monthPairingsForTruck(
@@ -1111,7 +1119,7 @@ export async function calculateMotiveUnitYield(
           month
         )
         const distance = window.kmByTruckMonth.get(assetMonthKey(truck.id, month)) ?? 0
-        const prodPts = productivityPointsForKm(distance)
+        const distancePoints = productivityPointsForKm(distance)
         const pairedTrailers = uniqueById(pairings.map((pairing) => pairing.trailer))
         const truckPenaltyDetails = assetPenaltyDetails(
           window.detailsByAssetMonth,
@@ -1129,7 +1137,9 @@ export async function calculateMotiveUnitYield(
             total + assetPenalty(window.penaltyByAssetMonth, trailer.id, month),
           0
         )
-        const netScore = prodPts + truckPen + trailerPen
+        const penalties = truckPen + trailerPen
+        const safeDrivingBonus = safeDrivingBonusFor(penalties)
+        const netScore = distancePoints + safeDrivingBonus + penalties
         const row: MotiveUnitMonthYield = {
           month,
           driverName: uniqueJoinedNames(pairings.map((pairing) => pairing.driver.name)),
@@ -1137,7 +1147,8 @@ export async function calculateMotiveUnitYield(
             pairings.map((pairing) => pairing.trailer.assetName)
           ),
           distance: roundKm(distance),
-          prodPts,
+          prodPts: distancePoints,
+          safeDrivingBonus,
           truckPen,
           trailerPen,
           truckPenaltyDetails,
@@ -1149,14 +1160,18 @@ export async function calculateMotiveUnitYield(
 
         monthlyData.push(row)
         ytdNetScore += netScore
-        ytdProdPts += prodPts
+        if (isActiveScoringMonth(distance, penalties)) {
+          activeMonths += 1
+        }
       }
+
+      const averageMonthlyScore = ytdNetScore / (activeMonths || 1)
 
       return {
         id: truck.id,
         displayName: truck.name,
         ytdNetScore,
-        currentClass: matrixClassFor(ytdNetScore, ytdProdPts),
+        currentClass: matrixClassFor(averageMonthlyScore),
         monthlyData,
       }
     })
@@ -1177,7 +1192,7 @@ export async function calculateOperatorYield(
     .map((driver) => {
       const monthlyData: OperatorMonthYield[] = []
       let ytdNetScore = 0
-      let ytdProdPts = 0
+      let activeMonths = 0
 
       for (let month = 1; month <= window.endMonth; month++) {
         const pairings = monthPairingsForDriver(
@@ -1190,14 +1205,14 @@ export async function calculateOperatorYield(
         const trucks = uniqueById(pairings.map((pairing) => pairing.truck))
         const trailers = uniqueById(pairings.map((pairing) => pairing.trailer))
         // Sum every truck's smoothed distance first, then score the driver
-        // once so two mid-yield trucks can still clear a productivity band.
+        // once so two mid-yield trucks can still clear a distance band.
         const distance = trucks.reduce(
           (total, truck) =>
             total +
             (window.kmByTruckMonth.get(assetMonthKey(truck.id, month)) ?? 0),
           0
         )
-        const prodPts = productivityPointsForKm(distance)
+        const distancePoints = productivityPointsForKm(distance)
         const penaltyDetails = collectAssetPenaltyDetails(
           window.detailsByAssetMonth,
           [...trucks, ...trailers],
@@ -1214,7 +1229,8 @@ export async function calculateOperatorYield(
               total + assetPenalty(window.penaltyByAssetMonth, trailer.id, month),
             0
           )
-        const netScore = prodPts + penalties
+        const safeDrivingBonus = safeDrivingBonusFor(penalties)
+        const netScore = distancePoints + safeDrivingBonus + penalties
 
         monthlyData.push({
           month,
@@ -1223,20 +1239,25 @@ export async function calculateOperatorYield(
             trailers.map((trailer) => trailer.assetName)
           ),
           distance: roundKm(distance),
-          prodPts,
+          prodPts: distancePoints,
+          safeDrivingBonus,
           penalties,
           penaltyDetails,
           netScore,
         })
         ytdNetScore += netScore
-        ytdProdPts += prodPts
+        if (isActiveScoringMonth(distance, penalties)) {
+          activeMonths += 1
+        }
       }
+
+      const averageMonthlyScore = ytdNetScore / (activeMonths || 1)
 
       return {
         id: driver.id,
         displayName: driver.name,
         ytdNetScore,
-        currentClass: matrixClassFor(ytdNetScore, ytdProdPts),
+        currentClass: matrixClassFor(averageMonthlyScore),
         monthlyData,
       }
     })

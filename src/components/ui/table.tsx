@@ -11,11 +11,14 @@ function Table({
   return (
     <div
       data-slot="table-container"
-      className={containerClassName ?? "relative w-full overflow-x-auto"}
+      className={cn(
+        containerClassName ?? "relative w-full overflow-x-auto",
+        "print:w-full print:overflow-visible"
+      )}
     >
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn("w-full caption-bottom text-sm print:w-full", className)}
         {...props}
       />
     </div>

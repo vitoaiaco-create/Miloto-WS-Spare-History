@@ -175,7 +175,7 @@ export function MileageUploader() {
   }
 
   return (
-    <Card>
+    <Card className="print:hidden">
       <CardHeader>
         <CardTitle>Import Mileage</CardTitle>
         <CardDescription>

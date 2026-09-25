@@ -156,7 +156,7 @@ export function OilUploader() {
   }
 
   return (
-    <Card>
+    <Card className="print:hidden">
       <CardHeader>
         <CardTitle>Import Oils</CardTitle>
         <CardDescription>
