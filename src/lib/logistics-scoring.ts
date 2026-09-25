@@ -20,6 +20,8 @@ import {
   tirePenaltiesTable,
 } from "@/db/schema"
 
+const EXCLUDED_TRUCKS = ["MTL30", "MTL48", "MTL88", "MTL107", "MTL134"]
+
 export type LogisticsEntityType = "Truck" | "Trailer" | "Driver"
 
 // Class is the average monthly score: A ≥ 20, B ≥ 10, C ≥ 0, D < 0.
@@ -343,9 +345,9 @@ function matrixClassFor(
   averageMonthlyScore: number,
   activeMonths: number
 ): MatrixClass {
-  if (averageMonthlyScore >= 12 && activeMonths >= 7) return "Class A"
-  if (averageMonthlyScore >= 8) return "Class B"
-  if (averageMonthlyScore >= 0) return "Class C"
+  if (averageMonthlyScore >= 12.0 && activeMonths >= 7) return "Class A"
+  if (averageMonthlyScore >= 6.0) return "Class B"
+  if (averageMonthlyScore >= 0.0) return "Class C"
   return "Class D"
 }
 
@@ -1126,6 +1128,11 @@ export async function calculateMotiveUnitYield(
   const window = await loadYtdWindow(year, endMonth)
 
   return window.trucks
+    .filter(
+      (truck) =>
+        !EXCLUDED_TRUCKS.includes(truck.name) &&
+        !EXCLUDED_TRUCKS.includes(String(truck.id))
+    )
     .map((truck) => {
       const monthlyData: MotiveUnitMonthYield[] = []
       let ytdNetScore = 0
