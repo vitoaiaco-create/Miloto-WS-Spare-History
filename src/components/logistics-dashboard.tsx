@@ -149,15 +149,15 @@ const SCORING_RULES: {
     rows: [
       {
         rule: "Class A",
-        score: "Average ≥ 15.0 (Requires minimum 7 active months)",
+        score: "Average ≥ 12.0 (Requires minimum 7 active months)",
         matrixClass: "Class A",
       },
       {
         rule: "Class B",
-        score: "Average 10.0 to 14.9 (or ≥ 15.0 with < 7 active months)",
+        score: "Average 8.0 to 11.9 (or ≥ 12.0 with < 7 active months)",
         matrixClass: "Class B",
       },
-      { rule: "Class C", score: "Average 0.0 to 9.9", matrixClass: "Class C" },
+      { rule: "Class C", score: "Average 0.0 to 7.9", matrixClass: "Class C" },
       { rule: "Class D", score: "Average < 0.0", matrixClass: "Class D" },
     ],
   },

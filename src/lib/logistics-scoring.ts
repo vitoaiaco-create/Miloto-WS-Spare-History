@@ -343,8 +343,8 @@ function matrixClassFor(
   averageMonthlyScore: number,
   activeMonths: number
 ): MatrixClass {
-  if (averageMonthlyScore >= 15 && activeMonths >= 7) return "Class A"
-  if (averageMonthlyScore >= 10) return "Class B"
+  if (averageMonthlyScore >= 12 && activeMonths >= 7) return "Class A"
+  if (averageMonthlyScore >= 8) return "Class B"
   if (averageMonthlyScore >= 0) return "Class C"
   return "Class D"
 }
