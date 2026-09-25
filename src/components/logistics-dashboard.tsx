@@ -1,7 +1,7 @@
 "use client"
 
 import { Fragment, useMemo, useState, type ReactNode } from "react"
-import { Printer } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, Printer } from "lucide-react"
 import {
   CartesianGrid,
   Label as RechartsLabel,
@@ -27,6 +27,7 @@ import {
   ChartTooltip,
   type ChartConfig,
 } from "@/components/ui/chart"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -160,6 +161,14 @@ function formatKm(km: number) {
 
 function formatPoints(points: number) {
   const formatted = points.toLocaleString("en-US", { maximumFractionDigits: 0 })
+  return points > 0 ? `+${formatted}` : formatted
+}
+
+function formatAverageScore(points: number) {
+  const formatted = points.toLocaleString("en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  })
   return points > 0 ? `+${formatted}` : formatted
 }
 
@@ -455,47 +464,157 @@ type RankableYield = {
   id: number
   displayName: string
   ytdNetScore: number
+  averageMonthlyScore: number
   currentClass: MatrixClass
   monthlyData: Array<{ month: number; netScore: number }>
+}
+
+type SortKey = "displayName" | "averageMonthlyScore" | "currentClass"
+type SortDirection = "asc" | "desc"
+type SortConfig = { key: SortKey; direction: SortDirection }
+
+const DEFAULT_SORT: SortConfig = {
+  key: "averageMonthlyScore",
+  direction: "desc",
+}
+
+const CLASS_FILTERS = ["All", ...MATRIX_CLASSES] as const
+
+function isClassFilter(value: string | null): value is (typeof CLASS_FILTERS)[number] {
+  return value !== null && (CLASS_FILTERS as readonly string[]).includes(value)
+}
+
+function compareRankable(a: RankableYield, b: RankableYield, sortConfig: SortConfig) {
+  const direction = sortConfig.direction === "asc" ? 1 : -1
+  const primary =
+    sortConfig.key === "averageMonthlyScore"
+      ? a.averageMonthlyScore - b.averageMonthlyScore
+      : a[sortConfig.key].localeCompare(b[sortConfig.key])
+
+  if (primary !== 0) return primary * direction
+  return a.displayName.localeCompare(b.displayName) || a.id - b.id
+}
+
+function filterAndSortYields<T extends RankableYield>(
+  rows: T[],
+  searchQuery: string,
+  classFilter: string,
+  sortConfig: SortConfig
+) {
+  const query = searchQuery.trim().toLowerCase()
+
+  return rows
+    .filter((row) => {
+      const matchesSearch =
+        query.length === 0 || row.displayName.toLowerCase().includes(query)
+      const matchesClass =
+        classFilter === "All" || row.currentClass === classFilter
+      return matchesSearch && matchesClass
+    })
+    .sort((a, b) => compareRankable(a, b, sortConfig))
+}
+
+function SortableColumnHead({
+  label,
+  sortKey,
+  sortConfig,
+  onSort,
+  align = "left",
+}: {
+  label: string
+  sortKey: SortKey
+  sortConfig: SortConfig
+  onSort: (key: SortKey) => void
+  align?: "left" | "right"
+}) {
+  const active = sortConfig.key === sortKey
+  const SortIcon = !active
+    ? ArrowUpDown
+    : sortConfig.direction === "asc"
+      ? ArrowUp
+      : ArrowDown
+
+  return (
+    <TableHead
+      className={align === "right" ? "text-right" : undefined}
+      aria-sort={
+        active
+          ? sortConfig.direction === "asc"
+            ? "ascending"
+            : "descending"
+          : "none"
+      }
+    >
+      <div className={align === "right" ? "flex justify-end" : undefined}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={
+            align === "right"
+              ? "-mr-2 h-8 px-2 font-medium"
+              : "-ml-2 h-8 px-2 font-medium"
+          }
+          onClick={() => onSort(sortKey)}
+        >
+          {label}
+          <SortIcon
+            data-icon="inline-end"
+            className={active ? undefined : "opacity-40"}
+          />
+        </Button>
+      </div>
+    </TableHead>
+  )
 }
 
 function RankingsMacroTable<T extends RankableYield>({
   data,
   emptyMessage,
   renderDetails,
+  sortConfig,
+  onSort,
 }: {
   data: T[]
   emptyMessage: string
   renderDetails: (row: T) => ReactNode
+  sortConfig: SortConfig
+  onSort: (key: SortKey) => void
 }) {
   const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
-  const ranked = useMemo(
-    () =>
-      [...data].sort(
-        (a, b) =>
-          b.ytdNetScore - a.ytdNetScore ||
-          a.displayName.localeCompare(b.displayName) ||
-          a.id - b.id
-      ),
-    [data]
-  )
 
   return (
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Entity Name</TableHead>
+          <SortableColumnHead
+            label="Entity Name"
+            sortKey="displayName"
+            sortConfig={sortConfig}
+            onSort={onSort}
+          />
           {YTD_MONTHS.map((column) => (
             <TableHead key={column.month} className="text-right">
               {column.label}
             </TableHead>
           ))}
-          <TableHead className="text-right">YTD Score</TableHead>
-          <TableHead>Current Class</TableHead>
+          <SortableColumnHead
+            label="Avg. Score"
+            sortKey="averageMonthlyScore"
+            sortConfig={sortConfig}
+            onSort={onSort}
+            align="right"
+          />
+          <SortableColumnHead
+            label="Class"
+            sortKey="currentClass"
+            sortConfig={sortConfig}
+            onSort={onSort}
+          />
         </TableRow>
       </TableHeader>
       <TableBody>
-        {ranked.length === 0 ? (
+        {data.length === 0 ? (
           <TableRow>
             <TableCell
               colSpan={YTD_MONTHS.length + 3}
@@ -505,7 +624,7 @@ function RankingsMacroTable<T extends RankableYield>({
             </TableCell>
           </TableRow>
         ) : (
-          ranked.map((row) => (
+          data.map((row) => (
             <Fragment key={row.id}>
               <TableRow
                 className="cursor-pointer hover:bg-muted/50"
@@ -526,7 +645,7 @@ function RankingsMacroTable<T extends RankableYield>({
                   </TableCell>
                 ))}
                 <TableCell className="text-right font-medium tabular-nums">
-                  {formatPoints(row.ytdNetScore)}
+                  {formatAverageScore(row.averageMonthlyScore)}
                 </TableCell>
                 <TableCell>
                   <ClassBadge matrixClass={row.currentClass} />
@@ -660,6 +779,29 @@ function AssetRankings({
   motiveData: MotiveUnitYieldScore[]
   operatorData: OperatorYieldScore[]
 }) {
+  const [searchQuery, setSearchQuery] = useState("")
+  const [classFilter, setClassFilter] = useState("All")
+  const [sortConfig, setSortConfig] = useState<SortConfig>(DEFAULT_SORT)
+
+  const motiveUnits = useMemo(
+    () => filterAndSortYields(motiveData, searchQuery, classFilter, sortConfig),
+    [motiveData, searchQuery, classFilter, sortConfig]
+  )
+  const operators = useMemo(
+    () => filterAndSortYields(operatorData, searchQuery, classFilter, sortConfig),
+    [operatorData, searchQuery, classFilter, sortConfig]
+  )
+
+  function updateSort(key: SortKey) {
+    setSortConfig((current) =>
+      current.key === key
+        ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: key === "averageMonthlyScore" ? "desc" : "asc" }
+    )
+  }
+
+  const filtersActive = searchQuery.trim().length > 0 || classFilter !== "All"
+
   return (
     <Card id="logistics-asset-rankings">
       <style>{`
@@ -680,7 +822,7 @@ function AssetRankings({
       <CardHeader>
         <CardTitle>Asset Rankings (Table)</CardTitle>
         <CardDescription>
-          Year-to-date net scores for {YTD_PERIOD_LABEL}, sorted by YTD score.
+          Average monthly scores for {YTD_PERIOD_LABEL}, sorted by avg. score.
         </CardDescription>
         <CardAction>
           <Button
@@ -700,15 +842,53 @@ function AssetRankings({
             <TabsTrigger value="motive">Motive Units</TabsTrigger>
             <TabsTrigger value="operators">Operators</TabsTrigger>
           </TabsList>
+          <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-end">
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <Label htmlFor="logistics-rankings-search">Search</Label>
+              <Input
+                id="logistics-rankings-search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search Driver, Truck, or Trailer..."
+                className="max-w-md"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="logistics-class-filter">Class</Label>
+              <Select
+                value={classFilter}
+                onValueChange={(value) => {
+                  if (isClassFilter(value)) setClassFilter(value)
+                }}
+              >
+                <SelectTrigger id="logistics-class-filter" className="w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CLASS_FILTERS.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <TabsContent value="motive">
             <p className="mb-4 text-sm text-muted-foreground">
               Truck-anchored scores. Trailer penalties follow the truck they
               were paired to.
             </p>
             <RankingsMacroTable
-              data={motiveData}
-              emptyMessage={`No year-to-date yield scores for ${YTD_PERIOD_LABEL}.`}
+              data={motiveUnits}
+              emptyMessage={
+                filtersActive
+                  ? "No motive units match the current search or class filter."
+                  : `No year-to-date yield scores for ${YTD_PERIOD_LABEL}.`
+              }
               renderDetails={(truck) => <MotiveUnitDetails truck={truck} />}
+              sortConfig={sortConfig}
+              onSort={updateSort}
             />
           </TabsContent>
           <TabsContent value="operators">
@@ -717,9 +897,15 @@ function AssetRankings({
               distance across every truck the driver operated that month.
             </p>
             <RankingsMacroTable
-              data={operatorData}
-              emptyMessage={`No year-to-date operator scores for ${YTD_PERIOD_LABEL}.`}
+              data={operators}
+              emptyMessage={
+                filtersActive
+                  ? "No operators match the current search or class filter."
+                  : `No year-to-date operator scores for ${YTD_PERIOD_LABEL}.`
+              }
               renderDetails={(driver) => <OperatorDetails driver={driver} />}
+              sortConfig={sortConfig}
+              onSort={updateSort}
             />
           </TabsContent>
         </Tabs>

@@ -63,6 +63,7 @@ export type MotiveUnitYieldScore = {
   id: number
   displayName: string
   ytdNetScore: number
+  averageMonthlyScore: number
   currentClass: MatrixClass
   monthlyData: MotiveUnitMonthYield[]
 }
@@ -83,6 +84,7 @@ export type OperatorYieldScore = {
   id: number
   displayName: string
   ytdNetScore: number
+  averageMonthlyScore: number
   currentClass: MatrixClass
   monthlyData: OperatorMonthYield[]
 }
@@ -288,6 +290,10 @@ function toFiniteNumber(value: string | number | null | undefined) {
 
 function roundKm(value: number) {
   return Math.round(value * 100) / 100
+}
+
+function roundToOneDecimal(value: number) {
+  return Math.round(value * 10) / 10
 }
 
 // Sum consecutive odometer hops, dropping backward typing and ghost jumps.
@@ -1165,12 +1171,15 @@ export async function calculateMotiveUnitYield(
         }
       }
 
-      const averageMonthlyScore = ytdNetScore / (activeMonths || 1)
+      const averageMonthlyScore = roundToOneDecimal(
+        ytdNetScore / (activeMonths || 1)
+      )
 
       return {
         id: truck.id,
         displayName: truck.name,
         ytdNetScore,
+        averageMonthlyScore,
         currentClass: matrixClassFor(averageMonthlyScore),
         monthlyData,
       }
@@ -1251,12 +1260,15 @@ export async function calculateOperatorYield(
         }
       }
 
-      const averageMonthlyScore = ytdNetScore / (activeMonths || 1)
+      const averageMonthlyScore = roundToOneDecimal(
+        ytdNetScore / (activeMonths || 1)
+      )
 
       return {
         id: driver.id,
         displayName: driver.name,
         ytdNetScore,
+        averageMonthlyScore,
         currentClass: matrixClassFor(averageMonthlyScore),
         monthlyData,
       }
