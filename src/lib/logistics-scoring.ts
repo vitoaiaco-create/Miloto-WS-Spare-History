@@ -329,8 +329,21 @@ function asDeduction(points: number) {
   return points > 0 ? -points : points
 }
 
-function matrixClassFor(averageMonthlyScore: number): MatrixClass {
-  if (averageMonthlyScore >= 20) return "Class A"
+// Single-month net score. A clean month with the stipend scores 20.
+function monthlyMatrixClassFor(netScore: number): MatrixClass {
+  if (netScore >= 20) return "Class A"
+  if (netScore >= 10) return "Class B"
+  if (netScore >= 0) return "Class C"
+  return "Class D"
+}
+
+// Year-to-date class from the average across active months. Class A also
+// requires tenure, so a high average with fewer than 7 active months is B.
+function matrixClassFor(
+  averageMonthlyScore: number,
+  activeMonths: number
+): MatrixClass {
+  if (averageMonthlyScore >= 15 && activeMonths >= 7) return "Class A"
   if (averageMonthlyScore >= 10) return "Class B"
   if (averageMonthlyScore >= 0) return "Class C"
   return "Class D"
@@ -358,7 +371,7 @@ function finalize(draft: {
     totalMileageKm: roundKm(draft.totalMileageKm),
     safeDrivingBonus,
     netScore,
-    matrixClass: matrixClassFor(netScore),
+    matrixClass: monthlyMatrixClassFor(netScore),
   }
 }
 
@@ -1180,7 +1193,7 @@ export async function calculateMotiveUnitYield(
         displayName: truck.name,
         ytdNetScore,
         averageMonthlyScore,
-        currentClass: matrixClassFor(averageMonthlyScore),
+        currentClass: matrixClassFor(averageMonthlyScore, activeMonths),
         monthlyData,
       }
     })
@@ -1269,7 +1282,7 @@ export async function calculateOperatorYield(
         displayName: driver.name,
         ytdNetScore,
         averageMonthlyScore,
-        currentClass: matrixClassFor(averageMonthlyScore),
+        currentClass: matrixClassFor(averageMonthlyScore, activeMonths),
         monthlyData,
       }
     })
