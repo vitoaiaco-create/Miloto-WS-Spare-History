@@ -35,6 +35,7 @@ export default async function LogisticsAnalyticsPage() {
       data={yieldData}
       motiveData={motiveData}
       operatorData={operatorData}
+      year={2026}
     />
   )
 }

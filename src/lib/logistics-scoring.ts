@@ -16,6 +16,7 @@ import {
   driversTable,
   mechanicalSparesTable,
   mileageLogsTable,
+  monthlyAssetDistancesTable,
   tireIncidentsTable,
   tirePenaltiesTable,
 } from "@/db/schema"
@@ -32,6 +33,7 @@ export type MonthlyYieldScore = {
   entityId: number
   name: string
   totalMileageKm: number
+  isEstimated: boolean
   productivityPoints: number
   safeDrivingBonus: number
   tirePenaltyPoints: number
@@ -52,6 +54,8 @@ export type MotiveUnitMonthYield = {
   driverName: string
   trailerName: string
   distance: number
+  rawDistance: number
+  isEstimated: boolean
   prodPts: number
   safeDrivingBonus: number
   truckPen: number
@@ -75,6 +79,7 @@ export type OperatorMonthYield = {
   trucksOperated: string
   trailersPulled: string
   distance: number
+  isEstimated: boolean
   prodPts: number
   safeDrivingBonus: number
   penalties: number
@@ -207,6 +212,7 @@ type AssetInfo = {
 type Movement = {
   km: number
   productivity: number
+  isEstimated: boolean
 }
 
 function assertCalendarMonth(year: number, month: number) {
@@ -361,6 +367,7 @@ function finalize(draft: {
   entityId: number
   name: string
   totalMileageKm: number
+  isEstimated: boolean
   productivityPoints: number
   tirePenaltyPoints: number
   suspensionPenaltyPoints: number
@@ -390,8 +397,14 @@ export async function calculateMonthlyYield(
     sql`(${tireIncidentsTable.incidentDate})::date <= ${endOfMonth}::date`
   )
 
-  const [mileageLogs, pairings, tireRows, scrapRows, suspensionRows] =
-    await Promise.all([
+  const [
+    mileageLogs,
+    pairings,
+    tireRows,
+    scrapRows,
+    suspensionRows,
+    distanceOverrides,
+  ] = await Promise.all([
     db
       .select({
         assetId: mileageLogsTable.assetId,
@@ -486,6 +499,19 @@ export async function calculateMonthlyYield(
           sql`upper(${mechanicalSparesTable.tier1}) = 'SUSPENSION'`
         )
       ),
+    db
+      .select({
+        assetId: monthlyAssetDistancesTable.assetId,
+        assetName: assetsTable.assetName,
+        assetType: assetsTable.assetType,
+        manualDistance: monthlyAssetDistancesTable.manualDistance,
+      })
+      .from(monthlyAssetDistancesTable)
+      .innerJoin(
+        assetsTable,
+        eq(monthlyAssetDistancesTable.assetId, assetsTable.id)
+      )
+      .where(eq(monthlyAssetDistancesTable.monthYear, startOfMonth)),
   ])
 
   const assets = new Map<number, AssetInfo>()
@@ -555,6 +581,24 @@ export async function calculateMonthlyYield(
     return !isTrailerAsset(asset)
   }
 
+  const estimatedAssetIds = new Set<number>()
+
+  for (const row of distanceOverrides) {
+    rememberAsset({
+      id: row.assetId,
+      name: row.assetName,
+      assetType: row.assetType,
+    })
+
+    const rawDistance = monthlyKm.get(row.assetId) ?? 0
+    const manualDistance = row.manualDistance
+    const effectiveDistance = manualDistance ?? rawDistance
+    monthlyKm.set(row.assetId, effectiveDistance)
+    if (manualDistance !== null) {
+      estimatedAssetIds.add(row.assetId)
+    }
+  }
+
   const truckMovement = new Map<number, Movement>()
 
   for (const [assetId, km] of monthlyKm) {
@@ -564,6 +608,7 @@ export async function calculateMonthlyYield(
     truckMovement.set(assetId, {
       km,
       productivity: productivityPointsForKm(km),
+      isEstimated: estimatedAssetIds.has(assetId),
     })
   }
 
@@ -574,6 +619,7 @@ export async function calculateMonthlyYield(
     truckMovement.set(truckId, {
       km,
       productivity: productivityPointsForKm(km),
+      isEstimated: estimatedAssetIds.has(truckId),
     })
   }
 
@@ -591,6 +637,7 @@ export async function calculateMonthlyYield(
       trailerMovement.set(trailerId, {
         km: movement.km,
         productivity: movement.productivity,
+        isEstimated: movement.isEstimated,
       })
 
       // Two trailers on the same truck must not credit the driver twice.
@@ -604,10 +651,12 @@ export async function calculateMonthlyYield(
       const current = driverMovement.get(driverId) ?? {
         km: 0,
         productivity: 0,
+        isEstimated: false,
       }
       driverMovement.set(driverId, {
         km: current.km + movement.km,
         productivity: current.productivity + movement.productivity,
+        isEstimated: current.isEstimated || movement.isEstimated,
       })
     }
   }
@@ -729,6 +778,7 @@ export async function calculateMonthlyYield(
         entityId: assetId,
         name: asset.name,
         totalMileageKm: movement.km,
+        isEstimated: movement.isEstimated,
         productivityPoints: movement.productivity,
         tirePenaltyPoints: tireByAsset.get(assetId) ?? 0,
         suspensionPenaltyPoints: suspensionByAsset.get(assetId) ?? 0,
@@ -754,8 +804,16 @@ export async function calculateMonthlyYield(
     const entityType = entityTypeForAsset(assetId, asset)
     const movement =
       entityType === "Trailer"
-        ? (trailerMovement.get(assetId) ?? { km: 0, productivity: 0 })
-        : (truckMovement.get(assetId) ?? { km: 0, productivity: 0 })
+        ? (trailerMovement.get(assetId) ?? {
+            km: 0,
+            productivity: 0,
+            isEstimated: false,
+          })
+        : (truckMovement.get(assetId) ?? {
+            km: 0,
+            productivity: 0,
+            isEstimated: false,
+          })
     pushAsset(entityType, assetId, movement)
   }
 
@@ -769,6 +827,7 @@ export async function calculateMonthlyYield(
     const movement = driverMovement.get(driverId) ?? {
       km: 0,
       productivity: 0,
+      isEstimated: false,
     }
     scores.push(
       finalize({
@@ -776,6 +835,7 @@ export async function calculateMonthlyYield(
         entityId: driverId,
         name: driverNames.get(driverId) ?? `Driver ${driverId}`,
         totalMileageKm: movement.km,
+        isEstimated: movement.isEstimated,
         productivityPoints: movement.productivity,
         tirePenaltyPoints: tireByDriver.get(driverId) ?? 0,
         suspensionPenaltyPoints: suspensionByDriver.get(driverId) ?? 0,
@@ -811,6 +871,7 @@ async function loadYtdWindow(year: number, endMonth: number) {
     tireRows,
     scrapRows,
     suspensionRows,
+    distanceOverrides,
   ] = await Promise.all([
       db
         .select({
@@ -900,6 +961,19 @@ async function loadYtdWindow(year: number, endMonth: number) {
             sql`upper(${mechanicalSparesTable.tier1}) = 'SUSPENSION'`
           )
         ),
+      db
+        .select({
+          assetId: monthlyAssetDistancesTable.assetId,
+          monthYear: monthlyAssetDistancesTable.monthYear,
+          manualDistance: monthlyAssetDistancesTable.manualDistance,
+        })
+        .from(monthlyAssetDistancesTable)
+        .where(
+          and(
+            gte(monthlyAssetDistancesTable.monthYear, ytdStart),
+            lte(monthlyAssetDistancesTable.monthYear, ytdEnd)
+          )
+        ),
     ])
 
   const trucksById = new Map<number, AssetInfo>()
@@ -940,6 +1014,17 @@ async function loadYtdWindow(year: number, endMonth: number) {
 
   for (const [key, odometers] of odometersByTruckMonth) {
     kmByTruckMonth.set(key, sumValidDailyDeltas(odometers))
+  }
+
+  const manualByTruckMonth = new Map<string, number>()
+
+  for (const row of distanceOverrides) {
+    if (row.manualDistance === null || !truckIds.has(row.assetId)) continue
+
+    const month = calendarMonthFromDate(row.monthYear)
+    if (month < 1 || month > endMonth) continue
+
+    manualByTruckMonth.set(assetMonthKey(row.assetId, month), row.manualDistance)
   }
 
   const pairingsByMonth = new Map<number, typeof pairings>()
@@ -1047,6 +1132,7 @@ async function loadYtdWindow(year: number, endMonth: number) {
     trucks,
     activeDrivers,
     kmByTruckMonth,
+    manualByTruckMonth,
     pairingsByMonth,
     penaltyByAssetMonth,
     detailsByAssetMonth,
@@ -1145,8 +1231,13 @@ export async function calculateMotiveUnitYield(
           truck.id,
           month
         )
-        const distance = window.kmByTruckMonth.get(assetMonthKey(truck.id, month)) ?? 0
-        const distancePoints = productivityPointsForKm(distance)
+        const rawDistance =
+          window.kmByTruckMonth.get(assetMonthKey(truck.id, month)) ?? 0
+        const manualDistance = window.manualByTruckMonth.get(
+          assetMonthKey(truck.id, month)
+        )
+        const effectiveDistance = manualDistance ?? rawDistance
+        const distancePoints = productivityPointsForKm(effectiveDistance)
         const pairedTrailers = uniqueById(pairings.map((pairing) => pairing.trailer))
         const truckPenaltyDetails = assetPenaltyDetails(
           window.detailsByAssetMonth,
@@ -1173,7 +1264,9 @@ export async function calculateMotiveUnitYield(
           trailerName: uniqueJoinedNames(
             pairings.map((pairing) => pairing.trailer.assetName)
           ),
-          distance: roundKm(distance),
+          distance: roundKm(effectiveDistance),
+          rawDistance: roundKm(rawDistance),
+          isEstimated: manualDistance !== undefined,
           prodPts: distancePoints,
           safeDrivingBonus,
           truckPen,
@@ -1187,7 +1280,7 @@ export async function calculateMotiveUnitYield(
 
         monthlyData.push(row)
         ytdNetScore += netScore
-        if (isActiveScoringMonth(distance, penalties)) {
+        if (isActiveScoringMonth(effectiveDistance, penalties)) {
           activeMonths += 1
         }
       }
@@ -1236,12 +1329,18 @@ export async function calculateOperatorYield(
         const trailers = uniqueById(pairings.map((pairing) => pairing.trailer))
         // Sum every truck's smoothed distance first, then score the driver
         // once so two mid-yield trucks can still clear a distance band.
-        const distance = trucks.reduce(
-          (total, truck) =>
-            total +
-            (window.kmByTruckMonth.get(assetMonthKey(truck.id, month)) ?? 0),
-          0
-        )
+        // Manual overrides supersede raw hops per truck before the sum.
+        let isEstimated = false
+        const distance = trucks.reduce((total, truck) => {
+          const rawDistance =
+            window.kmByTruckMonth.get(assetMonthKey(truck.id, month)) ?? 0
+          const manualDistance = window.manualByTruckMonth.get(
+            assetMonthKey(truck.id, month)
+          )
+          if (manualDistance !== undefined) isEstimated = true
+          const effectiveDistance = manualDistance ?? rawDistance
+          return total + effectiveDistance
+        }, 0)
         const distancePoints = productivityPointsForKm(distance)
         const penaltyDetails = collectAssetPenaltyDetails(
           window.detailsByAssetMonth,
@@ -1269,6 +1368,7 @@ export async function calculateOperatorYield(
             trailers.map((trailer) => trailer.assetName)
           ),
           distance: roundKm(distance),
+          isEstimated,
           prodPts: distancePoints,
           safeDrivingBonus,
           penalties,

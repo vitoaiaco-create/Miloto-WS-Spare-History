@@ -145,6 +145,37 @@ export const oilSamplesTable = pgTable("oil_samples", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Manual monthly kilometre override for a single asset (broken odometer).
+// Raw daily hops stay in `mileage_logs`; `manual_distance` supersedes that
+// computed total for scoring when it is not null. One row per asset / month;
+// `month_year` is always the 1st of that month.
+export const monthlyAssetDistancesTable = pgTable(
+  "monthly_asset_distances",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => assetsTable.id, { onDelete: "cascade" }),
+    monthYear: date("month_year").notNull(),
+    manualDistance: integer("manual_distance"),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("monthly_asset_distances_asset_id_month_year_idx").on(
+      table.assetId,
+      table.monthYear
+    ),
+    check(
+      "monthly_asset_distances_month_year_first_day",
+      sql`extract(day from ${table.monthYear}) = 1`
+    ),
+    check(
+      "monthly_asset_distances_manual_distance_nonneg",
+      sql`${table.manualDistance} is null or ${table.manualDistance} >= 0`
+    ),
+  ]
+);
+
 // Manual monthly fleet-wide kilometre totals entered in Workshop Analytics.
 // One row per calendar month; `month_year` is always the 1st of that month.
 export const monthlyFleetKmTable = pgTable(

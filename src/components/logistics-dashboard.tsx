@@ -1,7 +1,8 @@
 "use client"
 
-import { Fragment, useMemo, useState, type ReactNode } from "react"
-import { ArrowDown, ArrowUp, ArrowUpDown, Printer } from "lucide-react"
+import { Fragment, useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { useRouter } from "next/navigation"
+import { ArrowDown, ArrowUp, ArrowUpDown, Pencil, Printer } from "lucide-react"
 import {
   CartesianGrid,
   Label as RechartsLabel,
@@ -12,6 +13,7 @@ import {
   ZAxis,
 } from "recharts"
 
+import { upsertMonthlyManualDistance } from "@/actions/logistics"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -50,7 +52,21 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { toast } from "@/components/ui/toast"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import type {
   LogisticsEntityType,
   MatrixClass,
@@ -211,6 +227,7 @@ function isYieldScore(value: unknown): value is MonthlyYieldScore {
       point.entityType === "Driver") &&
     typeof point.name === "string" &&
     typeof point.totalMileageKm === "number" &&
+    typeof point.isEstimated === "boolean" &&
     typeof point.productivityPoints === "number" &&
     typeof point.safeDrivingBonus === "number" &&
     typeof point.tirePenaltyPoints === "number" &&
@@ -316,7 +333,12 @@ function YieldTooltip({
   if (!active || !isYieldScore(point)) return null
 
   const rows = [
-    ["Mileage", formatKm(point.totalMileageKm)],
+    [
+      "Mileage",
+      point.isEstimated
+        ? `${formatKm(point.totalMileageKm)} (Est.)`
+        : formatKm(point.totalMileageKm),
+    ],
     ["Distance points", formatPoints(point.productivityPoints)],
     ["Safe driving", formatPoints(point.safeDrivingBonus)],
     ["Tire penalty", formatPoints(point.tirePenaltyPoints)],
@@ -677,58 +699,308 @@ function RankingsMacroTable<T extends RankableYield>({
   )
 }
 
-function MotiveUnitDetails({ truck }: { truck: MotiveUnitYieldScore }) {
+function EstimatedMileageBadge() {
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Month</TableHead>
-          <TableHead>Driver</TableHead>
-          <TableHead>Trailer</TableHead>
-          <TableHead className="text-right">Distance</TableHead>
-          <TableHead className="text-right">Dist. Pts</TableHead>
-          <TableHead className="text-right">Safe Driving</TableHead>
-          <TableHead className="text-right">Truck Pen.</TableHead>
-          <TableHead className="text-right">Trailer Pen.</TableHead>
-          <TableHead className="text-right">Net Pts</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {truck.monthlyData.map((month) => (
-          <TableRow key={month.month}>
-            <TableCell>{monthName(month.month)}</TableCell>
-            <TableCell>{month.driverName || "—"}</TableCell>
-            <TableCell>{month.trailerName || "—"}</TableCell>
-            <TableCell className="text-right tabular-nums">
-              {month.distance.toLocaleString("en-US", {
-                maximumFractionDigits: 2,
-              })}
-            </TableCell>
-            <TableCell className="text-right tabular-nums">
-              {formatPoints(month.prodPts)}
-            </TableCell>
-            <TableCell className="text-right tabular-nums">
-              {formatPoints(month.safeDrivingBonus)}
-            </TableCell>
-            <TableCell className="text-right tabular-nums">
-              <PenaltyPopover
-                amount={month.truckPen}
-                details={month.truckPenaltyDetails}
-              />
-            </TableCell>
-            <TableCell className="text-right tabular-nums">
-              <PenaltyPopover
-                amount={month.trailerPen}
-                details={month.trailerPenaltyDetails}
-              />
-            </TableCell>
-            <TableCell className="text-right font-medium tabular-nums">
-              {formatPoints(month.netScore)}
-            </TableCell>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Badge
+            variant="outline"
+            className="text-muted-foreground"
+          />
+        }
+      >
+        (Est.)
+      </TooltipTrigger>
+      <TooltipContent>
+        Manual estimate — automated odometer data was superseded for this
+        month (hardware fault).
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function DistanceValue({
+  distance,
+  isEstimated,
+}: {
+  distance: number
+  isEstimated: boolean
+}) {
+  return (
+    <span className="inline-flex items-center justify-end gap-1.5">
+      <span className="tabular-nums">
+        {distance.toLocaleString("en-US", {
+          maximumFractionDigits: 2,
+        })}
+      </span>
+      {isEstimated ? <EstimatedMileageBadge /> : null}
+    </span>
+  )
+}
+
+type MileageOverrideTarget = {
+  assetId: number
+  assetName: string
+  month: number
+  rawDistance: number
+  currentOverride: number | null
+}
+
+function MileageOverrideDialog({
+  year,
+  target,
+  onClose,
+}: {
+  year: number
+  target: MileageOverrideTarget | null
+  onClose: () => void
+}) {
+  const router = useRouter()
+  const [distanceInput, setDistanceInput] = useState(
+    target?.currentOverride != null ? String(target.currentOverride) : ""
+  )
+  const [isSaving, setIsSaving] = useState(false)
+
+  const open = target !== null
+  const monthLabel = target ? monthName(target.month) : ""
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
+      setDistanceInput("")
+      onClose()
+    }
+  }
+
+  function parseDistance(value: string): number | null {
+    const trimmed = value.trim()
+    if (trimmed === "") return null
+    const parsed = Number(trimmed)
+    if (!Number.isFinite(parsed)) return null
+    return parsed
+  }
+
+  async function saveOverride(manualDistance: number | null) {
+    if (!target) return
+
+    setIsSaving(true)
+    try {
+      await upsertMonthlyManualDistance({
+        assetId: target.assetId,
+        year,
+        month: target.month,
+        manualDistance,
+      })
+
+      toast.add({
+        title:
+          manualDistance === null
+            ? "Mileage override cleared"
+            : "Mileage override saved",
+        description:
+          manualDistance === null
+            ? `${target.assetName} for ${monthLabel} now uses the automated odometer total.`
+            : `${target.assetName} for ${monthLabel} now scores on ${manualDistance.toLocaleString("en-US")} km (Est.).`,
+        type: "success",
+      })
+      setDistanceInput("")
+      onClose()
+      router.refresh()
+    } catch (error) {
+      toast.add({
+        title: "Could not save mileage override",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while saving the estimated distance.",
+        type: "error",
+      })
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const parsed = parseDistance(distanceInput)
+    if (parsed === null || !Number.isInteger(parsed) || parsed < 0) {
+      toast.add({
+        title: "Enter an estimated distance",
+        description: "Manual distance must be a whole number of 0 or more.",
+        type: "error",
+      })
+      return
+    }
+
+    await saveOverride(parsed)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Override Mileage</DialogTitle>
+          <DialogDescription>
+            Enter an estimated monthly distance for{" "}
+            <span className="font-medium text-foreground">
+              {target?.assetName}
+            </span>{" "}
+            in {monthLabel} {year}. This supersedes the automated odometer
+            total for scoring. Raw mileage logs are kept.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={onSubmit} className="grid gap-4">
+          <p className="text-sm text-muted-foreground">
+            Automated odometer total:{" "}
+            <span className="font-medium text-foreground tabular-nums">
+              {target
+                ? `${target.rawDistance.toLocaleString("en-US", {
+                    maximumFractionDigits: 2,
+                  })} km`
+                : "—"}
+            </span>
+            {target && target.currentOverride !== null ? (
+              <>
+                {" "}
+                · Current override:{" "}
+                <span className="font-medium text-foreground tabular-nums">
+                  {target.currentOverride.toLocaleString("en-US")} km
+                </span>
+              </>
+            ) : null}
+          </p>
+          <div className="grid gap-1.5">
+            <Label htmlFor="manual-distance">Estimated distance (km)</Label>
+            <Input
+              id="manual-distance"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              step={1}
+              placeholder="e.g. 6500"
+              value={distanceInput}
+              onChange={(event) => setDistanceInput(event.target.value)}
+              required
+            />
+          </div>
+          <DialogFooter>
+            {target && target.currentOverride !== null ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isSaving}
+                onClick={() => void saveOverride(null)}
+              >
+                {isSaving ? "Saving…" : "Clear override"}
+              </Button>
+            ) : null}
+            <Button type="submit" disabled={isSaving}>
+              {isSaving ? "Saving…" : "Save estimate"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function MotiveUnitDetails({
+  truck,
+  year,
+}: {
+  truck: MotiveUnitYieldScore
+  year: number
+}) {
+  const [overrideTarget, setOverrideTarget] =
+    useState<MileageOverrideTarget | null>(null)
+
+  return (
+    <>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Month</TableHead>
+            <TableHead>Driver</TableHead>
+            <TableHead>Trailer</TableHead>
+            <TableHead className="text-right">Distance</TableHead>
+            <TableHead className="text-right">Dist. Pts</TableHead>
+            <TableHead className="text-right">Safe Driving</TableHead>
+            <TableHead className="text-right">Truck Pen.</TableHead>
+            <TableHead className="text-right">Trailer Pen.</TableHead>
+            <TableHead className="text-right">Net Pts</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {truck.monthlyData.map((month) => (
+            <TableRow key={month.month}>
+              <TableCell>{monthName(month.month)}</TableCell>
+              <TableCell>{month.driverName || "—"}</TableCell>
+              <TableCell>{month.trailerName || "—"}</TableCell>
+              <TableCell className="text-right">
+                <div className="flex items-center justify-end gap-1">
+                  <DistanceValue
+                    distance={month.distance}
+                    isEstimated={month.isEstimated}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="print:hidden text-muted-foreground"
+                    aria-label={`Override mileage for ${truck.displayName} in ${monthName(month.month)}`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setOverrideTarget({
+                        assetId: truck.id,
+                        assetName: truck.displayName,
+                        month: month.month,
+                        rawDistance: month.rawDistance,
+                        currentOverride: month.isEstimated
+                          ? Math.round(month.distance)
+                          : null,
+                      })
+                    }}
+                  >
+                    <Pencil />
+                  </Button>
+                </div>
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {formatPoints(month.prodPts)}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {formatPoints(month.safeDrivingBonus)}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                <PenaltyPopover
+                  amount={month.truckPen}
+                  details={month.truckPenaltyDetails}
+                />
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                <PenaltyPopover
+                  amount={month.trailerPen}
+                  details={month.trailerPenaltyDetails}
+                />
+              </TableCell>
+              <TableCell className="text-right font-medium tabular-nums">
+                {formatPoints(month.netScore)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <MileageOverrideDialog
+        key={
+          overrideTarget
+            ? `${overrideTarget.assetId}-${overrideTarget.month}`
+            : "closed"
+        }
+        year={year}
+        target={overrideTarget}
+        onClose={() => setOverrideTarget(null)}
+      />
+    </>
   )
 }
 
@@ -753,10 +1025,11 @@ function OperatorDetails({ driver }: { driver: OperatorYieldScore }) {
             <TableCell>{monthName(month.month)}</TableCell>
             <TableCell>{month.trucksOperated || "—"}</TableCell>
             <TableCell>{month.trailersPulled || "—"}</TableCell>
-            <TableCell className="text-right tabular-nums">
-              {month.distance.toLocaleString("en-US", {
-                maximumFractionDigits: 2,
-              })}
+            <TableCell className="text-right">
+              <DistanceValue
+                distance={month.distance}
+                isEstimated={month.isEstimated}
+              />
             </TableCell>
             <TableCell className="text-right tabular-nums">
               {formatPoints(month.prodPts)}
@@ -783,9 +1056,11 @@ function OperatorDetails({ driver }: { driver: OperatorYieldScore }) {
 function AssetRankings({
   motiveData,
   operatorData,
+  year,
 }: {
   motiveData: MotiveUnitYieldScore[]
   operatorData: OperatorYieldScore[]
+  year: number
 }) {
   const [searchQuery, setSearchQuery] = useState("")
   const [classFilter, setClassFilter] = useState("All")
@@ -894,7 +1169,9 @@ function AssetRankings({
                   ? "No motive units match the current search or class filter."
                   : `No year-to-date yield scores for ${YTD_PERIOD_LABEL}.`
               }
-              renderDetails={(truck) => <MotiveUnitDetails truck={truck} />}
+              renderDetails={(truck) => (
+                <MotiveUnitDetails truck={truck} year={year} />
+              )}
               sortConfig={sortConfig}
               onSort={updateSort}
             />
@@ -988,10 +1265,12 @@ export function LogisticsDashboard({
   data,
   motiveData,
   operatorData,
+  year,
 }: {
   data: MonthlyYieldScore[]
   motiveData: MotiveUnitYieldScore[]
   operatorData: OperatorYieldScore[]
+  year: number
 }) {
   return (
     <Tabs defaultValue="matrix" className="gap-6">
@@ -1013,6 +1292,7 @@ export function LogisticsDashboard({
         <AssetRankings
           motiveData={motiveData}
           operatorData={operatorData}
+          year={year}
         />
       </TabsContent>
       <TabsContent value="rules">
