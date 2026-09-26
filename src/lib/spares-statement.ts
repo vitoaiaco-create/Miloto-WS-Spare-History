@@ -1,6 +1,7 @@
 import { format } from "date-fns"
 
 import { formatIsoDate } from "@/lib/iso-date"
+import { normalizeSubEquipment } from "@/lib/spreadsheet"
 
 // The fields the statement layout and exports actually use. Compatible
 // with `SparesHistoryRow` without importing the server-only history module.
@@ -26,6 +27,32 @@ export type StatementAssetOption = {
 }
 
 export type PartAliasMap = Record<string, string>
+
+export const STATEMENT_COMPONENT_GROUPS = [
+  "Air System",
+  "Aircon",
+  "Axles",
+  "Body",
+  "Cabin",
+  "Chassis",
+  "Compressor",
+  "Diffs",
+  "Electrical",
+  "Engine",
+  "Hydraulic System",
+  "Overhauled Diff",
+  "Overhauled Engine",
+  "Overhauled Volvo Engine",
+  "Service",
+  "Suspension",
+  "Transmission",
+] as const
+
+export type StatementPreviewFilters = {
+  categories: string[]
+  excludedAssets: string[]
+  hiddenIds: number[]
+}
 
 export type StatementGroup = {
   name: string
@@ -183,6 +210,52 @@ export function uniqueIdentityNos(rows: StatementSpareRow[]) {
   )
 }
 
+export function statementAssetKey(identityNo: string) {
+  return identityNo.trim() || "Unassigned"
+}
+
+export function statementComponentOptions(rows: StatementSpareRow[]) {
+  const extras = new Set<string>()
+  for (const row of rows) {
+    const name = normalizeSubEquipment(row.subEquipment)
+    if (
+      name &&
+      !(STATEMENT_COMPONENT_GROUPS as readonly string[]).includes(name)
+    ) {
+      extras.add(name)
+    }
+  }
+
+  return [
+    ...STATEMENT_COMPONENT_GROUPS,
+    ...[...extras].sort((left, right) => left.localeCompare(right)),
+  ]
+}
+
+export function statementComponentLabel(categories: string[]) {
+  if (categories.length === 0) return "All component groups"
+  if (categories.length <= 3) return categories.join(", ")
+  return `${categories.length} component groups`
+}
+
+export function applyStatementPreviewFilters<T extends StatementSpareRow>(
+  rows: T[],
+  { categories, excludedAssets, hiddenIds }: StatementPreviewFilters
+) {
+  const selected = new Set(
+    categories.map((category) => normalizeSubEquipment(category)).filter(Boolean)
+  )
+  const excluded = new Set(excludedAssets)
+  const hidden = new Set(hiddenIds)
+
+  return rows.filter((row) => {
+    if (hidden.has(row.id)) return false
+    if (excluded.has(statementAssetKey(row.identityNo))) return false
+    if (selected.size === 0) return true
+    return selected.has(normalizeSubEquipment(row.subEquipment))
+  })
+}
+
 export function normalizePartAliasKey(name: string) {
   return name.trim().replace(/\s+/g, " ").toUpperCase()
 }
@@ -198,7 +271,7 @@ export function groupSparesByAsset(rows: StatementSpareRow[]): StatementGroup[] 
   const byAsset = new Map<string, StatementSpareRow[]>()
 
   for (const row of rows) {
-    const name = row.identityNo.trim() || "Unassigned"
+    const name = statementAssetKey(row.identityNo)
     const list = byAsset.get(name) ?? []
     list.push(row)
     byAsset.set(name, list)

@@ -183,6 +183,7 @@ export function SparesStatementTable({
   assets,
   aliases,
   onRemove,
+  onExcludeAsset,
   onSaveAlias,
   emptyMessage = "No spare issues in this statement period.",
 }: {
@@ -190,6 +191,7 @@ export function SparesStatementTable({
   assets: StatementAssetOption[]
   aliases: PartAliasMap
   onRemove: (id: number) => void
+  onExcludeAsset: (assetName: string) => void
   onSaveAlias: (sourceName: string, alias: string) => Promise<void>
   emptyMessage?: string
 }) {
@@ -235,12 +237,25 @@ export function SparesStatementTable({
                 {group.name}
               </h3>
             </div>
-            <p className="text-sm font-medium">
-              {group.rows.length} intervention
-              {group.rows.length === 1 ? "" : "s"} ·{" "}
-              {formatStatementQty(group.totalQuantity)} items ·{" "}
-              {formatStatementUsd(group.totalAmount)}
-            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm font-medium">
+                {group.rows.length} intervention
+                {group.rows.length === 1 ? "" : "s"} ·{" "}
+                {formatStatementQty(group.totalQuantity)} items ·{" "}
+                {formatStatementUsd(group.totalAmount)}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="print:hidden border-zinc-500 bg-transparent text-zinc-50 hover:bg-zinc-800 hover:text-zinc-50 dark:border-zinc-400 dark:text-zinc-950 dark:hover:bg-zinc-200"
+                aria-label={`Exclude ${group.name} from this statement`}
+                onClick={() => onExcludeAsset(group.name)}
+              >
+                <Trash2 data-icon="inline-start" />
+                Exclude asset
+              </Button>
+            </div>
           </header>
           <Table>
             <TableHeader>

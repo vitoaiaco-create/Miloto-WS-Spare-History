@@ -20,6 +20,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Combobox,
+  ComboboxChip,
+  ComboboxChips,
+  ComboboxChipsInput,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxValue,
+  useComboboxAnchor,
+} from "@/components/ui/combobox"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -39,9 +51,12 @@ import {
 } from "@/lib/spares-statement-export"
 import type { SparesHistoryRow } from "@/lib/spares-history"
 import {
+  applyStatementPreviewFilters,
   formatStatementDate,
   parseStatementAssetScope,
   statementAssetLabel,
+  statementComponentLabel,
+  statementComponentOptions,
   statementPeriodLabel,
   statementPeriodOptions,
   statementScopeLabel,
@@ -75,9 +90,13 @@ export function SparesStatementView({
 }) {
   const router = useRouter()
   const [hiddenIds, setHiddenIds] = useState<number[]>([])
+  const [excludedAssets, setExcludedAssets] = useState<string[]>([])
+  const [categories, setCategories] = useState<string[]>([])
   const [aliases, setAliases] = useState<PartAliasMap>(initialAliases)
   const [isExporting, setIsExporting] = useState<"pdf" | "excel" | null>(null)
   const [pdfReady, setPdfReady] = useState(false)
+  const [showExcluded, setShowExcluded] = useState(true)
+  const componentAnchor = useComboboxAnchor()
 
   const todayDate = useMemo(() => {
     const [year, month, day] = today.split("-").map(Number)
@@ -104,9 +123,18 @@ export function SparesStatementView({
     [assets]
   )
 
+  const componentItems = useMemo(
+    () => statementComponentOptions(spares),
+    [spares]
+  )
   const visibleSpares = useMemo(
-    () => spares.filter((spare) => !hiddenIds.includes(spare.id)),
-    [hiddenIds, spares]
+    () =>
+      applyStatementPreviewFilters(spares, {
+        categories,
+        excludedAssets,
+        hiddenIds,
+      }),
+    [categories, excludedAssets, hiddenIds, spares]
   )
 
   const identityNos = uniqueIdentityNos(visibleSpares)
@@ -117,6 +145,14 @@ export function SparesStatementView({
   })
   const periodLabel = statementPeriodLabel(period, todayDate)
   const dateRangeLabel = `${formatStatementDate(startDate)} to ${formatStatementDate(endDate)}`
+  const componentLabel = statementComponentLabel(categories)
+  const sortedExcludedAssets = useMemo(
+    () =>
+      [...excludedAssets].sort((left, right) =>
+        left.localeCompare(right, undefined, { numeric: true })
+      ),
+    [excludedAssets]
+  )
 
   useEffect(() => {
     void preloadStatementPdfLibs().then(() => setPdfReady(true))
@@ -157,6 +193,22 @@ export function SparesStatementView({
     setHiddenIds([])
   }
 
+  function excludeAsset(assetName: string) {
+    setExcludedAssets((current) =>
+      current.includes(assetName) ? current : [...current, assetName]
+    )
+  }
+
+  function restoreAsset(assetName: string) {
+    setExcludedAssets((current) =>
+      current.filter((name) => name !== assetName)
+    )
+  }
+
+  function restoreAllAssets() {
+    setExcludedAssets([])
+  }
+
   async function handleSaveAlias(sourceName: string, alias: string) {
     try {
       const result = await savePartDescriptionAlias({ sourceName, alias })
@@ -188,6 +240,11 @@ export function SparesStatementView({
       assetLabel,
       periodLabel,
       dateRangeLabel,
+      componentLabel,
+      excludedLabel:
+        sortedExcludedAssets.length > 0
+          ? sortedExcludedAssets.join(", ")
+          : undefined,
       aliases,
     }
 
@@ -219,8 +276,9 @@ export function SparesStatementView({
         <CardHeader>
           <CardTitle>Executive statement</CardTitle>
           <CardDescription>
-            Grouped by asset, then date. Removing a line hides it from this
-            view and the export only — history is unchanged.
+            Grouped by asset, then date. Component filters, excluded assets,
+            and removed lines apply to this preview and the export only —
+            history is unchanged.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -322,9 +380,55 @@ export function SparesStatementView({
             </div>
           </div>
 
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <Label htmlFor="statement-components">Component groups</Label>
+            <Combobox
+              multiple
+              autoHighlight
+              items={componentItems}
+              value={categories}
+              onValueChange={(value) =>
+                setCategories(Array.isArray(value) ? value : [])
+              }
+            >
+              <ComboboxChips ref={componentAnchor} className="w-full">
+                <ComboboxValue>
+                  {(selected: string[]) => {
+                    const values = Array.isArray(selected) ? selected : []
+                    return (
+                      <>
+                        {values.map((category) => (
+                          <ComboboxChip key={category}>{category}</ComboboxChip>
+                        ))}
+                        <ComboboxChipsInput
+                          id="statement-components"
+                          placeholder={
+                            values.length === 0
+                              ? "All component groups"
+                              : "Add a component group"
+                          }
+                        />
+                      </>
+                    )
+                  }}
+                </ComboboxValue>
+              </ComboboxChips>
+              <ComboboxContent anchor={componentAnchor}>
+                <ComboboxEmpty>No component group found.</ComboboxEmpty>
+                <ComboboxList>
+                  {(item) => (
+                    <ComboboxItem key={item} value={item}>
+                      {item}
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-muted-foreground">
-              {assetLabel} · {periodLabel}
+              {assetLabel} · {componentLabel} · {periodLabel}
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -361,6 +465,57 @@ export function SparesStatementView({
           </div>
         </CardContent>
       </Card>
+
+      {excludedAssets.length > 0 ? (
+        <div className="flex flex-col gap-3 rounded-lg border bg-card px-4 py-3 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p>
+              {excludedAssets.length} asset
+              {excludedAssets.length === 1 ? "" : "s"} excluded from this
+              statement.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowExcluded((current) => !current)}
+              >
+                {showExcluded ? "Hide excluded" : "Show excluded"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={restoreAllAssets}
+              >
+                <RotateCcw data-icon="inline-start" />
+                Restore all assets
+              </Button>
+            </div>
+          </div>
+          {showExcluded ? (
+            <div className="flex flex-wrap gap-2">
+              {sortedExcludedAssets.map((assetName) => (
+                <div
+                  key={assetName}
+                  className="inline-flex items-center gap-1 rounded-lg border px-2 py-1"
+                >
+                  <span className="font-medium">{assetName}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => restoreAsset(assetName)}
+                  >
+                    Restore
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {hiddenIds.length > 0 ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card px-4 py-3 text-sm">
@@ -399,6 +554,10 @@ export function SparesStatementView({
               <dd className="font-medium">{statementScopeLabel(assetType)}</dd>
             </div>
             <div className="flex gap-2">
+              <dt className="text-zinc-500">Component groups</dt>
+              <dd className="font-medium">{componentLabel}</dd>
+            </div>
+            <div className="flex gap-2">
               <dt className="text-zinc-500">Period</dt>
               <dd className="font-medium">{periodLabel}</dd>
             </div>
@@ -413,10 +572,13 @@ export function SparesStatementView({
           assets={assets}
           aliases={aliases}
           onRemove={removeLine}
+          onExcludeAsset={excludeAsset}
           onSaveAlias={handleSaveAlias}
           emptyMessage={
-            hiddenIds.length > 0
-              ? "All lines have been removed from this statement."
+            excludedAssets.length > 0 ||
+            hiddenIds.length > 0 ||
+            categories.length > 0
+              ? "No spare issues match the current statement filters."
               : "No spare issues in this statement period."
           }
         />

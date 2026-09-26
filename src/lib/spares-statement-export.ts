@@ -18,6 +18,8 @@ export type StatementExportMeta = {
   assetLabel: string
   periodLabel: string
   dateRangeLabel: string
+  componentLabel: string
+  excludedLabel?: string
   aliases: PartAliasMap
 }
 
@@ -171,12 +173,19 @@ export async function exportStatementPdf(
   const headerLines = [
     `Asset ID: ${meta.assetLabel}`,
     `Asset group: ${statementScopeLabel(meta.assetType)}`,
+    `Component groups: ${meta.componentLabel}`,
     `Period: ${meta.periodLabel}`,
     `Date range: ${meta.dateRangeLabel}`,
+    ...(meta.excludedLabel
+      ? [`Excluded assets: ${meta.excludedLabel}`]
+      : []),
   ]
   for (const line of headerLines) {
-    doc.text(line, 14, cursorY)
-    cursorY += 5
+    const wrapped = doc.splitTextToSize(line, pageWidth - 28)
+    for (const part of wrapped) {
+      doc.text(part, 14, cursorY)
+      cursorY += 5
+    }
   }
 
   const groups = groupSparesByAsset(rows)
@@ -328,8 +337,12 @@ export async function exportStatementExcel(
     [`${DIVISION_NAME} — ${DOCUMENT_TITLE}`],
     [`Asset ID: ${meta.assetLabel}`],
     [`Asset group: ${statementScopeLabel(meta.assetType)}`],
+    [`Component groups: ${meta.componentLabel}`],
     [`Period: ${meta.periodLabel}`],
     [`Date range: ${meta.dateRangeLabel}`],
+    ...(meta.excludedLabel
+      ? [[`Excluded assets: ${meta.excludedLabel}`]]
+      : []),
     [`Generated: ${new Date().toLocaleString()}`],
     [],
     ["Asset ID", "Date", "Material Name", "Part Number", "Quantity", "Amount (USD)"],
