@@ -1,5 +1,8 @@
-import { AlertTriangle } from "lucide-react"
+"use client"
 
+import { AlertTriangle, Trash2 } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
 import {
   Table,
   TableBody,
@@ -9,7 +12,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import type { SparesHistoryRow } from "@/lib/spares-history"
+import {
+  formatStatementDate,
+  formatStatementQty,
+  formatStatementUsd,
+  groupSparesByComponent,
+  statementTotals,
+} from "@/lib/spares-statement"
 
 const STALE_ODOMETER_DAYS = 14
 const MS_PER_DAY = 86_400_000
@@ -144,5 +159,148 @@ export function SparesTable({
         </TableFooter>
       ) : null}
     </Table>
+  )
+}
+
+const STATEMENT_COLUMNS = 7
+
+export function SparesStatementTable({
+  spares,
+  onRemove,
+  emptyMessage = "No spare issues in this statement period.",
+}: {
+  spares: SparesHistoryRow[]
+  onRemove: (id: number) => void
+  emptyMessage?: string
+}) {
+  const groups = groupSparesByComponent(spares)
+  const totals = statementTotals(spares)
+
+  if (spares.length === 0) {
+    return (
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Date</TableHead>
+            <TableHead>Material Name</TableHead>
+            <TableHead>Asset ID</TableHead>
+            <TableHead>Part Number</TableHead>
+            <TableHead className="text-right">Qty</TableHead>
+            <TableHead className="text-right">Amount</TableHead>
+            <TableHead className="w-10 print:hidden">
+              <span className="sr-only">Remove</span>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow>
+            <TableCell
+              colSpan={STATEMENT_COLUMNS}
+              className="text-center text-muted-foreground"
+            >
+              {emptyMessage}
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+    )
+  }
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Date</TableHead>
+          <TableHead>Material Name</TableHead>
+          <TableHead>Asset ID</TableHead>
+          <TableHead>Part Number</TableHead>
+          <TableHead className="text-right">Qty</TableHead>
+          <TableHead className="text-right">Amount</TableHead>
+          <TableHead className="w-10 print:hidden">
+            <span className="sr-only">Remove</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {groups.map((group) => (
+          <StatementGroupRows
+            key={group.name}
+            group={group}
+            onRemove={onRemove}
+          />
+        ))}
+      </TableBody>
+      <TableFooter>
+        <TableRow className="border-t-2 bg-muted/50 font-bold hover:bg-muted/50">
+          <TableCell colSpan={4}>Grand total</TableCell>
+          <TableCell className="text-right">
+            {formatStatementQty(totals.quantity)}
+          </TableCell>
+          <TableCell className="text-right">
+            {formatStatementUsd(totals.amount)}
+          </TableCell>
+          <TableCell className="print:hidden" />
+        </TableRow>
+      </TableFooter>
+    </Table>
+  )
+}
+
+function StatementGroupRows({
+  group,
+  onRemove,
+}: {
+  group: ReturnType<typeof groupSparesByComponent>[number]
+  onRemove: (id: number) => void
+}) {
+  return (
+    <>
+      <TableRow className="bg-zinc-900 hover:bg-zinc-900 dark:bg-zinc-100 dark:hover:bg-zinc-100">
+        <TableCell
+          colSpan={STATEMENT_COLUMNS}
+          className="py-2.5 font-semibold tracking-wide text-zinc-50 uppercase dark:text-zinc-950"
+        >
+          <span className="flex flex-wrap items-baseline justify-between gap-2">
+            <span>{group.name}</span>
+            <span className="text-xs font-medium tracking-normal normal-case">
+              {formatStatementQty(group.totalQuantity)} items ·{" "}
+              {formatStatementUsd(group.totalAmount)}
+            </span>
+          </span>
+        </TableCell>
+      </TableRow>
+      {group.rows.map((spare) => (
+        <TableRow key={spare.id}>
+          <TableCell>{formatStatementDate(spare.fitmentDate)}</TableCell>
+          <TableCell className="whitespace-normal">{spare.materialName}</TableCell>
+          <TableCell>{spare.identityNo}</TableCell>
+          <TableCell>{spare.partNumber}</TableCell>
+          <TableCell className="text-right">
+            {formatStatementQty(spare.quantity)}
+          </TableCell>
+          <TableCell className="text-right">
+            {formatStatementUsd(spare.amountUsd)}
+          </TableCell>
+          <TableCell className="print:hidden">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Remove ${spare.materialName} from statement`}
+                    onClick={() => onRemove(spare.id)}
+                  />
+                }
+              >
+                <Trash2 />
+              </TooltipTrigger>
+              <TooltipContent>Remove from this statement</TooltipContent>
+            </Tooltip>
+          </TableCell>
+        </TableRow>
+      ))}
+    </>
   )
 }

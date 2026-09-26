@@ -3,13 +3,19 @@ import "server-only"
 import { between, desc, inArray, not, sql } from "drizzle-orm"
 
 import { db } from "@/db"
-import { mileageLogsTable } from "@/db/schema"
+import { assetsTable, mileageLogsTable } from "@/db/schema"
 import { toIsoDateParam } from "@/lib/iso-date"
 import {
   normalizeSubEquipment,
   toCanonicalFleetNumber,
   toIsoDateString,
 } from "@/lib/spreadsheet"
+import {
+  assetTypesForStatement,
+  classifyStatementAssetType,
+  type StatementAssetOption,
+  type StatementAssetType,
+} from "@/lib/spares-statement"
 
 export { sparesHistoryHref } from "@/lib/spares-history-href"
 
@@ -29,6 +35,9 @@ export type SparesHistoryFilters = {
   // printed report header; the on-screen badge is the only reminder.
   excludeFrom?: string
   excludeTo?: string
+  // Truck / Trailer class used by the executive statement. Narrows the
+  // joined asset, not a column on the spare itself.
+  assetType?: StatementAssetType
 }
 
 function isActiveFilterValue(value: string | string[] | undefined) {
@@ -251,7 +260,13 @@ export async function getSparesHistory(
               assetName: toCanonicalFleetNumber(filters.fleetNo),
             },
           }
-        : {}),
+        : filters.assetType
+          ? {
+              asset: {
+                assetType: { in: assetTypesForStatement(filters.assetType) },
+              },
+            }
+          : {}),
     },
     with: { asset: true },
     orderBy: { fitmentDate: "desc" },
@@ -300,5 +315,23 @@ export async function getSparesHistory(
       distance: runningKm?.distance ?? null,
       latestDate: runningKm?.latestDate ?? null,
     }
+  })
+}
+
+// Fleet units offered in the executive statement's Asset ID dropdown,
+// already classified as Truck or Trailer. Unclassified "Other" units stay
+// out so the list matches the statement type filter.
+export async function getStatementAssets(): Promise<StatementAssetOption[]> {
+  const assets = await db
+    .select({
+      assetName: assetsTable.assetName,
+      assetType: assetsTable.assetType,
+    })
+    .from(assetsTable)
+    .orderBy(assetsTable.assetName)
+
+  return assets.flatMap((asset) => {
+    const assetType = classifyStatementAssetType(asset.assetType, asset.assetName)
+    return assetType ? [{ assetName: asset.assetName, assetType }] : []
   })
 }
