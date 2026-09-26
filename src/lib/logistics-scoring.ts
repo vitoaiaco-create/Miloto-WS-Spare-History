@@ -92,7 +92,7 @@ export type OperatorYieldScore = {
 }
 
 const HIGH_YIELD_KM = 7_000
-const TARGET_YIELD_KM = 4_000
+const MID_YIELD_KM = 5_000
 const SAFE_DRIVING_BONUS = 20
 // Physically plausible ceiling for one daily hop (~800 km round trip).
 const MAX_VALID_DAILY_KM = 800
@@ -312,10 +312,11 @@ function sumValidDailyDeltas(odometers: Array<string | number>) {
   return totalValidDistance
 }
 
-// > 7 000 km scores +10. > 4 000 km scores +5. 4 000 km and below scores 0.
+// ≥ 7 000 km scores +25. ≥ 5 000 km scores +10. Below 5 000 km scores 0.
+// These prize points stack with the +20 zero-penalty stipend.
 function productivityPointsForKm(km: number) {
-  if (km > HIGH_YIELD_KM) return 10
-  if (km > TARGET_YIELD_KM) return 5
+  if (km >= HIGH_YIELD_KM) return 25
+  if (km >= MID_YIELD_KM) return 10
   return 0
 }
 

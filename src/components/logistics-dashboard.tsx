@@ -125,9 +125,9 @@ const SCORING_RULES: {
   {
     category: "Distance",
     rows: [
-      { rule: "≤ 4,000 km", score: "0 pts" },
-      { rule: "> 4,000 km", score: "+5 pts" },
-      { rule: "> 7,000 km", score: "+10 pts" },
+      { rule: "0 – 4,999 km", score: "0 Prize Points" },
+      { rule: "5,000 – 6,999 km", score: "+10 Prize Points" },
+      { rule: "7,000+ km", score: "+25 Prize Points" },
     ],
   },
   {
@@ -360,7 +360,7 @@ function YieldMatrix({ data }: { data: MonthlyYieldScore[] }) {
       <CardHeader>
         <CardTitle>Yield Matrix (Chart)</CardTitle>
         <CardDescription>
-          Net score from −20 to +30 against total mileage for {PERIOD_LABEL}.
+          Net score from −20 to +45 against total mileage for {PERIOD_LABEL}.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -413,9 +413,9 @@ function YieldMatrix({ data }: { data: MonthlyYieldScore[] }) {
                 type="number"
                 dataKey="netScore"
                 name="Net score"
-                domain={[-20, 30]}
+                domain={[-20, 45]}
                 allowDataOverflow
-                ticks={[-20, -10, 0, 10, 20, 30]}
+                ticks={[-20, -10, 0, 10, 20, 30, 45]}
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
@@ -973,7 +973,10 @@ function ScoringRules() {
           </TableBody>
           <TableCaption className="text-left">
             Monthly net score is distance points plus the safe-driving
-            stipend plus penalties.
+            stipend plus penalties. Productivity prize points stack with
+            the +20 Safe Driving Stipend, mathematically protecting
+            high-volume operators who may incur minor wear-and-tear
+            penalties due to extended road exposure.
           </TableCaption>
         </Table>
       </CardContent>
