@@ -15,6 +15,8 @@ export type StatementSpareRow = {
   amountUsd: number | null
 }
 
+export const STATEMENT_ASSET_SCOPES = ["All", "Truck", "Trailer"] as const
+export type StatementAssetScope = (typeof STATEMENT_ASSET_SCOPES)[number]
 export const STATEMENT_ASSET_TYPES = ["Truck", "Trailer"] as const
 export type StatementAssetType = (typeof STATEMENT_ASSET_TYPES)[number]
 
@@ -22,6 +24,8 @@ export type StatementAssetOption = {
   assetName: string
   assetType: StatementAssetType
 }
+
+export type PartAliasMap = Record<string, string>
 
 export type StatementGroup = {
   name: string
@@ -33,33 +37,12 @@ export type StatementGroup = {
 const CONCLUDED_MONTHS = 24
 const MONTH_VALUE = /^(\d{4})-(\d{2})$/
 
-// Preferred director-facing order. Anything else (including new workshop
-// categories) sorts alphabetically after these.
-const COMPONENT_ORDER = [
-  "Engine",
-  "Overhauled Engine",
-  "Overhauled Volvo Engine",
-  "Transmission",
-  "Axles",
-  "Diffs",
-  "Overhauled Diff",
-  "Suspension",
-  "Brakes",
-  "Air System",
-  "Electrical",
-  "Hydraulic System",
-  "Cabin",
-  "Chassis",
-  "Body",
-  "Aircon",
-  "Compressor",
-  "Service",
-]
-
-export function parseStatementAssetType(
+export function parseStatementAssetScope(
   value: string | undefined
-): StatementAssetType {
-  return value === "Trailer" ? "Trailer" : "Truck"
+): StatementAssetScope {
+  if (value === "Trailer") return "Trailer"
+  if (value === "Truck") return "Truck"
+  return "All"
 }
 
 export function isStatementMode(value: string | undefined) {
@@ -173,19 +156,25 @@ export function assetTypesForStatement(assetType: StatementAssetType) {
     : ["Prime Mover", "Truck", "Tow Truck", "Crane"]
 }
 
+export function statementScopeLabel(scope: StatementAssetScope) {
+  if (scope === "All") return "All assets"
+  return scope === "Trailer" ? "Trailers" : "Trucks"
+}
+
 export function statementAssetLabel({
   assetType,
   fleetNo,
   identityNos,
 }: {
-  assetType: StatementAssetType
+  assetType: StatementAssetScope
   fleetNo?: string
   identityNos: string[]
 }) {
   if (fleetNo) return fleetNo
   if (identityNos.length === 1) return identityNos[0]
-  if (identityNos.length === 0) return `All ${assetType}s`
-  return `All ${assetType}s (${identityNos.length})`
+  const scope = statementScopeLabel(assetType)
+  if (identityNos.length === 0) return scope
+  return `${scope} (${identityNos.length})`
 }
 
 export function uniqueIdentityNos(rows: StatementSpareRow[]) {
@@ -194,29 +183,38 @@ export function uniqueIdentityNos(rows: StatementSpareRow[]) {
   )
 }
 
-export function groupSparesByComponent(
-  rows: StatementSpareRow[]
-): StatementGroup[] {
-  const byName = new Map<string, StatementSpareRow[]>()
+export function normalizePartAliasKey(name: string) {
+  return name.trim().replace(/\s+/g, " ").toUpperCase()
+}
+
+export function displayMaterialName(
+  materialName: string,
+  aliases: PartAliasMap
+) {
+  return aliases[normalizePartAliasKey(materialName)] ?? materialName
+}
+
+export function groupSparesByAsset(rows: StatementSpareRow[]): StatementGroup[] {
+  const byAsset = new Map<string, StatementSpareRow[]>()
 
   for (const row of rows) {
-    const name = row.subEquipment.trim() || "Uncategorized"
-    const list = byName.get(name) ?? []
+    const name = row.identityNo.trim() || "Unassigned"
+    const list = byAsset.get(name) ?? []
     list.push(row)
-    byName.set(name, list)
+    byAsset.set(name, list)
   }
 
-  return [...byName.keys()]
-    .sort((left, right) => {
-      const leftIndex = COMPONENT_ORDER.indexOf(left)
-      const rightIndex = COMPONENT_ORDER.indexOf(right)
-      if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right)
-      if (leftIndex === -1) return 1
-      if (rightIndex === -1) return -1
-      return leftIndex - rightIndex
-    })
+  return [...byAsset.keys()]
+    .sort((left, right) =>
+      left.localeCompare(right, undefined, { numeric: true })
+    )
     .map((name) => {
-      const groupRows = byName.get(name) ?? []
+      const groupRows = [...(byAsset.get(name) ?? [])].sort((left, right) => {
+        const dateCmp = left.fitmentDate.localeCompare(right.fitmentDate)
+        if (dateCmp !== 0) return dateCmp
+        return left.id - right.id
+      })
+
       return {
         name,
         rows: groupRows,
@@ -238,11 +236,11 @@ export function statementTotals(rows: StatementSpareRow[]) {
 
 export function sparesStatementHref({
   period = "mtd",
-  assetType = "Truck",
+  assetType = "All",
   fleetNo = "",
 }: {
   period?: string
-  assetType?: StatementAssetType
+  assetType?: StatementAssetScope
   fleetNo?: string
 } = {}) {
   const params = new URLSearchParams()

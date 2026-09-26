@@ -1,8 +1,19 @@
 "use client"
 
-import { AlertTriangle, Trash2 } from "lucide-react"
+import { useEffect, useState } from "react"
+import { AlertTriangle, Loader2Icon, Pencil, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import {
   Table,
   TableBody,
@@ -19,11 +30,14 @@ import {
 } from "@/components/ui/tooltip"
 import type { SparesHistoryRow } from "@/lib/spares-history"
 import {
+  displayMaterialName,
   formatStatementDate,
   formatStatementQty,
   formatStatementUsd,
-  groupSparesByComponent,
+  groupSparesByAsset,
   statementTotals,
+  type PartAliasMap,
+  type StatementAssetOption,
 } from "@/lib/spares-statement"
 
 const STALE_ODOMETER_DAYS = 14
@@ -162,35 +176,34 @@ export function SparesTable({
   )
 }
 
-const STATEMENT_COLUMNS = 7
+const STATEMENT_COLUMNS = 6
 
 export function SparesStatementTable({
   spares,
+  assets,
+  aliases,
   onRemove,
+  onSaveAlias,
   emptyMessage = "No spare issues in this statement period.",
 }: {
   spares: SparesHistoryRow[]
+  assets: StatementAssetOption[]
+  aliases: PartAliasMap
   onRemove: (id: number) => void
+  onSaveAlias: (sourceName: string, alias: string) => Promise<void>
   emptyMessage?: string
 }) {
-  const groups = groupSparesByComponent(spares)
+  const groups = groupSparesByAsset(spares)
   const totals = statementTotals(spares)
+  const assetTypeByName = new Map(
+    assets.map((asset) => [asset.assetName, asset.assetType])
+  )
 
   if (spares.length === 0) {
     return (
       <Table>
         <TableHeader>
-          <TableRow>
-            <TableHead>Date</TableHead>
-            <TableHead>Material Name</TableHead>
-            <TableHead>Asset ID</TableHead>
-            <TableHead>Part Number</TableHead>
-            <TableHead className="text-right">Qty</TableHead>
-            <TableHead className="text-right">Amount</TableHead>
-            <TableHead className="w-10 print:hidden">
-              <span className="sr-only">Remove</span>
-            </TableHead>
-          </TableRow>
+          <StatementColumnHeaders />
         </TableHeader>
         <TableBody>
           <TableRow>
@@ -207,100 +220,219 @@ export function SparesStatementTable({
   }
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Date</TableHead>
-          <TableHead>Material Name</TableHead>
-          <TableHead>Asset ID</TableHead>
-          <TableHead>Part Number</TableHead>
-          <TableHead className="text-right">Qty</TableHead>
-          <TableHead className="text-right">Amount</TableHead>
-          <TableHead className="w-10 print:hidden">
-            <span className="sr-only">Remove</span>
-          </TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {groups.map((group) => (
-          <StatementGroupRows
-            key={group.name}
-            group={group}
-            onRemove={onRemove}
-          />
-        ))}
-      </TableBody>
-      <TableFooter>
-        <TableRow className="border-t-2 bg-muted/50 font-bold hover:bg-muted/50">
-          <TableCell colSpan={4}>Grand total</TableCell>
-          <TableCell className="text-right">
-            {formatStatementQty(totals.quantity)}
-          </TableCell>
-          <TableCell className="text-right">
-            {formatStatementUsd(totals.amount)}
-          </TableCell>
-          <TableCell className="print:hidden" />
-        </TableRow>
-      </TableFooter>
-    </Table>
+    <div>
+      {groups.map((group) => (
+        <section
+          key={group.name}
+          className="border-b border-zinc-200 last:border-b-0 dark:border-zinc-800"
+        >
+          <header className="flex flex-wrap items-end justify-between gap-3 bg-zinc-900 px-6 py-4 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-950">
+            <div>
+              <p className="text-[11px] font-semibold tracking-[0.16em] uppercase opacity-70">
+                {assetTypeByName.get(group.name) ?? "Asset"}
+              </p>
+              <h3 className="text-lg font-semibold tracking-tight">
+                {group.name}
+              </h3>
+            </div>
+            <p className="text-sm font-medium">
+              {group.rows.length} intervention
+              {group.rows.length === 1 ? "" : "s"} ·{" "}
+              {formatStatementQty(group.totalQuantity)} items ·{" "}
+              {formatStatementUsd(group.totalAmount)}
+            </p>
+          </header>
+          <Table>
+            <TableHeader>
+              <StatementColumnHeaders />
+            </TableHeader>
+            <TableBody>
+              {group.rows.map((spare) => (
+                <TableRow key={spare.id}>
+                  <TableCell>{formatStatementDate(spare.fitmentDate)}</TableCell>
+                  <TableCell className="whitespace-normal">
+                    <PartAliasCell
+                      originalName={spare.materialName}
+                      displayName={displayMaterialName(
+                        spare.materialName,
+                        aliases
+                      )}
+                      onSave={onSaveAlias}
+                    />
+                  </TableCell>
+                  <TableCell>{spare.partNumber}</TableCell>
+                  <TableCell className="text-right">
+                    {formatStatementQty(spare.quantity)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {formatStatementUsd(spare.amountUsd)}
+                  </TableCell>
+                  <TableCell className="print:hidden">
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={`Remove ${spare.materialName} from statement`}
+                            onClick={() => onRemove(spare.id)}
+                          />
+                        }
+                      >
+                        <Trash2 />
+                      </TooltipTrigger>
+                      <TooltipContent>Remove from this statement</TooltipContent>
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+            <TableFooter>
+              <TableRow className="bg-zinc-100 font-semibold hover:bg-zinc-100 dark:bg-zinc-900 dark:hover:bg-zinc-900">
+                <TableCell colSpan={3}>{group.name} total</TableCell>
+                <TableCell className="text-right">
+                  {formatStatementQty(group.totalQuantity)}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatStatementUsd(group.totalAmount)}
+                </TableCell>
+                <TableCell className="print:hidden" />
+              </TableRow>
+            </TableFooter>
+          </Table>
+        </section>
+      ))}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t-2 border-zinc-900 px-6 py-4 text-sm font-bold dark:border-zinc-100">
+        <span>Grand total</span>
+        <span>
+          {formatStatementQty(totals.quantity)} items ·{" "}
+          {formatStatementUsd(totals.amount)}
+        </span>
+      </div>
+    </div>
   )
 }
 
-function StatementGroupRows({
-  group,
-  onRemove,
-}: {
-  group: ReturnType<typeof groupSparesByComponent>[number]
-  onRemove: (id: number) => void
-}) {
+function StatementColumnHeaders() {
   return (
-    <>
-      <TableRow className="bg-zinc-900 hover:bg-zinc-900 dark:bg-zinc-100 dark:hover:bg-zinc-100">
-        <TableCell
-          colSpan={STATEMENT_COLUMNS}
-          className="py-2.5 font-semibold tracking-wide text-zinc-50 uppercase dark:text-zinc-950"
-        >
-          <span className="flex flex-wrap items-baseline justify-between gap-2">
-            <span>{group.name}</span>
-            <span className="text-xs font-medium tracking-normal normal-case">
-              {formatStatementQty(group.totalQuantity)} items ·{" "}
-              {formatStatementUsd(group.totalAmount)}
-            </span>
+    <TableRow>
+      <TableHead>Date</TableHead>
+      <TableHead>Material Name</TableHead>
+      <TableHead>Part Number</TableHead>
+      <TableHead className="text-right">Qty</TableHead>
+      <TableHead className="text-right">Amount</TableHead>
+      <TableHead className="w-10 print:hidden">
+        <span className="sr-only">Remove</span>
+      </TableHead>
+    </TableRow>
+  )
+}
+
+function PartAliasCell({
+  originalName,
+  displayName,
+  onSave,
+}: {
+  originalName: string
+  displayName: string
+  onSave: (sourceName: string, alias: string) => Promise<void>
+}) {
+  const [open, setOpen] = useState(false)
+  const [value, setValue] = useState(displayName)
+  const [saving, setSaving] = useState(false)
+  const isAliased = displayName !== originalName
+  const fieldId = `alias-${originalName.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}`
+
+  useEffect(() => {
+    if (open) setValue(displayName)
+  }, [displayName, open])
+
+  async function commit(next: string) {
+    setSaving(true)
+    try {
+      await onSave(originalName, next)
+      setOpen(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-1">
+      <span>
+        <span>{displayName}</span>
+        {isAliased ? (
+          <span className="mt-0.5 block text-[11px] text-muted-foreground print:hidden">
+            ERP: {originalName}
           </span>
-        </TableCell>
-      </TableRow>
-      {group.rows.map((spare) => (
-        <TableRow key={spare.id}>
-          <TableCell>{formatStatementDate(spare.fitmentDate)}</TableCell>
-          <TableCell className="whitespace-normal">{spare.materialName}</TableCell>
-          <TableCell>{spare.identityNo}</TableCell>
-          <TableCell>{spare.partNumber}</TableCell>
-          <TableCell className="text-right">
-            {formatStatementQty(spare.quantity)}
-          </TableCell>
-          <TableCell className="text-right">
-            {formatStatementUsd(spare.amountUsd)}
-          </TableCell>
-          <TableCell className="print:hidden">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={`Remove ${spare.materialName} from statement`}
-                    onClick={() => onRemove(spare.id)}
-                  />
+        ) : null}
+      </span>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="print:hidden text-muted-foreground"
+              aria-label={`Simplify part name for ${originalName}`}
+              title="Simplify part name"
+            />
+          }
+        >
+          <Pencil />
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-80">
+          <PopoverHeader>
+            <PopoverTitle>Director-friendly name</PopoverTitle>
+            <PopoverDescription>
+              Saved aliases are reused on future executive statements.
+            </PopoverDescription>
+          </PopoverHeader>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={fieldId}>Display name</Label>
+            <Input
+              id={fieldId}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault()
+                  void commit(value)
                 }
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              Original: {originalName}
+            </p>
+          </div>
+          <div className="flex justify-end gap-2">
+            {isAliased ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={saving}
+                onClick={() => void commit(originalName)}
               >
-                <Trash2 />
-              </TooltipTrigger>
-              <TooltipContent>Remove from this statement</TooltipContent>
-            </Tooltip>
-          </TableCell>
-        </TableRow>
-      ))}
-    </>
+                Reset
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              disabled={saving || value.trim().length === 0}
+              onClick={() => void commit(value)}
+            >
+              {saving ? (
+                <Loader2Icon data-icon="inline-start" className="animate-spin" />
+              ) : null}
+              Save
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
   )
 }

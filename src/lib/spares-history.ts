@@ -3,7 +3,11 @@ import "server-only"
 import { between, desc, inArray, not, sql } from "drizzle-orm"
 
 import { db } from "@/db"
-import { assetsTable, mileageLogsTable } from "@/db/schema"
+import {
+  assetsTable,
+  mileageLogsTable,
+  partDescriptionAliasesTable,
+} from "@/db/schema"
 import { toIsoDateParam } from "@/lib/iso-date"
 import {
   normalizeSubEquipment,
@@ -13,8 +17,9 @@ import {
 import {
   assetTypesForStatement,
   classifyStatementAssetType,
+  type PartAliasMap,
   type StatementAssetOption,
-  type StatementAssetType,
+  type StatementAssetScope,
 } from "@/lib/spares-statement"
 
 export { sparesHistoryHref } from "@/lib/spares-history-href"
@@ -35,9 +40,9 @@ export type SparesHistoryFilters = {
   // printed report header; the on-screen badge is the only reminder.
   excludeFrom?: string
   excludeTo?: string
-  // Truck / Trailer class used by the executive statement. Narrows the
-  // joined asset, not a column on the spare itself.
-  assetType?: StatementAssetType
+  // All / Truck / Trailer scope used by the executive statement. Narrows
+  // the joined asset, not a column on the spare itself.
+  assetType?: StatementAssetScope
 }
 
 function isActiveFilterValue(value: string | string[] | undefined) {
@@ -263,7 +268,15 @@ export async function getSparesHistory(
         : filters.assetType
           ? {
               asset: {
-                assetType: { in: assetTypesForStatement(filters.assetType) },
+                assetType: {
+                  in:
+                    filters.assetType === "All"
+                      ? [
+                          ...assetTypesForStatement("Truck"),
+                          ...assetTypesForStatement("Trailer"),
+                        ]
+                      : assetTypesForStatement(filters.assetType),
+                },
               },
             }
           : {}),
@@ -334,4 +347,17 @@ export async function getStatementAssets(): Promise<StatementAssetOption[]> {
     const assetType = classifyStatementAssetType(asset.assetType, asset.assetName)
     return assetType ? [{ assetName: asset.assetName, assetType }] : []
   })
+}
+
+export async function getPartDescriptionAliases(): Promise<PartAliasMap> {
+  const rows = await db
+    .select({
+      normalizedName: partDescriptionAliasesTable.normalizedName,
+      alias: partDescriptionAliasesTable.alias,
+    })
+    .from(partDescriptionAliasesTable)
+
+  return Object.fromEntries(
+    rows.map((row) => [row.normalizedName, row.alias])
+  )
 }

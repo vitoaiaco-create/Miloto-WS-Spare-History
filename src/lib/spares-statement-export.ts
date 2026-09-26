@@ -1,20 +1,24 @@
 import * as XLSX from "xlsx"
 
 import {
+  displayMaterialName,
   formatStatementDate,
   formatStatementQty,
   formatStatementUsd,
-  groupSparesByComponent,
+  groupSparesByAsset,
+  statementScopeLabel,
   statementTotals,
-  type StatementAssetType,
+  type PartAliasMap,
+  type StatementAssetScope,
   type StatementSpareRow,
 } from "@/lib/spares-statement"
 
 export type StatementExportMeta = {
-  assetType: StatementAssetType
+  assetType: StatementAssetScope
   assetLabel: string
   periodLabel: string
   dateRangeLabel: string
+  aliases: PartAliasMap
 }
 
 const COMPANY_NAME = "Zambezi Portland Cement"
@@ -166,7 +170,7 @@ export async function exportStatementPdf(
   doc.setTextColor(50)
   const headerLines = [
     `Asset ID: ${meta.assetLabel}`,
-    `Asset type: ${meta.assetType}`,
+    `Asset group: ${statementScopeLabel(meta.assetType)}`,
     `Period: ${meta.periodLabel}`,
     `Date range: ${meta.dateRangeLabel}`,
   ]
@@ -175,48 +179,71 @@ export async function exportStatementPdf(
     cursorY += 5
   }
 
-  const groups = groupSparesByComponent(rows)
+  const groups = groupSparesByAsset(rows)
   const totals = statementTotals(rows)
-  const body: Array<
-    | string[]
-    | Array<
-        | string
-        | {
-            content: string
-            colSpan?: number
-            styles?: Record<string, string | number | number[]>
-          }
-      >
-  > = []
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const footerReserve = 14
+  const minSectionHeight = 52
 
-  for (const group of groups) {
-    body.push([
-      {
-        content: group.name.toUpperCase(),
-        colSpan: 6,
-        styles: {
-          fillColor: [24, 32, 48],
-          textColor: 255,
-          fontStyle: "bold",
-        },
-      },
-    ])
+  function drawPageChrome() {
+    const page = doc.getNumberOfPages()
+    doc.setFontSize(8)
+    doc.setTextColor(120)
+    doc.text(
+      `Generated ${new Date().toLocaleString()}  ·  ${COMPANY_NAME}  ·  Page ${page}`,
+      14,
+      pageHeight - 8
+    )
+    doc.text(
+      `${rows.length} line${rows.length === 1 ? "" : "s"}`,
+      pageWidth - 14,
+      pageHeight - 8,
+      { align: "right" }
+    )
+  }
 
-    for (const row of group.rows) {
-      body.push([
-        formatStatementDate(row.fitmentDate),
-        row.materialName,
-        row.identityNo,
-        row.partNumber,
-        formatStatementQty(row.quantity),
-        formatStatementUsd(row.amountUsd),
-      ])
+  drawPageChrome()
+
+  for (const [index, group] of groups.entries()) {
+    if (index > 0) {
+      const remaining = pageHeight - cursorY - footerReserve
+      if (remaining < minSectionHeight) {
+        doc.addPage()
+        drawPageChrome()
+        cursorY = 16
+      } else {
+        cursorY += 6
+        doc.setDrawColor(24, 32, 48)
+        doc.setLineWidth(0.5)
+        doc.line(14, cursorY, pageWidth - 14, cursorY)
+        cursorY += 5
+      }
+    } else {
+      cursorY += 2
     }
+
+    const body: Array<
+      | string[]
+      | Array<
+          | string
+          | {
+              content: string
+              colSpan?: number
+              styles?: Record<string, string | number | number[]>
+            }
+        >
+    > = group.rows.map((row) => [
+      formatStatementDate(row.fitmentDate),
+      displayMaterialName(row.materialName, meta.aliases),
+      row.partNumber,
+      formatStatementQty(row.quantity),
+      formatStatementUsd(row.amountUsd),
+    ])
 
     body.push([
       {
         content: `${group.name} total`,
-        colSpan: 4,
+        colSpan: 3,
         styles: { fontStyle: "bold", fillColor: [244, 244, 245] },
       },
       {
@@ -228,49 +255,49 @@ export async function exportStatementPdf(
         styles: { fontStyle: "bold", fillColor: [244, 244, 245] },
       },
     ])
+
+    autoTable(doc, {
+      startY: cursorY,
+      head: [
+        [
+          {
+            content: group.name.toUpperCase(),
+            colSpan: 5,
+            styles: {
+              fillColor: [24, 32, 48],
+              textColor: 255,
+              fontStyle: "bold",
+              fontSize: 10,
+              halign: "left",
+            },
+          },
+        ],
+        ["Date", "Material Name", "Part Number", "Qty", "Amount"],
+      ],
+      body,
+      styles: { fontSize: 8, cellPadding: 1.6 },
+      headStyles: { fillColor: [39, 39, 42], textColor: 255, fontStyle: "bold" },
+      columnStyles: {
+        0: { cellWidth: 24 },
+        1: { cellWidth: 78 },
+        2: { cellWidth: 36 },
+        3: { cellWidth: 16, halign: "right" },
+        4: { cellWidth: 24, halign: "right" },
+      },
+      didDrawPage: () => {
+        drawPageChrome()
+      },
+    })
+
+    cursorY =
+      (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable
+        ?.finalY ?? cursorY + 10
   }
 
-  autoTable(doc, {
-    startY: cursorY + 2,
-    head: [["Date", "Material Name", "Asset ID", "Part Number", "Qty", "Amount"]],
-    body,
-    styles: { fontSize: 8, cellPadding: 1.6 },
-    headStyles: { fillColor: [39, 39, 42], textColor: 255, fontStyle: "bold" },
-    columnStyles: {
-      0: { cellWidth: 22 },
-      1: { cellWidth: 52 },
-      2: { cellWidth: 28 },
-      3: { cellWidth: 32 },
-      4: { cellWidth: 16, halign: "right" },
-      5: { cellWidth: 28, halign: "right" },
-    },
-    didDrawPage: (data) => {
-      const page = doc.getNumberOfPages()
-      doc.setFontSize(8)
-      doc.setTextColor(120)
-      doc.text(
-        `Generated ${new Date().toLocaleString()}  ·  ${COMPANY_NAME}  ·  Page ${page}`,
-        14,
-        doc.internal.pageSize.getHeight() - 8
-      )
-      doc.text(
-        `${rows.length} line${rows.length === 1 ? "" : "s"}`,
-        data.settings.margin.right
-          ? pageWidth - data.settings.margin.right
-          : pageWidth - 14,
-        doc.internal.pageSize.getHeight() - 8,
-        { align: "right" }
-      )
-    },
-  })
-
-  const finalY =
-    (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable
-      ?.finalY ?? cursorY + 10
-  const pageHeight = doc.internal.pageSize.getHeight()
-  let totalY = finalY + 10
+  let totalY = cursorY + 10
   if (totalY > pageHeight - 16) {
     doc.addPage()
+    drawPageChrome()
     totalY = 20
   }
 
@@ -294,36 +321,34 @@ export async function exportStatementExcel(
   rows: StatementSpareRow[],
   meta: StatementExportMeta
 ) {
-  const groups = groupSparesByComponent(rows)
+  const groups = groupSparesByAsset(rows)
   const totals = statementTotals(rows)
   const aoa: Array<Array<string | number>> = [
     [COMPANY_NAME],
     [`${DIVISION_NAME} — ${DOCUMENT_TITLE}`],
     [`Asset ID: ${meta.assetLabel}`],
-    [`Asset type: ${meta.assetType}`],
+    [`Asset group: ${statementScopeLabel(meta.assetType)}`],
     [`Period: ${meta.periodLabel}`],
     [`Date range: ${meta.dateRangeLabel}`],
     [`Generated: ${new Date().toLocaleString()}`],
     [],
-    [
-      "Component Group",
-      "Date",
-      "Material Name",
-      "Asset ID",
-      "Part Number",
-      "Quantity",
-      "Amount (USD)",
-    ],
+    ["Asset ID", "Date", "Material Name", "Part Number", "Quantity", "Amount (USD)"],
   ]
 
-  for (const group of groups) {
-    aoa.push([group.name.toUpperCase(), "", "", "", "", "", ""])
+  const pageBreaks: number[] = []
+
+  for (const [index, group] of groups.entries()) {
+    if (index > 0) {
+      aoa.push([])
+      pageBreaks.push(aoa.length)
+    }
+
+    aoa.push([group.name.toUpperCase(), "", "", "", "", ""])
     for (const row of group.rows) {
       aoa.push([
         group.name,
         formatStatementDate(row.fitmentDate),
-        row.materialName,
-        row.identityNo,
+        displayMaterialName(row.materialName, meta.aliases),
         row.partNumber,
         row.quantity,
         row.amountUsd ?? "",
@@ -334,25 +359,26 @@ export async function exportStatementExcel(
       "",
       "",
       "",
-      "",
       group.totalQuantity,
       group.totalAmount,
     ])
   }
 
   aoa.push([])
-  aoa.push(["GRAND TOTAL", "", "", "", "", totals.quantity, totals.amount])
+  aoa.push(["GRAND TOTAL", "", "", "", totals.quantity, totals.amount])
 
   const sheet = XLSX.utils.aoa_to_sheet(aoa)
   sheet["!cols"] = [
-    { wch: 22 },
-    { wch: 14 },
-    { wch: 36 },
     { wch: 18 },
+    { wch: 14 },
+    { wch: 42 },
     { wch: 18 },
     { wch: 12 },
     { wch: 14 },
   ]
+  if (pageBreaks.length > 0) {
+    sheet["!rowbreaks"] = pageBreaks
+  }
 
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, sheet, "Statement")

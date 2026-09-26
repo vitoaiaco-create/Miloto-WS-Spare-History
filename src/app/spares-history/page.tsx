@@ -11,6 +11,7 @@ import { SparesTable } from "@/components/spares-table"
 import { Button } from "@/components/ui/button"
 import { formatIsoDate, toIsoDateParam } from "@/lib/iso-date"
 import {
+  getPartDescriptionAliases,
   getSparesHistory,
   getStatementAssets,
   hasActiveSparesFilters,
@@ -18,7 +19,7 @@ import {
 } from "@/lib/spares-history"
 import {
   isStatementMode,
-  parseStatementAssetType,
+  parseStatementAssetScope,
   parseStatementPeriod,
   statementDateRange,
   sparesStatementHref,
@@ -68,7 +69,7 @@ export default async function SparesHistoryPage({
   const statementPeriod = parseStatementPeriod(
     toFilterString(resolvedSearchParams.period)
   )
-  const statementAssetType = parseStatementAssetType(
+  const statementAssetType = parseStatementAssetScope(
     toFilterString(resolvedSearchParams.assetType)
   )
   const statementRange = statementDateRange(statementPeriod, new Date())
@@ -97,9 +98,10 @@ export default async function SparesHistoryPage({
         excludeTo: hasExcludeRange ? excludeTo : "",
       }
 
-  const [spares, statementAssets] = await Promise.all([
+  const [spares, statementAssets, partAliases] = await Promise.all([
     getSparesHistory(filters),
     statementEnabled ? getStatementAssets() : Promise.resolve([]),
+    statementEnabled ? getPartDescriptionAliases() : Promise.resolve({}),
   ])
 
   return (
@@ -134,7 +136,7 @@ export default async function SparesHistoryPage({
                 <Link
                   href={sparesStatementHref({
                     period: "mtd",
-                    assetType: "Truck",
+                    assetType: "All",
                   })}
                 />
               }
@@ -159,6 +161,7 @@ export default async function SparesHistoryPage({
             assetType={statementAssetType}
             fleetNo={filters.fleetNo ?? ""}
             assets={statementAssets}
+            aliases={partAliases}
             today={today}
           />
         ) : (

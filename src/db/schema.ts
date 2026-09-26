@@ -88,6 +88,24 @@ export const mechanicalSparesTable = pgTable(
   ]
 );
 
+// Director-facing replacements for cryptic ERP part descriptions on
+// executive statements. Shared across all staff; keyed by a normalized
+// material name so the same wording always prints the same way.
+export const partDescriptionAliasesTable = pgTable(
+  "part_description_aliases",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    sourceName: varchar("source_name", { length: 255 }).notNull(),
+    normalizedName: varchar("normalized_name", { length: 255 })
+      .notNull()
+      .unique(),
+    alias: varchar("alias", { length: 255 }).notNull(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    // Audit only — never used to hide aliases from other staff.
+    updatedBy: varchar("updated_by", { length: 255 }),
+  }
+);
+
 // Lab-sample workflow for the Oils & Servicing module. A sample starts as
 // `requested` from the Oils dashboard, then moves drawn → sent → received
 // on the sampling pipeline board.
