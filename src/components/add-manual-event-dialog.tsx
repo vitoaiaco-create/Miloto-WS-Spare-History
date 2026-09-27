@@ -8,6 +8,7 @@ import { createManualStatementEvent } from "@/actions/spares-statement"
 import { Button } from "@/components/ui/button"
 import {
   Combobox,
+  ComboboxCollection,
   ComboboxContent,
   ComboboxEmpty,
   ComboboxGroup,
@@ -63,18 +64,22 @@ export function AddManualEventDialog({
   const [notes, setNotes] = useState("")
   const [isSaving, setIsSaving] = useState(false)
 
-  const assetItems = useMemo(
-    () => assets.map((asset) => asset.assetName),
-    [assets]
-  )
-  const truckAssets = useMemo(
-    () => assets.filter((asset) => asset.assetType === "Truck"),
-    [assets]
-  )
-  const trailerAssets = useMemo(
-    () => assets.filter((asset) => asset.assetType === "Trailer"),
-    [assets]
-  )
+  const assetGroups = useMemo(() => {
+    const trucks: string[] = []
+    const trailers: string[] = []
+
+    for (const asset of assets) {
+      if (asset.assetType === "Truck") trucks.push(asset.assetName)
+      else trailers.push(asset.assetName)
+    }
+
+    return [
+      trucks.length > 0 ? { value: "Trucks", items: trucks } : null,
+      trailers.length > 0 ? { value: "Trailers", items: trailers } : null,
+    ].filter((group): group is { value: string; items: string[] } =>
+      group !== null
+    )
+  }, [assets])
 
   function resetForm() {
     setAssetName(defaultAssetName)
@@ -162,7 +167,7 @@ export function AddManualEventDialog({
           <div className="grid gap-1.5">
             <Label htmlFor="manual-event-asset">Asset ID</Label>
             <Combobox
-              items={assetItems}
+              items={assetGroups}
               value={assetName || null}
               onValueChange={(value) => setAssetName(value ?? "")}
             >
@@ -175,32 +180,18 @@ export function AddManualEventDialog({
               <ComboboxContent className="z-[60]">
                 <ComboboxEmpty>No asset found.</ComboboxEmpty>
                 <ComboboxList>
-                  {truckAssets.length > 0 ? (
-                    <ComboboxGroup>
-                      <ComboboxLabel>Trucks</ComboboxLabel>
-                      {truckAssets.map((asset) => (
-                        <ComboboxItem
-                          key={asset.assetName}
-                          value={asset.assetName}
-                        >
-                          {asset.assetName}
-                        </ComboboxItem>
-                      ))}
+                  {(group: { value: string; items: string[] }) => (
+                    <ComboboxGroup key={group.value} items={group.items}>
+                      <ComboboxLabel>{group.value}</ComboboxLabel>
+                      <ComboboxCollection>
+                        {(item: string) => (
+                          <ComboboxItem key={item} value={item}>
+                            {item}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxCollection>
                     </ComboboxGroup>
-                  ) : null}
-                  {trailerAssets.length > 0 ? (
-                    <ComboboxGroup>
-                      <ComboboxLabel>Trailers</ComboboxLabel>
-                      {trailerAssets.map((asset) => (
-                        <ComboboxItem
-                          key={asset.assetName}
-                          value={asset.assetName}
-                        >
-                          {asset.assetName}
-                        </ComboboxItem>
-                      ))}
-                    </ComboboxGroup>
-                  ) : null}
+                  )}
                 </ComboboxList>
               </ComboboxContent>
             </Combobox>

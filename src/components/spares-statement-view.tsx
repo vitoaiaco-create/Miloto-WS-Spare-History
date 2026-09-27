@@ -28,6 +28,7 @@ import {
   ComboboxChip,
   ComboboxChips,
   ComboboxChipsInput,
+  ComboboxCollection,
   ComboboxContent,
   ComboboxEmpty,
   ComboboxGroup,
@@ -122,15 +123,6 @@ export function SparesStatementView({
         : assets.filter((asset) => asset.assetType === assetType),
     [assets, assetType]
   )
-  const truckAssets = useMemo(
-    () => assets.filter((asset) => asset.assetType === "Truck"),
-    [assets]
-  )
-  const trailerAssets = useMemo(
-    () => assets.filter((asset) => asset.assetType === "Trailer"),
-    [assets]
-  )
-
   const componentItems = useMemo(
     () => statementComponentOptions(spares),
     [spares]
@@ -142,10 +134,22 @@ export function SparesStatementView({
       ),
     [assetsForScope, selectedAssetIds]
   )
-  const assetItems = useMemo(
-    () => assetsForScope.map((asset) => asset.assetName),
-    [assetsForScope]
-  )
+  const assetGroups = useMemo(() => {
+    const trucks: string[] = []
+    const trailers: string[] = []
+
+    for (const asset of assetsForScope) {
+      if (asset.assetType === "Truck") trucks.push(asset.assetName)
+      else trailers.push(asset.assetName)
+    }
+
+    return [
+      trucks.length > 0 ? { value: "Trucks", items: trucks } : null,
+      trailers.length > 0 ? { value: "Trailers", items: trailers } : null,
+    ].filter((group): group is { value: string; items: string[] } =>
+      group !== null
+    )
+  }, [assetsForScope])
   const visibleSpares = useMemo(
     () =>
       applyStatementPreviewFilters(spares, {
@@ -369,7 +373,7 @@ export function SparesStatementView({
               <Combobox
                 multiple
                 autoHighlight
-                items={assetItems}
+                items={assetGroups}
                 value={scopedAssetIds}
                 onValueChange={(value) =>
                   setSelectedAssetIds(Array.isArray(value) ? value : [])
@@ -401,44 +405,20 @@ export function SparesStatementView({
                 </ComboboxChips>
                 <ComboboxContent anchor={assetAnchor}>
                   <ComboboxEmpty>No asset found.</ComboboxEmpty>
-                  {assetType === "All" ? (
-                    <ComboboxList>
-                      {truckAssets.length > 0 ? (
-                        <ComboboxGroup>
-                          <ComboboxLabel>Trucks</ComboboxLabel>
-                          {truckAssets.map((asset) => (
-                            <ComboboxItem
-                              key={asset.assetName}
-                              value={asset.assetName}
-                            >
-                              {asset.assetName}
+                  <ComboboxList>
+                    {(group: { value: string; items: string[] }) => (
+                      <ComboboxGroup key={group.value} items={group.items}>
+                        <ComboboxLabel>{group.value}</ComboboxLabel>
+                        <ComboboxCollection>
+                          {(item: string) => (
+                            <ComboboxItem key={item} value={item}>
+                              {item}
                             </ComboboxItem>
-                          ))}
-                        </ComboboxGroup>
-                      ) : null}
-                      {trailerAssets.length > 0 ? (
-                        <ComboboxGroup>
-                          <ComboboxLabel>Trailers</ComboboxLabel>
-                          {trailerAssets.map((asset) => (
-                            <ComboboxItem
-                              key={asset.assetName}
-                              value={asset.assetName}
-                            >
-                              {asset.assetName}
-                            </ComboboxItem>
-                          ))}
-                        </ComboboxGroup>
-                      ) : null}
-                    </ComboboxList>
-                  ) : (
-                    <ComboboxList>
-                      {(item) => (
-                        <ComboboxItem key={item} value={item}>
-                          {item}
-                        </ComboboxItem>
-                      )}
-                    </ComboboxList>
-                  )}
+                          )}
+                        </ComboboxCollection>
+                      </ComboboxGroup>
+                    )}
+                  </ComboboxList>
                 </ComboboxContent>
               </Combobox>
             </div>
