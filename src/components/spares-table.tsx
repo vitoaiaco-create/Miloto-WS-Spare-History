@@ -32,9 +32,13 @@ import type { SparesHistoryRow } from "@/lib/spares-history"
 import {
   displayMaterialName,
   formatStatementDate,
+  formatStatementLineAmount,
+  formatStatementLineQty,
   formatStatementQty,
   formatStatementUsd,
   groupSparesByAsset,
+  isAlignmentStatementRow,
+  statementRowKey,
   statementTotals,
   type PartAliasMap,
   type StatementAssetOption,
@@ -190,7 +194,7 @@ export function SparesStatementTable({
   spares: SparesHistoryRow[]
   assets: StatementAssetOption[]
   aliases: PartAliasMap
-  onRemove: (id: number) => void
+  onRemove: (spare: { partNumber: string; materialName: string }) => void
   onExcludeAsset: (assetName: string) => void
   onSaveAlias: (sourceName: string, alias: string) => Promise<void>
   emptyMessage?: string
@@ -228,34 +232,26 @@ export function SparesStatementTable({
           key={group.name}
           className="border-b border-zinc-200 last:border-b-0 dark:border-zinc-800"
         >
-          <header className="flex flex-wrap items-end justify-between gap-3 bg-zinc-900 px-6 py-4 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-950">
-            <div>
-              <p className="text-[11px] font-semibold tracking-[0.16em] uppercase opacity-70">
+          <header className="flex items-center justify-between gap-3 bg-zinc-900 px-6 py-1.5 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-950">
+            <div className="flex min-w-0 items-baseline gap-2">
+              <p className="shrink-0 text-[11px] font-semibold tracking-[0.16em] uppercase opacity-70">
                 {assetTypeByName.get(group.name) ?? "Asset"}
               </p>
-              <h3 className="text-lg font-semibold tracking-tight">
+              <h3 className="truncate text-sm font-semibold tracking-tight">
                 {group.name}
               </h3>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <p className="text-sm font-medium">
-                {group.rows.length} intervention
-                {group.rows.length === 1 ? "" : "s"} ·{" "}
-                {formatStatementQty(group.totalQuantity)} items ·{" "}
-                {formatStatementUsd(group.totalAmount)}
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="print:hidden border-zinc-500 bg-transparent text-zinc-50 hover:bg-zinc-800 hover:text-zinc-50 dark:border-zinc-400 dark:text-zinc-950 dark:hover:bg-zinc-200"
-                aria-label={`Exclude ${group.name} from this statement`}
-                onClick={() => onExcludeAsset(group.name)}
-              >
-                <Trash2 data-icon="inline-start" />
-                Exclude asset
-              </Button>
-            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              className="print:hidden shrink-0 border-zinc-500 bg-transparent text-zinc-50 hover:bg-zinc-800 hover:text-zinc-50 dark:border-zinc-400 dark:text-zinc-950 dark:hover:bg-zinc-200"
+              aria-label={`Exclude ${group.name} from this statement`}
+              onClick={() => onExcludeAsset(group.name)}
+            >
+              <Trash2 data-icon="inline-start" />
+              Exclude asset
+            </Button>
           </header>
           <Table>
             <TableHeader>
@@ -263,42 +259,64 @@ export function SparesStatementTable({
             </TableHeader>
             <TableBody>
               {group.rows.map((spare) => (
-                <TableRow key={spare.id}>
+                <TableRow key={statementRowKey(spare)}>
                   <TableCell>{formatStatementDate(spare.fitmentDate)}</TableCell>
                   <TableCell className="whitespace-normal">
-                    <PartAliasCell
-                      originalName={spare.materialName}
-                      displayName={displayMaterialName(
-                        spare.materialName,
-                        aliases
-                      )}
-                      onSave={onSaveAlias}
-                    />
+                    {isAlignmentStatementRow(spare) ? (
+                      <div>
+                        <span>{spare.materialName}</span>
+                        {spare.notes ? (
+                          <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                            {spare.notes}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <PartAliasCell
+                        originalName={spare.materialName}
+                        displayName={displayMaterialName(
+                          spare.materialName,
+                          aliases
+                        )}
+                        onSave={onSaveAlias}
+                      />
+                    )}
                   </TableCell>
-                  <TableCell>{spare.partNumber}</TableCell>
-                  <TableCell className="text-right">
-                    {formatStatementQty(spare.quantity)}
+                  <TableCell>
+                    {isAlignmentStatementRow(spare) ? "-" : spare.partNumber}
                   </TableCell>
                   <TableCell className="text-right">
-                    {formatStatementUsd(spare.amountUsd)}
+                    {formatStatementLineQty(spare)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {formatStatementLineAmount(spare)}
                   </TableCell>
                   <TableCell className="print:hidden">
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-xs"
-                            aria-label={`Remove ${spare.materialName} from statement`}
-                            onClick={() => onRemove(spare.id)}
-                          />
-                        }
-                      >
-                        <Trash2 />
-                      </TooltipTrigger>
-                      <TooltipContent>Remove from this statement</TooltipContent>
-                    </Tooltip>
+                    {isAlignmentStatementRow(spare) ? null : (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={`Exclude ${spare.materialName} from future statements`}
+                              onClick={() =>
+                                onRemove({
+                                  partNumber: spare.partNumber,
+                                  materialName: spare.materialName,
+                                })
+                              }
+                            />
+                          }
+                        >
+                          <Trash2 />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Exclude from future statements
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

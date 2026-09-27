@@ -106,6 +106,47 @@ export const partDescriptionAliasesTable = pgTable(
   }
 );
 
+// Manual wheel-alignment interventions injected into the executive
+// statement. Shared across all staff. Not a stock movement — these sit
+// alongside physical spare replacements, sorted by date.
+export const manualAlignmentEventsTable = pgTable("manual_alignment_events", {
+  id: integer().primaryKey().generatedAlwaysAsIdentity(),
+  assetId: integer("asset_id")
+    .notNull()
+    .references(() => assetsTable.id, { onDelete: "cascade" }),
+  date: date("date").notNull(),
+  notes: text("notes"),
+});
+
+// Consumables (nuts, bolts, electrodes, etc.) permanently omitted from
+// executive statements. Shared across all staff. A spare is hidden when
+// its part number OR material name matches an entry — history rows are
+// never deleted.
+export const statementConsumableExclusionsTable = pgTable(
+  "statement_consumable_exclusions",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    partNumber: varchar("part_number", { length: 100 }).notNull(),
+    materialName: varchar("material_name", { length: 255 }).notNull(),
+    normalizedPartNumber: varchar("normalized_part_number", { length: 100 })
+      .notNull(),
+    normalizedMaterialName: varchar("normalized_material_name", {
+      length: 255,
+    }).notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    // Audit only — never used to hide exclusions from other staff.
+    createdBy: varchar("created_by", { length: 255 }),
+  },
+  (table) => [
+    uniqueIndex("statement_consumable_exclusions_part_number_idx").on(
+      table.normalizedPartNumber
+    ),
+    uniqueIndex("statement_consumable_exclusions_material_name_idx").on(
+      table.normalizedMaterialName
+    ),
+  ]
+);
+
 // Lab-sample workflow for the Oils & Servicing module. A sample starts as
 // `requested` from the Oils dashboard, then moves drawn → sent → received
 // on the sampling pipeline board.

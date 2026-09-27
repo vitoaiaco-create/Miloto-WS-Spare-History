@@ -3,17 +3,32 @@ import { format } from "date-fns"
 import { formatIsoDate } from "@/lib/iso-date"
 import { normalizeSubEquipment } from "@/lib/spreadsheet"
 
+export const WHEEL_ALIGNMENT_MATERIAL_NAME = "WHEEL ALIGNMENT"
+export const STATEMENT_BLANK_VALUE = "-"
+
+export type StatementRowKind = "spare" | "alignment"
+
 // The fields the statement layout and exports actually use. Compatible
 // with `SparesHistoryRow` without importing the server-only history module.
 export type StatementSpareRow = {
   id: number
+  kind?: StatementRowKind
   fitmentDate: string
   materialName: string
   identityNo: string
   partNumber: string
   subEquipment: string
-  quantity: number
+  quantity: number | null
   amountUsd: number | null
+  notes?: string | null
+}
+
+export function isAlignmentStatementRow(row: Pick<StatementSpareRow, "kind">) {
+  return row.kind === "alignment"
+}
+
+export function statementRowKey(row: Pick<StatementSpareRow, "id" | "kind">) {
+  return `${row.kind ?? "spare"}-${row.id}`
 }
 
 export const STATEMENT_ASSET_SCOPES = ["All", "Truck", "Trailer"] as const
@@ -48,10 +63,15 @@ export const STATEMENT_COMPONENT_GROUPS = [
   "Transmission",
 ] as const
 
+export type StatementConsumableExclusion = {
+  partNumber: string
+  materialName: string
+}
+
 export type StatementPreviewFilters = {
   categories: string[]
   excludedAssets: string[]
-  hiddenIds: number[]
+  excludedConsumables: StatementConsumableExclusion[]
 }
 
 export type StatementGroup = {
@@ -143,8 +163,19 @@ export function formatStatementUsd(value: number | null) {
   return value.toLocaleString("en-US", { style: "currency", currency: "USD" })
 }
 
-export function formatStatementQty(value: number) {
+export function formatStatementQty(value: number | null) {
+  if (value === null) return STATEMENT_BLANK_VALUE
   return Number.isInteger(value) ? String(value) : value.toFixed(2)
+}
+
+export function formatStatementLineQty(row: StatementSpareRow) {
+  if (isAlignmentStatementRow(row)) return STATEMENT_BLANK_VALUE
+  return formatStatementQty(row.quantity)
+}
+
+export function formatStatementLineAmount(row: StatementSpareRow) {
+  if (isAlignmentStatementRow(row)) return STATEMENT_BLANK_VALUE
+  return formatStatementUsd(row.amountUsd)
 }
 
 export function classifyStatementAssetType(
@@ -238,26 +269,40 @@ export function statementComponentLabel(categories: string[]) {
   return `${categories.length} component groups`
 }
 
+export function normalizePartAliasKey(name: string) {
+  return name.trim().replace(/\s+/g, " ").toUpperCase()
+}
+
+export function rowMatchesConsumableExclusion(
+  row: Pick<StatementSpareRow, "partNumber" | "materialName">,
+  exclusions: StatementConsumableExclusion[]
+) {
+  const partNumber = normalizePartAliasKey(row.partNumber)
+  const materialName = normalizePartAliasKey(row.materialName)
+
+  return exclusions.some(
+    (item) =>
+      normalizePartAliasKey(item.partNumber) === partNumber ||
+      normalizePartAliasKey(item.materialName) === materialName
+  )
+}
+
 export function applyStatementPreviewFilters<T extends StatementSpareRow>(
   rows: T[],
-  { categories, excludedAssets, hiddenIds }: StatementPreviewFilters
+  { categories, excludedAssets, excludedConsumables }: StatementPreviewFilters
 ) {
   const selected = new Set(
     categories.map((category) => normalizeSubEquipment(category)).filter(Boolean)
   )
   const excluded = new Set(excludedAssets)
-  const hidden = new Set(hiddenIds)
 
   return rows.filter((row) => {
-    if (hidden.has(row.id)) return false
     if (excluded.has(statementAssetKey(row.identityNo))) return false
+    if (isAlignmentStatementRow(row)) return true
+    if (rowMatchesConsumableExclusion(row, excludedConsumables)) return false
     if (selected.size === 0) return true
     return selected.has(normalizeSubEquipment(row.subEquipment))
   })
-}
-
-export function normalizePartAliasKey(name: string) {
-  return name.trim().replace(/\s+/g, " ").toUpperCase()
 }
 
 export function displayMaterialName(
@@ -285,13 +330,19 @@ export function groupSparesByAsset(rows: StatementSpareRow[]): StatementGroup[] 
       const groupRows = [...(byAsset.get(name) ?? [])].sort((left, right) => {
         const dateCmp = left.fitmentDate.localeCompare(right.fitmentDate)
         if (dateCmp !== 0) return dateCmp
+        const leftKind = left.kind ?? "spare"
+        const rightKind = right.kind ?? "spare"
+        if (leftKind !== rightKind) return leftKind === "spare" ? -1 : 1
         return left.id - right.id
       })
 
       return {
         name,
         rows: groupRows,
-        totalQuantity: groupRows.reduce((sum, row) => sum + row.quantity, 0),
+        totalQuantity: groupRows.reduce(
+          (sum, row) => sum + (row.quantity ?? 0),
+          0
+        ),
         totalAmount: groupRows.reduce(
           (sum, row) => sum + (Number(row.amountUsd) || 0),
           0
@@ -302,7 +353,7 @@ export function groupSparesByAsset(rows: StatementSpareRow[]): StatementGroup[] 
 
 export function statementTotals(rows: StatementSpareRow[]) {
   return {
-    quantity: rows.reduce((sum, row) => sum + row.quantity, 0),
+    quantity: rows.reduce((sum, row) => sum + (row.quantity ?? 0), 0),
     amount: rows.reduce((sum, row) => sum + (Number(row.amountUsd) || 0), 0),
   }
 }

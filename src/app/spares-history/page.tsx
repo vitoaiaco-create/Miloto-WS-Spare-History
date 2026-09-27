@@ -13,6 +13,7 @@ import { formatIsoDate, toIsoDateParam } from "@/lib/iso-date"
 import {
   getPartDescriptionAliases,
   getSparesHistory,
+  getStatementAlignmentEvents,
   getStatementAssets,
   hasActiveSparesFilters,
   type SparesHistoryFilters,
@@ -98,11 +99,21 @@ export default async function SparesHistoryPage({
         excludeTo: hasExcludeRange ? excludeTo : "",
       }
 
-  const [spares, statementAssets, partAliases] = await Promise.all([
-    getSparesHistory(filters),
-    statementEnabled ? getStatementAssets() : Promise.resolve([]),
-    statementEnabled ? getPartDescriptionAliases() : Promise.resolve({}),
-  ])
+  const [spares, alignmentEvents, statementAssets, partAliases] =
+    await Promise.all([
+      getSparesHistory(filters, {
+        excludeStatementConsumables: statementEnabled,
+      }),
+      statementEnabled
+        ? getStatementAlignmentEvents(filters)
+        : Promise.resolve([]),
+      statementEnabled ? getStatementAssets() : Promise.resolve([]),
+      statementEnabled ? getPartDescriptionAliases() : Promise.resolve({}),
+    ])
+
+  const statementSpares = statementEnabled
+    ? [...spares, ...alignmentEvents]
+    : spares
 
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
@@ -154,7 +165,7 @@ export default async function SparesHistoryPage({
         {statementEnabled ? (
           <SparesStatementView
             key={`${statementPeriod}-${statementAssetType}-${filters.fleetNo ?? ""}`}
-            spares={spares}
+            spares={statementSpares}
             period={statementPeriod}
             startDate={statementRange.startDate}
             endDate={statementRange.endDate}

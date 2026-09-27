@@ -45,6 +45,10 @@ export const relations = defineRelations(schema, (r) => ({
       from: r.assetsTable.id,
       to: r.monthlyAssetDistancesTable.assetId,
     }),
+    manualAlignmentEvents: r.many.manualAlignmentEventsTable({
+      from: r.assetsTable.id,
+      to: r.manualAlignmentEventsTable.assetId,
+    }),
   },
   driversTable: {
     monthlyPairings: r.many.monthlyPairingsTable({
@@ -133,6 +137,15 @@ export const relations = defineRelations(schema, (r) => ({
   monthlyAssetDistancesTable: {
     asset: r.one.assetsTable({
       from: r.monthlyAssetDistancesTable.assetId,
+      to: r.assetsTable.id,
+      optional: false,
+    }),
+  },
+  manualAlignmentEventsTable: {
+    // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so an
+    // alignment event can never exist without its asset.
+    asset: r.one.assetsTable({
+      from: r.manualAlignmentEventsTable.assetId,
       to: r.assetsTable.id,
       optional: false,
     }),

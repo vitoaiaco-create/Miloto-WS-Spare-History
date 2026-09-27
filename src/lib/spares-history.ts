@@ -1,12 +1,13 @@
 import "server-only"
 
-import { between, desc, inArray, not, sql } from "drizzle-orm"
+import { and, between, desc, inArray, not, sql } from "drizzle-orm"
 
 import { db } from "@/db"
 import {
   assetsTable,
   mileageLogsTable,
   partDescriptionAliasesTable,
+  statementConsumableExclusionsTable,
 } from "@/db/schema"
 import { toIsoDateParam } from "@/lib/iso-date"
 import {
@@ -17,9 +18,11 @@ import {
 import {
   assetTypesForStatement,
   classifyStatementAssetType,
+  WHEEL_ALIGNMENT_MATERIAL_NAME,
   type PartAliasMap,
   type StatementAssetOption,
   type StatementAssetScope,
+  type StatementRowKind,
 } from "@/lib/spares-statement"
 
 export { sparesHistoryHref } from "@/lib/spares-history-href"
@@ -75,16 +78,18 @@ type MileageReading = {
 // this just resolves the joined/derived values).
 export type SparesHistoryRow = {
   id: number
+  kind?: StatementRowKind
   fitmentDate: string
   materialName: string
   identityNo: string
   partNumber: string
   subEquipment: string
-  quantity: number
+  quantity: number | null
   priceUsd: number | null
   amountUsd: number | null
   distance: number | null
   latestDate: string | null
+  notes?: string | null
 }
 
 function runningKmFromReadings(
@@ -194,6 +199,22 @@ export async function calculateRunningKm(
   )
 }
 
+async function loadStatementConsumableExclusionKeys() {
+  const rows = await db
+    .select({
+      partNumber: statementConsumableExclusionsTable.normalizedPartNumber,
+      materialName: statementConsumableExclusionsTable.normalizedMaterialName,
+    })
+    .from(statementConsumableExclusionsTable)
+
+  return {
+    partNumbers: [...new Set(rows.map((row) => row.partNumber).filter(Boolean))],
+    materialNames: [
+      ...new Set(rows.map((row) => row.materialName).filter(Boolean)),
+    ],
+  }
+}
+
 // Reads `mechanicalSparesTable` (joined to `assetsTable` via the `asset`
 // relation from `src/db/relations.ts`) filtered per the Spares History
 // filter bar, and enriches each row with the KM covered since fitment.
@@ -208,8 +229,14 @@ export async function calculateRunningKm(
 // ("AIR SYSTEM") while the filter bar offers title case ("Air System").
 // Several categories at once become `tier1 IN (...)`, which Drizzle
 // compiles with `inArray`.
+//
+// When `excludeStatementConsumables` is set (executive statement only),
+// rows whose part number or material name matches
+// `statement_consumable_exclusions` are dropped before mileage enrichment.
+// The main Spares History table does not pass this option.
 export async function getSparesHistory(
-  filters: SparesHistoryFilters
+  filters: SparesHistoryFilters,
+  options?: { excludeStatementConsumables?: boolean }
 ): Promise<SparesHistoryRow[]> {
   if (!hasActiveSparesFilters(filters)) return []
 
@@ -233,6 +260,10 @@ export async function getSparesHistory(
         : [excludeToDate, excludeFromDate]
       : []
 
+  const consumableExclusions = options?.excludeStatementConsumables
+    ? await loadStatementConsumableExclusionKeys()
+    : { partNumbers: [] as string[], materialNames: [] as string[] }
+
   const spares = await db.query.mechanicalSparesTable.findMany({
     where: {
       ...(filters.partNumber
@@ -253,10 +284,39 @@ export async function getSparesHistory(
             },
           }
         : {}),
-      ...(excludeStart && excludeEnd
+      ...((excludeStart && excludeEnd) ||
+      consumableExclusions.partNumbers.length > 0 ||
+      consumableExclusions.materialNames.length > 0
         ? {
-            RAW: (table) =>
-              not(between(table.fitmentDate, excludeStart, excludeEnd)),
+            RAW: (table) => {
+              const normalizedPartNumber = sql<string>`upper(trim(both from regexp_replace(${table.partNumber}, '\\s+', ' ', 'g')))`
+              const normalizedMaterialName = sql<string>`upper(trim(both from regexp_replace(${table.materialName}, '\\s+', ' ', 'g')))`
+              const clauses = [
+                excludeStart && excludeEnd
+                  ? not(between(table.fitmentDate, excludeStart, excludeEnd))
+                  : undefined,
+                consumableExclusions.partNumbers.length > 0
+                  ? not(
+                      inArray(
+                        normalizedPartNumber,
+                        consumableExclusions.partNumbers
+                      )
+                    )
+                  : undefined,
+                consumableExclusions.materialNames.length > 0
+                  ? not(
+                      inArray(
+                        normalizedMaterialName,
+                        consumableExclusions.materialNames
+                      )
+                    )
+                  : undefined,
+              ].filter((clause): clause is NonNullable<typeof clause> =>
+                Boolean(clause)
+              )
+
+              return and(...clauses) ?? sql`true`
+            },
           }
         : {}),
       ...(filters.fleetNo
@@ -317,6 +377,7 @@ export async function getSparesHistory(
 
     return {
       id: spare.id,
+      kind: "spare" as const,
       fitmentDate: spare.fitmentDate,
       materialName: spare.materialName,
       identityNo: spare.asset.assetName,
@@ -329,6 +390,75 @@ export async function getSparesHistory(
       latestDate: runningKm?.latestDate ?? null,
     }
   })
+}
+
+function statementAssetFilter(
+  filters: Pick<SparesHistoryFilters, "fleetNo" | "assetType">
+) {
+  if (filters.fleetNo) {
+    return {
+      asset: {
+        assetName: toCanonicalFleetNumber(filters.fleetNo),
+      },
+    }
+  }
+
+  if (!filters.assetType) return {}
+
+  return {
+    asset: {
+      assetType: {
+        in:
+          filters.assetType === "All"
+            ? [
+                ...assetTypesForStatement("Truck"),
+                ...assetTypesForStatement("Trailer"),
+              ]
+            : assetTypesForStatement(filters.assetType),
+      },
+    },
+  }
+}
+
+// Manual wheel-alignment events for the executive statement, shaped as
+// pseudo spare rows so they sort and export with physical replacements.
+export async function getStatementAlignmentEvents(
+  filters: Pick<
+    SparesHistoryFilters,
+    "fleetNo" | "assetType" | "startDate" | "endDate"
+  >
+): Promise<SparesHistoryRow[]> {
+  const events = await db.query.manualAlignmentEventsTable.findMany({
+    where: {
+      ...(filters.startDate || filters.endDate
+        ? {
+            date: {
+              ...(filters.startDate ? { gte: filters.startDate } : {}),
+              ...(filters.endDate ? { lte: filters.endDate } : {}),
+            },
+          }
+        : {}),
+      ...statementAssetFilter(filters),
+    },
+    with: { asset: true },
+    orderBy: { date: "asc" },
+  })
+
+  return events.map((event) => ({
+    id: event.id,
+    kind: "alignment" as const,
+    fitmentDate: event.date,
+    materialName: WHEEL_ALIGNMENT_MATERIAL_NAME,
+    identityNo: event.asset.assetName,
+    partNumber: "",
+    subEquipment: "",
+    quantity: null,
+    priceUsd: null,
+    amountUsd: null,
+    distance: null,
+    latestDate: null,
+    notes: event.notes,
+  }))
 }
 
 // Fleet units offered in the executive statement's Asset ID dropdown,

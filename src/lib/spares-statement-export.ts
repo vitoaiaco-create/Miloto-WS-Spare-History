@@ -3,12 +3,16 @@ import * as XLSX from "xlsx"
 import {
   displayMaterialName,
   formatStatementDate,
+  formatStatementLineAmount,
+  formatStatementLineQty,
   formatStatementQty,
   formatStatementUsd,
   groupSparesByAsset,
+  isAlignmentStatementRow,
   statementScopeLabel,
   statementTotals,
   type PartAliasMap,
+  type StatementAssetOption,
   type StatementAssetScope,
   type StatementSpareRow,
 } from "@/lib/spares-statement"
@@ -21,6 +25,7 @@ export type StatementExportMeta = {
   componentLabel: string
   excludedLabel?: string
   aliases: PartAliasMap
+  assets: StatementAssetOption[]
 }
 
 const COMPANY_NAME = "Zambezi Portland Cement"
@@ -190,9 +195,12 @@ export async function exportStatementPdf(
 
   const groups = groupSparesByAsset(rows)
   const totals = statementTotals(rows)
+  const assetTypeByName = new Map(
+    meta.assets.map((asset) => [asset.assetName, asset.assetType])
+  )
   const pageHeight = doc.internal.pageSize.getHeight()
   const footerReserve = 14
-  const minSectionHeight = 52
+  const minSectionHeight = 48
 
   function drawPageChrome() {
     const page = doc.getNumberOfPages()
@@ -243,10 +251,14 @@ export async function exportStatementPdf(
         >
     > = group.rows.map((row) => [
       formatStatementDate(row.fitmentDate),
-      displayMaterialName(row.materialName, meta.aliases),
-      row.partNumber,
-      formatStatementQty(row.quantity),
-      formatStatementUsd(row.amountUsd),
+      isAlignmentStatementRow(row)
+        ? row.notes
+          ? `${row.materialName} — ${row.notes}`
+          : row.materialName
+        : displayMaterialName(row.materialName, meta.aliases),
+      isAlignmentStatementRow(row) ? "-" : row.partNumber,
+      formatStatementLineQty(row),
+      formatStatementLineAmount(row),
     ])
 
     body.push([
@@ -270,14 +282,16 @@ export async function exportStatementPdf(
       head: [
         [
           {
-            content: group.name.toUpperCase(),
+            content: `${assetTypeByName.get(group.name) ?? "Asset"}  ${group.name}`,
             colSpan: 5,
             styles: {
               fillColor: [24, 32, 48],
               textColor: 255,
               fontStyle: "bold",
-              fontSize: 10,
+              fontSize: 8,
               halign: "left",
+              valign: "middle",
+              cellPadding: { top: 1, bottom: 1, left: 2, right: 2 },
             },
           },
         ],
@@ -361,10 +375,14 @@ export async function exportStatementExcel(
       aoa.push([
         group.name,
         formatStatementDate(row.fitmentDate),
-        displayMaterialName(row.materialName, meta.aliases),
-        row.partNumber,
-        row.quantity,
-        row.amountUsd ?? "",
+        isAlignmentStatementRow(row)
+          ? row.notes
+            ? `${row.materialName} — ${row.notes}`
+            : row.materialName
+          : displayMaterialName(row.materialName, meta.aliases),
+        isAlignmentStatementRow(row) ? "-" : row.partNumber,
+        isAlignmentStatementRow(row) ? "-" : (row.quantity ?? ""),
+        isAlignmentStatementRow(row) ? "-" : (row.amountUsd ?? ""),
       ])
     }
     aoa.push([

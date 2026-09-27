@@ -7,14 +7,18 @@ import {
   FileTextIcon,
   Loader2Icon,
   RotateCcw,
-  Undo2,
 } from "lucide-react"
 
-import { savePartDescriptionAlias } from "@/actions/spares-statement"
+import {
+  excludeConsumableFromStatement,
+  savePartDescriptionAlias,
+} from "@/actions/spares-statement"
+import { AddAlignmentEventDialog } from "@/components/add-alignment-event-dialog"
 import { SparesStatementTable } from "@/components/spares-table"
 import { Button } from "@/components/ui/button"
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -65,6 +69,7 @@ import {
   type PartAliasMap,
   type StatementAssetOption,
   type StatementAssetScope,
+  type StatementConsumableExclusion,
 } from "@/lib/spares-statement"
 
 export function SparesStatementView({
@@ -89,7 +94,9 @@ export function SparesStatementView({
   today: string
 }) {
   const router = useRouter()
-  const [hiddenIds, setHiddenIds] = useState<number[]>([])
+  const [excludedConsumables, setExcludedConsumables] = useState<
+    StatementConsumableExclusion[]
+  >([])
   const [excludedAssets, setExcludedAssets] = useState<string[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [aliases, setAliases] = useState<PartAliasMap>(initialAliases)
@@ -132,9 +139,9 @@ export function SparesStatementView({
       applyStatementPreviewFilters(spares, {
         categories,
         excludedAssets,
-        hiddenIds,
+        excludedConsumables,
       }),
-    [categories, excludedAssets, hiddenIds, spares]
+    [categories, excludedAssets, excludedConsumables, spares]
   )
 
   const identityNos = uniqueIdentityNos(visibleSpares)
@@ -181,16 +188,42 @@ export function SparesStatementView({
     )
   }
 
-  function removeLine(id: number) {
-    setHiddenIds((current) => (current.includes(id) ? current : [...current, id]))
-  }
+  async function removeLine(item: StatementConsumableExclusion) {
+    const alreadyPending = excludedConsumables.some(
+      (current) =>
+        current.partNumber === item.partNumber &&
+        current.materialName === item.materialName
+    )
 
-  function undoLast() {
-    setHiddenIds((current) => current.slice(0, -1))
-  }
+    if (!alreadyPending) {
+      setExcludedConsumables((current) => [...current, item])
+    }
 
-  function restoreAll() {
-    setHiddenIds([])
+    try {
+      await excludeConsumableFromStatement(item)
+      toast.add({
+        title: "Excluded from future statements",
+        description: `${item.materialName} will stay off the executive statement.`,
+        type: "success",
+      })
+      router.refresh()
+    } catch (error) {
+      setExcludedConsumables((current) =>
+        current.filter(
+          (entry) =>
+            entry.partNumber !== item.partNumber ||
+            entry.materialName !== item.materialName
+        )
+      )
+      toast.add({
+        title: "Could not exclude consumable",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while saving the exclusion.",
+        type: "error",
+      })
+    }
   }
 
   function excludeAsset(assetName: string) {
@@ -246,6 +279,7 @@ export function SparesStatementView({
           ? sortedExcludedAssets.join(", ")
           : undefined,
       aliases,
+      assets,
     }
 
     try {
@@ -276,10 +310,17 @@ export function SparesStatementView({
         <CardHeader>
           <CardTitle>Executive statement</CardTitle>
           <CardDescription>
-            Grouped by asset, then date. Component filters, excluded assets,
-            and removed lines apply to this preview and the export only —
-            history is unchanged.
+            Grouped by asset, then date. Removing a line permanently excludes
+            that part number or material name from future statements. History
+            is unchanged.
           </CardDescription>
+          <CardAction>
+            <AddAlignmentEventDialog
+              assets={assets}
+              defaultAssetName={fleetNo}
+              defaultDate={today}
+            />
+          </CardAction>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
@@ -517,25 +558,6 @@ export function SparesStatementView({
         </div>
       ) : null}
 
-      {hiddenIds.length > 0 ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card px-4 py-3 text-sm">
-          <p>
-            {hiddenIds.length} line{hiddenIds.length === 1 ? "" : "s"} hidden
-            from this statement.
-          </p>
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={undoLast}>
-              <Undo2 data-icon="inline-start" />
-              Undo last
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={restoreAll}>
-              <RotateCcw data-icon="inline-start" />
-              Restore all
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
       <div className="overflow-hidden rounded-xl bg-white text-zinc-950 ring-1 ring-foreground/10 dark:bg-zinc-950 dark:text-zinc-50">
         <div className="border-b px-6 py-5">
           <p className="text-xs font-semibold tracking-[0.18em] text-zinc-500 uppercase">
@@ -576,7 +598,7 @@ export function SparesStatementView({
           onSaveAlias={handleSaveAlias}
           emptyMessage={
             excludedAssets.length > 0 ||
-            hiddenIds.length > 0 ||
+            excludedConsumables.length > 0 ||
             categories.length > 0
               ? "No spare issues match the current statement filters."
               : "No spare issues in this statement period."
