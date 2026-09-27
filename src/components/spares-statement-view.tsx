@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
   FileSpreadsheetIcon,
@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 
 import {
+  deleteManualEvent,
   excludeConsumableFromStatement,
   savePartDescriptionAlias,
 } from "@/actions/spares-statement"
@@ -57,6 +58,7 @@ import type { SparesHistoryRow } from "@/lib/spares-history"
 import {
   applyStatementPreviewFilters,
   formatStatementDate,
+  isManualStatementRow,
   parseStatementAssetScope,
   statementAssetLabel,
   statementComponentLabel,
@@ -103,6 +105,10 @@ export function SparesStatementView({
   const [isExporting, setIsExporting] = useState<"pdf" | "excel" | null>(null)
   const [pdfReady, setPdfReady] = useState(false)
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(assetIds)
+  const [deletedManualEventIds, setDeletedManualEventIds] = useState<number[]>(
+    []
+  )
+  const deletingManualEventIds = useRef(new Set<number>())
   const [showExcluded, setShowExcluded] = useState(true)
   const assetAnchor = useComboboxAnchor()
   const componentAnchor = useComboboxAnchor()
@@ -157,8 +163,19 @@ export function SparesStatementView({
         categories,
         excludedAssets,
         excludedConsumables,
-      }),
-    [categories, excludedAssets, excludedConsumables, scopedAssetIds, spares]
+      }).filter(
+        (row) =>
+          !isManualStatementRow(row) ||
+          !deletedManualEventIds.includes(row.id)
+      ),
+    [
+      categories,
+      deletedManualEventIds,
+      excludedAssets,
+      excludedConsumables,
+      scopedAssetIds,
+      spares,
+    ]
   )
 
   const identityNos = uniqueIdentityNos(visibleSpares)
@@ -198,6 +215,37 @@ export function SparesStatementView({
       }),
       { scroll: false }
     )
+  }
+
+  async function handleDeleteManualEvent(eventId: number) {
+    if (deletingManualEventIds.current.has(eventId)) return
+    deletingManualEventIds.current.add(eventId)
+    setDeletedManualEventIds((current) =>
+      current.includes(eventId) ? current : [...current, eventId]
+    )
+
+    try {
+      await deleteManualEvent(eventId)
+      toast.add({
+        title: "Event deleted",
+        description: "The manual event has been permanently removed.",
+        type: "success",
+      })
+      router.refresh()
+    } catch (error) {
+      deletingManualEventIds.current.delete(eventId)
+      setDeletedManualEventIds((current) =>
+        current.filter((id) => id !== eventId)
+      )
+      toast.add({
+        title: "Could not delete event",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while deleting the event.",
+        type: "error",
+      })
+    }
   }
 
   async function removeLine(item: StatementConsumableExclusion) {
@@ -597,6 +645,7 @@ export function SparesStatementView({
           assets={assets}
           aliases={aliases}
           onRemove={removeLine}
+          onDeleteManualEvent={handleDeleteManualEvent}
           onExcludeAsset={excludeAsset}
           onSaveAlias={handleSaveAlias}
           emptyMessage={

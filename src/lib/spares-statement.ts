@@ -9,6 +9,7 @@ import {
 export const MANUAL_STATEMENT_EVENT_TYPES = [
   "WHEEL_ALIGNMENT",
   "CHECKS_OK",
+  "CHECKS_PENDING",
 ] as const
 export type ManualStatementEventType =
   (typeof MANUAL_STATEMENT_EVENT_TYPES)[number]
@@ -16,6 +17,7 @@ export type ManualStatementEventType =
 export const MANUAL_EVENT_LABELS: Record<ManualStatementEventType, string> = {
   WHEEL_ALIGNMENT: "Wheel Alignment",
   CHECKS_OK: "Checks Performed - OK",
+  CHECKS_PENDING: "Checks Pending",
 }
 
 export const MANUAL_EVENT_MATERIAL_NAMES: Record<
@@ -24,11 +26,14 @@ export const MANUAL_EVENT_MATERIAL_NAMES: Record<
 > = {
   WHEEL_ALIGNMENT: "WHEEL ALIGNMENT",
   CHECKS_OK: "CHECKS PERFORMED - OK",
+  CHECKS_PENDING: "CHECKS PENDING",
 }
 
 export const WHEEL_ALIGNMENT_MATERIAL_NAME =
   MANUAL_EVENT_MATERIAL_NAMES.WHEEL_ALIGNMENT
 export const CHECKS_OK_MATERIAL_NAME = MANUAL_EVENT_MATERIAL_NAMES.CHECKS_OK
+export const CHECKS_PENDING_MATERIAL_NAME =
+  MANUAL_EVENT_MATERIAL_NAMES.CHECKS_PENDING
 export const STATEMENT_BLANK_VALUE = "-"
 
 export type StatementRowKind = "spare" | "manual" | "alignment" | "check"

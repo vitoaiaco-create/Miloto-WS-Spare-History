@@ -1,0 +1,1 @@
+ALTER TYPE "manual_statement_event_type" ADD VALUE 'CHECKS_PENDING';

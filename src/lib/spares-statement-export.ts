@@ -215,6 +215,18 @@ export async function exportStatementPdf(
   const assetTypeByName = new Map(
     meta.assets.map((asset) => [asset.assetName, asset.assetType])
   )
+  const assetHeaderStyles = {
+    fillColor: [24, 32, 48],
+    textColor: 255,
+    fontStyle: "bold" as const,
+    fontSize: 7,
+    halign: "left" as const,
+    valign: "middle" as const,
+    overflow: "ellipsize" as const,
+    minCellHeight: 0,
+    lineWidth: 0,
+    cellPadding: { top: 0.2, bottom: 0.2, left: 2, right: 2 },
+  }
   const pageHeight = doc.internal.pageSize.getHeight()
   const footerReserve = 14
   const minSectionHeight = 48
@@ -301,15 +313,7 @@ export async function exportStatementPdf(
           {
             content: `${assetTypeByName.get(group.name) ?? "Asset"}  ${group.name}`,
             colSpan: 5,
-            styles: {
-              fillColor: [24, 32, 48],
-              textColor: 255,
-              fontStyle: "bold",
-              fontSize: 8,
-              halign: "left",
-              valign: "middle",
-              cellPadding: { top: 1, bottom: 1, left: 2, right: 2 },
-            },
+            styles: assetHeaderStyles,
           },
         ],
         ["Date", "Material Name", "Part Number", "Qty", "Amount"],
@@ -323,6 +327,13 @@ export async function exportStatementPdf(
         2: { cellWidth: 36 },
         3: { cellWidth: 16, halign: "right" },
         4: { cellWidth: 24, halign: "right" },
+      },
+      didParseCell: (data) => {
+        // Force every cell in the asset grouping row — including leftover
+        // colSpan placeholders — so headStyles cannot inflate the bar.
+        if (data.section === "head" && data.row.index === 0) {
+          Object.assign(data.cell.styles, assetHeaderStyles)
+        }
       },
       didDrawPage: () => {
         drawPageChrome()

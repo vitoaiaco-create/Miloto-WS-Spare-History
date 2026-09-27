@@ -426,9 +426,10 @@ function isManualStatementEventType(
   return value in MANUAL_EVENT_MATERIAL_NAMES
 }
 
-// Manual statement events (alignments, routine checks) shaped as pseudo
-// spare rows so they sort and export with physical replacements. Assets
-// that have only these events and no physical spares still get a section.
+// Manual statement events (alignments, routine checks, checks pending)
+// shaped as pseudo spare rows so they sort and export with physical
+// replacements. Assets that have only these events and no physical
+// spares still get a section.
 export async function getStatementManualEvents(
   filters: Pick<
     SparesHistoryFilters,

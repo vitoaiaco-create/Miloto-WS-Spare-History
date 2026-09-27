@@ -117,8 +117,9 @@ export default async function SparesHistoryPage({
       statementEnabled ? getPartDescriptionAliases() : Promise.resolve({}),
     ])
 
-  // Manual events (alignment / checks) merge in even when the asset has
-  // no physical spare rows, so those units still get a statement section.
+  // Manual events (alignment / checks / checks pending) merge in even
+  // when the asset has no physical spare rows, so those units still get
+  // a statement section.
   const statementSpares = statementEnabled
     ? [...spares, ...manualEvents]
     : spares

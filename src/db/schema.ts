@@ -107,12 +107,13 @@ export const partDescriptionAliasesTable = pgTable(
 );
 
 // Manual interventions injected into the executive statement (wheel
-// alignments, routine checks). Shared across all staff. Not a stock
-// movement — these sit alongside physical spare replacements, sorted by
-// date. Existing rows default to wheel alignment.
+// alignments, routine checks, checks pending). Shared across all staff.
+// Not a stock movement — these sit alongside physical spare replacements,
+// sorted by date. Existing rows default to wheel alignment.
 export const MANUAL_STATEMENT_EVENT_TYPES = [
   "WHEEL_ALIGNMENT",
   "CHECKS_OK",
+  "CHECKS_PENDING",
 ] as const;
 
 export const manualStatementEventTypeEnum = pgEnum(

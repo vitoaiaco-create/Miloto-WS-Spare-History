@@ -217,3 +217,28 @@ export async function createManualAlignmentEvent(
   })
 }
 
+const deleteManualEventSchema = z.number().int().positive()
+
+export type DeleteManualEventResult = {
+  eventId: number
+}
+
+export async function deleteManualEvent(
+  eventId: number
+): Promise<DeleteManualEventResult> {
+  await requireSparesHistoryAccess()
+  const id = deleteManualEventSchema.parse(eventId)
+
+  const deleted = await db
+    .delete(manualAlignmentEventsTable)
+    .where(eq(manualAlignmentEventsTable.id, id))
+    .returning({ id: manualAlignmentEventsTable.id })
+
+  if (deleted.length === 0) {
+    throw new Error("Event not found")
+  }
+
+  revalidatePath("/spares-history")
+  return { eventId: id }
+}
+

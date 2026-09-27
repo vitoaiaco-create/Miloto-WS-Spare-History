@@ -187,6 +187,7 @@ export function SparesStatementTable({
   assets,
   aliases,
   onRemove,
+  onDeleteManualEvent,
   onExcludeAsset,
   onSaveAlias,
   emptyMessage = "No spare issues in this statement period.",
@@ -195,6 +196,7 @@ export function SparesStatementTable({
   assets: StatementAssetOption[]
   aliases: PartAliasMap
   onRemove: (spare: { partNumber: string; materialName: string }) => void
+  onDeleteManualEvent: (eventId: number) => void
   onExcludeAsset: (assetName: string) => void
   onSaveAlias: (sourceName: string, alias: string) => Promise<void>
   emptyMessage?: string
@@ -292,7 +294,26 @@ export function SparesStatementTable({
                     {formatStatementLineAmount(spare)}
                   </TableCell>
                   <TableCell className="print:hidden">
-                    {isManualStatementRow(spare) ? null : (
+                    {isManualStatementRow(spare) ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={`Permanently delete ${spare.materialName}`}
+                              onClick={() => onDeleteManualEvent(spare.id)}
+                            />
+                          }
+                        >
+                          <Trash2 />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Permanently delete this event
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
                       <Tooltip>
                         <TooltipTrigger
                           render={
