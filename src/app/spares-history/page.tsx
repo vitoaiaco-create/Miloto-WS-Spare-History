@@ -20,6 +20,7 @@ import {
 } from "@/lib/spares-history"
 import {
   isStatementMode,
+  parseStatementAssetIds,
   parseStatementAssetScope,
   parseStatementPeriod,
   statementDateRange,
@@ -73,6 +74,9 @@ export default async function SparesHistoryPage({
   const statementAssetType = parseStatementAssetScope(
     toFilterString(resolvedSearchParams.assetType)
   )
+  const statementAssetIds = parseStatementAssetIds(
+    resolvedSearchParams.fleetNo
+  )
   const statementRange = statementDateRange(statementPeriod, new Date())
 
   const excludeFrom = toIsoDateParam(
@@ -83,7 +87,9 @@ export default async function SparesHistoryPage({
 
   const filters: SparesHistoryFilters = statementEnabled
     ? {
-        fleetNo: toFilterString(resolvedSearchParams.fleetNo),
+        // Fetch the whole Truck / Trailer / All group. The Asset ID
+        // multi-select filters that set in the statement view so operators
+        // can add and remove units without another round trip.
         assetType: statementAssetType,
         startDate: statementRange.startDate,
         endDate: statementRange.endDate,
@@ -164,13 +170,13 @@ export default async function SparesHistoryPage({
 
         {statementEnabled ? (
           <SparesStatementView
-            key={`${statementPeriod}-${statementAssetType}-${filters.fleetNo ?? ""}`}
+            key={`${statementPeriod}-${statementAssetType}`}
             spares={statementSpares}
             period={statementPeriod}
             startDate={statementRange.startDate}
             endDate={statementRange.endDate}
             assetType={statementAssetType}
-            fleetNo={filters.fleetNo ?? ""}
+            assetIds={statementAssetIds}
             assets={statementAssets}
             aliases={partAliases}
             today={today}

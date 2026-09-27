@@ -31,7 +31,9 @@ import {
   ComboboxChipsInput,
   ComboboxContent,
   ComboboxEmpty,
+  ComboboxGroup,
   ComboboxItem,
+  ComboboxLabel,
   ComboboxList,
   ComboboxValue,
   useComboboxAnchor,
@@ -40,9 +42,7 @@ import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -78,7 +78,7 @@ export function SparesStatementView({
   startDate,
   endDate,
   assetType,
-  fleetNo,
+  assetIds,
   assets,
   aliases: initialAliases,
   today,
@@ -88,7 +88,7 @@ export function SparesStatementView({
   startDate: string
   endDate: string
   assetType: StatementAssetScope
-  fleetNo: string
+  assetIds: string[]
   assets: StatementAssetOption[]
   aliases: PartAliasMap
   today: string
@@ -102,7 +102,9 @@ export function SparesStatementView({
   const [aliases, setAliases] = useState<PartAliasMap>(initialAliases)
   const [isExporting, setIsExporting] = useState<"pdf" | "excel" | null>(null)
   const [pdfReady, setPdfReady] = useState(false)
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(assetIds)
   const [showExcluded, setShowExcluded] = useState(true)
+  const assetAnchor = useComboboxAnchor()
   const componentAnchor = useComboboxAnchor()
 
   const todayDate = useMemo(() => {
@@ -134,20 +136,32 @@ export function SparesStatementView({
     () => statementComponentOptions(spares),
     [spares]
   )
+  const scopedAssetIds = useMemo(
+    () =>
+      selectedAssetIds.filter((id) =>
+        assetsForScope.some((asset) => asset.assetName === id)
+      ),
+    [assetsForScope, selectedAssetIds]
+  )
+  const assetItems = useMemo(
+    () => assetsForScope.map((asset) => asset.assetName),
+    [assetsForScope]
+  )
   const visibleSpares = useMemo(
     () =>
       applyStatementPreviewFilters(spares, {
+        assetIds: scopedAssetIds,
         categories,
         excludedAssets,
         excludedConsumables,
       }),
-    [categories, excludedAssets, excludedConsumables, spares]
+    [categories, excludedAssets, excludedConsumables, scopedAssetIds, spares]
   )
 
   const identityNos = uniqueIdentityNos(visibleSpares)
   const assetLabel = statementAssetLabel({
     assetType,
-    fleetNo,
+    assetIds: scopedAssetIds,
     identityNos,
   })
   const periodLabel = statementPeriodLabel(period, todayDate)
@@ -168,21 +182,16 @@ export function SparesStatementView({
   function goTo(next: {
     period?: string
     assetType?: StatementAssetScope
-    fleetNo?: string
   }) {
     const nextType = next.assetType ?? assetType
-    const nextFleet =
-      "fleetNo" in next
-        ? (next.fleetNo ?? "")
-        : next.assetType && next.assetType !== assetType
-          ? ""
-          : fleetNo
+    const keepAssetIds =
+      next.assetType && next.assetType !== assetType ? [] : scopedAssetIds
 
     router.replace(
       sparesStatementHref({
         period: next.period ?? period,
         assetType: nextType,
-        fleetNo: nextFleet,
+        assetIds: keepAssetIds,
       }),
       { scroll: false }
     )
@@ -270,6 +279,7 @@ export function SparesStatementView({
 
     const meta = {
       assetType,
+      assetIds: scopedAssetIds,
       assetLabel,
       periodLabel,
       dateRangeLabel,
@@ -317,7 +327,7 @@ export function SparesStatementView({
           <CardAction>
             <AddAlignmentEventDialog
               assets={assets}
-              defaultAssetName={fleetNo}
+              defaultAssetName={scopedAssetIds[0] ?? ""}
               defaultDate={today}
             />
           </CardAction>
@@ -364,60 +374,81 @@ export function SparesStatementView({
 
             <div className="flex min-w-0 flex-1 flex-col gap-1.5">
               <Label htmlFor="statement-asset">Asset ID</Label>
-              <Select
-                value={fleetNo || "all"}
-                onValueChange={(value) => {
-                  if (!value) return
-                  goTo({ fleetNo: value === "all" ? "" : value })
-                }}
+              <Combobox
+                multiple
+                autoHighlight
+                items={assetItems}
+                value={scopedAssetIds}
+                onValueChange={(value) =>
+                  setSelectedAssetIds(Array.isArray(value) ? value : [])
+                }
               >
-                <SelectTrigger id="statement-asset" className="w-full">
-                  <SelectValue placeholder="Select asset" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">
-                    {assetType === "All"
-                      ? "All assets"
-                      : `All ${assetType.toLowerCase()}s`}
-                  </SelectItem>
+                <ComboboxChips ref={assetAnchor} className="w-full">
+                  <ComboboxValue>
+                    {(selected: string[]) => {
+                      const values = Array.isArray(selected) ? selected : []
+                      return (
+                        <>
+                          {values.map((id) => (
+                            <ComboboxChip key={id}>{id}</ComboboxChip>
+                          ))}
+                          <ComboboxChipsInput
+                            id="statement-asset"
+                            placeholder={
+                              values.length === 0
+                                ? assetType === "All"
+                                  ? "All assets"
+                                  : `All ${assetType.toLowerCase()}s`
+                                : "Add an asset"
+                            }
+                          />
+                        </>
+                      )
+                    }}
+                  </ComboboxValue>
+                </ComboboxChips>
+                <ComboboxContent anchor={assetAnchor}>
+                  <ComboboxEmpty>No asset found.</ComboboxEmpty>
                   {assetType === "All" ? (
-                    <>
+                    <ComboboxList>
                       {truckAssets.length > 0 ? (
-                        <SelectGroup>
-                          <SelectLabel>Trucks</SelectLabel>
+                        <ComboboxGroup>
+                          <ComboboxLabel>Trucks</ComboboxLabel>
                           {truckAssets.map((asset) => (
-                            <SelectItem
+                            <ComboboxItem
                               key={asset.assetName}
                               value={asset.assetName}
                             >
                               {asset.assetName}
-                            </SelectItem>
+                            </ComboboxItem>
                           ))}
-                        </SelectGroup>
+                        </ComboboxGroup>
                       ) : null}
                       {trailerAssets.length > 0 ? (
-                        <SelectGroup>
-                          <SelectLabel>Trailers</SelectLabel>
+                        <ComboboxGroup>
+                          <ComboboxLabel>Trailers</ComboboxLabel>
                           {trailerAssets.map((asset) => (
-                            <SelectItem
+                            <ComboboxItem
                               key={asset.assetName}
                               value={asset.assetName}
                             >
                               {asset.assetName}
-                            </SelectItem>
+                            </ComboboxItem>
                           ))}
-                        </SelectGroup>
+                        </ComboboxGroup>
                       ) : null}
-                    </>
+                    </ComboboxList>
                   ) : (
-                    assetsForScope.map((asset) => (
-                      <SelectItem key={asset.assetName} value={asset.assetName}>
-                        {asset.assetName}
-                      </SelectItem>
-                    ))
+                    <ComboboxList>
+                      {(item) => (
+                        <ComboboxItem key={item} value={item}>
+                          {item}
+                        </ComboboxItem>
+                      )}
+                    </ComboboxList>
                   )}
-                </SelectContent>
-              </Select>
+                </ComboboxContent>
+              </Combobox>
             </div>
           </div>
 
@@ -599,7 +630,8 @@ export function SparesStatementView({
           emptyMessage={
             excludedAssets.length > 0 ||
             excludedConsumables.length > 0 ||
-            categories.length > 0
+            categories.length > 0 ||
+            scopedAssetIds.length > 0
               ? "No spare issues match the current statement filters."
               : "No spare issues in this statement period."
           }

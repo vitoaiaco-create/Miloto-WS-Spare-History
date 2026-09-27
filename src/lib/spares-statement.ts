@@ -1,7 +1,10 @@
 import { format } from "date-fns"
 
 import { formatIsoDate } from "@/lib/iso-date"
-import { normalizeSubEquipment } from "@/lib/spreadsheet"
+import {
+  normalizeSubEquipment,
+  toCanonicalFleetNumber,
+} from "@/lib/spreadsheet"
 
 export const WHEEL_ALIGNMENT_MATERIAL_NAME = "WHEEL ALIGNMENT"
 export const STATEMENT_BLANK_VALUE = "-"
@@ -69,6 +72,7 @@ export type StatementConsumableExclusion = {
 }
 
 export type StatementPreviewFilters = {
+  assetIds: string[]
   categories: string[]
   excludedAssets: string[]
   excludedConsumables: StatementConsumableExclusion[]
@@ -90,6 +94,25 @@ export function parseStatementAssetScope(
   if (value === "Trailer") return "Trailer"
   if (value === "Truck") return "Truck"
   return "All"
+}
+
+export function parseStatementAssetIds(
+  value: string | string[] | undefined
+): string[] {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : []
+
+  return [
+    ...new Set(
+      raw
+        .flatMap((item) => item.split(","))
+        .map((item) => toCanonicalFleetNumber(item))
+        .filter(Boolean)
+    ),
+  ]
 }
 
 export function isStatementMode(value: string | undefined) {
@@ -221,14 +244,22 @@ export function statementScopeLabel(scope: StatementAssetScope) {
 
 export function statementAssetLabel({
   assetType,
-  fleetNo,
+  assetIds = [],
   identityNos,
 }: {
   assetType: StatementAssetScope
-  fleetNo?: string
+  assetIds?: string[]
   identityNos: string[]
 }) {
-  if (fleetNo) return fleetNo
+  if (assetIds.length === 1) return assetIds[0]
+  if (assetIds.length > 1 && assetIds.length <= 3) {
+    return [...assetIds]
+      .sort((left, right) =>
+        left.localeCompare(right, undefined, { numeric: true })
+      )
+      .join(", ")
+  }
+  if (assetIds.length > 3) return `${assetIds.length} assets`
   if (identityNos.length === 1) return identityNos[0]
   const scope = statementScopeLabel(assetType)
   if (identityNos.length === 0) return scope
@@ -289,15 +320,23 @@ export function rowMatchesConsumableExclusion(
 
 export function applyStatementPreviewFilters<T extends StatementSpareRow>(
   rows: T[],
-  { categories, excludedAssets, excludedConsumables }: StatementPreviewFilters
+  {
+    assetIds,
+    categories,
+    excludedAssets,
+    excludedConsumables,
+  }: StatementPreviewFilters
 ) {
+  const selectedAssets = new Set(assetIds)
   const selected = new Set(
     categories.map((category) => normalizeSubEquipment(category)).filter(Boolean)
   )
   const excluded = new Set(excludedAssets)
 
   return rows.filter((row) => {
-    if (excluded.has(statementAssetKey(row.identityNo))) return false
+    const assetKey = statementAssetKey(row.identityNo)
+    if (excluded.has(assetKey)) return false
+    if (selectedAssets.size > 0 && !selectedAssets.has(assetKey)) return false
     if (isAlignmentStatementRow(row)) return true
     if (rowMatchesConsumableExclusion(row, excludedConsumables)) return false
     if (selected.size === 0) return true
@@ -363,16 +402,19 @@ export function statementTotals(rows: StatementSpareRow[]) {
 export function sparesStatementHref({
   period = "mtd",
   assetType = "All",
+  assetIds = [],
   fleetNo = "",
 }: {
   period?: string
   assetType?: StatementAssetScope
+  assetIds?: string[]
   fleetNo?: string
 } = {}) {
   const params = new URLSearchParams()
   params.set("statement", "1")
   params.set("period", period)
   params.set("assetType", assetType)
-  if (fleetNo) params.set("fleetNo", fleetNo)
+  const ids = parseStatementAssetIds([...assetIds, fleetNo])
+  for (const id of ids) params.append("fleetNo", id)
   return `/spares-history?${params.toString()}`
 }

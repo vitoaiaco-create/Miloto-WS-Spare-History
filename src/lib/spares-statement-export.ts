@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx"
 
 import {
+  applyStatementPreviewFilters,
   displayMaterialName,
   formatStatementDate,
   formatStatementLineAmount,
@@ -19,6 +20,7 @@ import {
 
 export type StatementExportMeta = {
   assetType: StatementAssetScope
+  assetIds: string[]
   assetLabel: string
   periodLabel: string
   dateRangeLabel: string
@@ -26,6 +28,19 @@ export type StatementExportMeta = {
   excludedLabel?: string
   aliases: PartAliasMap
   assets: StatementAssetOption[]
+}
+
+function rowsForExport(
+  rows: StatementSpareRow[],
+  assetIds: string[]
+) {
+  if (assetIds.length === 0) return rows
+  return applyStatementPreviewFilters(rows, {
+    assetIds,
+    categories: [],
+    excludedAssets: [],
+    excludedConsumables: [],
+  })
 }
 
 const COMPANY_NAME = "Zambezi Portland Cement"
@@ -137,6 +152,8 @@ export async function exportStatementPdf(
   rows: StatementSpareRow[],
   meta: StatementExportMeta
 ) {
+  rows = rowsForExport(rows, meta.assetIds)
+
   const [{ jsPDF, autoTable }, logo] = await Promise.all([
     pdfLibs ?? preloadStatementPdfLibs(),
     loadLogoDataUrl(),
@@ -344,6 +361,7 @@ export async function exportStatementExcel(
   rows: StatementSpareRow[],
   meta: StatementExportMeta
 ) {
+  rows = rowsForExport(rows, meta.assetIds)
   const groups = groupSparesByAsset(rows)
   const totals = statementTotals(rows)
   const aoa: Array<Array<string | number>> = [

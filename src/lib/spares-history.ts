@@ -34,6 +34,9 @@ export { sparesHistoryHref } from "@/lib/spares-history-href"
 // empty list means no category filter.
 export type SparesHistoryFilters = {
   fleetNo?: string
+  // Executive statement Asset ID multi-select. Empty means every unit in
+  // the current Truck / Trailer / All group; values are fleet numbers.
+  assetIds?: string[]
   partNumber?: string
   materialName?: string
   subEquipment?: string[]
@@ -319,27 +322,7 @@ export async function getSparesHistory(
             },
           }
         : {}),
-      ...(filters.fleetNo
-        ? {
-            asset: {
-              assetName: toCanonicalFleetNumber(filters.fleetNo),
-            },
-          }
-        : filters.assetType
-          ? {
-              asset: {
-                assetType: {
-                  in:
-                    filters.assetType === "All"
-                      ? [
-                          ...assetTypesForStatement("Truck"),
-                          ...assetTypesForStatement("Trailer"),
-                        ]
-                      : assetTypesForStatement(filters.assetType),
-                },
-              },
-            }
-          : {}),
+      ...statementAssetFilter(filters),
     },
     with: { asset: true },
     orderBy: { fitmentDate: "desc" },
@@ -393,8 +376,24 @@ export async function getSparesHistory(
 }
 
 function statementAssetFilter(
-  filters: Pick<SparesHistoryFilters, "fleetNo" | "assetType">
+  filters: Pick<SparesHistoryFilters, "fleetNo" | "assetIds" | "assetType">
 ) {
+  const assetIds = [
+    ...new Set(
+      (filters.assetIds ?? [])
+        .map((id) => toCanonicalFleetNumber(id))
+        .filter(Boolean)
+    ),
+  ]
+
+  if (assetIds.length > 0) {
+    return {
+      asset: {
+        assetName: { in: assetIds },
+      },
+    }
+  }
+
   if (filters.fleetNo) {
     return {
       asset: {
@@ -425,7 +424,7 @@ function statementAssetFilter(
 export async function getStatementAlignmentEvents(
   filters: Pick<
     SparesHistoryFilters,
-    "fleetNo" | "assetType" | "startDate" | "endDate"
+    "fleetNo" | "assetIds" | "assetType" | "startDate" | "endDate"
   >
 ): Promise<SparesHistoryRow[]> {
   const events = await db.query.manualAlignmentEventsTable.findMany({
