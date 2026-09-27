@@ -106,15 +106,29 @@ export const partDescriptionAliasesTable = pgTable(
   }
 );
 
-// Manual wheel-alignment interventions injected into the executive
-// statement. Shared across all staff. Not a stock movement — these sit
-// alongside physical spare replacements, sorted by date.
+// Manual interventions injected into the executive statement (wheel
+// alignments, routine checks). Shared across all staff. Not a stock
+// movement — these sit alongside physical spare replacements, sorted by
+// date. Existing rows default to wheel alignment.
+export const MANUAL_STATEMENT_EVENT_TYPES = [
+  "WHEEL_ALIGNMENT",
+  "CHECKS_OK",
+] as const;
+
+export const manualStatementEventTypeEnum = pgEnum(
+  "manual_statement_event_type",
+  MANUAL_STATEMENT_EVENT_TYPES
+);
+
 export const manualAlignmentEventsTable = pgTable("manual_alignment_events", {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
   assetId: integer("asset_id")
     .notNull()
     .references(() => assetsTable.id, { onDelete: "cascade" }),
   date: date("date").notNull(),
+  eventType: manualStatementEventTypeEnum("event_type")
+    .notNull()
+    .default("WHEEL_ALIGNMENT"),
   notes: text("notes"),
 });
 

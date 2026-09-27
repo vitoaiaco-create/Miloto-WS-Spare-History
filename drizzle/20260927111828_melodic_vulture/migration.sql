@@ -1,0 +1,2 @@
+CREATE TYPE "manual_statement_event_type" AS ENUM('WHEEL_ALIGNMENT', 'CHECKS_OK');--> statement-breakpoint
+ALTER TABLE "manual_alignment_events" ADD COLUMN "event_type" "manual_statement_event_type" DEFAULT 'WHEEL_ALIGNMENT'::"manual_statement_event_type" NOT NULL;

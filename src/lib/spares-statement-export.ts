@@ -9,7 +9,7 @@ import {
   formatStatementQty,
   formatStatementUsd,
   groupSparesByAsset,
-  isAlignmentStatementRow,
+  isManualStatementRow,
   statementScopeLabel,
   statementTotals,
   type PartAliasMap,
@@ -268,12 +268,12 @@ export async function exportStatementPdf(
         >
     > = group.rows.map((row) => [
       formatStatementDate(row.fitmentDate),
-      isAlignmentStatementRow(row)
+      isManualStatementRow(row)
         ? row.notes
           ? `${row.materialName} — ${row.notes}`
           : row.materialName
         : displayMaterialName(row.materialName, meta.aliases),
-      isAlignmentStatementRow(row) ? "-" : row.partNumber,
+      isManualStatementRow(row) ? "-" : row.partNumber,
       formatStatementLineQty(row),
       formatStatementLineAmount(row),
     ])
@@ -393,14 +393,14 @@ export async function exportStatementExcel(
       aoa.push([
         group.name,
         formatStatementDate(row.fitmentDate),
-        isAlignmentStatementRow(row)
+        isManualStatementRow(row)
           ? row.notes
             ? `${row.materialName} — ${row.notes}`
             : row.materialName
           : displayMaterialName(row.materialName, meta.aliases),
-        isAlignmentStatementRow(row) ? "-" : row.partNumber,
-        isAlignmentStatementRow(row) ? "-" : (row.quantity ?? ""),
-        isAlignmentStatementRow(row) ? "-" : (row.amountUsd ?? ""),
+        isManualStatementRow(row) ? "-" : row.partNumber,
+        isManualStatementRow(row) ? "-" : (row.quantity ?? ""),
+        isManualStatementRow(row) ? "-" : (row.amountUsd ?? ""),
       ])
     }
     aoa.push([

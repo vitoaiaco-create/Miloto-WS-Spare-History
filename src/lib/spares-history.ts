@@ -18,7 +18,8 @@ import {
 import {
   assetTypesForStatement,
   classifyStatementAssetType,
-  WHEEL_ALIGNMENT_MATERIAL_NAME,
+  MANUAL_EVENT_MATERIAL_NAMES,
+  type ManualStatementEventType,
   type PartAliasMap,
   type StatementAssetOption,
   type StatementAssetScope,
@@ -419,9 +420,16 @@ function statementAssetFilter(
   }
 }
 
-// Manual wheel-alignment events for the executive statement, shaped as
-// pseudo spare rows so they sort and export with physical replacements.
-export async function getStatementAlignmentEvents(
+function isManualStatementEventType(
+  value: string
+): value is ManualStatementEventType {
+  return value in MANUAL_EVENT_MATERIAL_NAMES
+}
+
+// Manual statement events (alignments, routine checks) shaped as pseudo
+// spare rows so they sort and export with physical replacements. Assets
+// that have only these events and no physical spares still get a section.
+export async function getStatementManualEvents(
   filters: Pick<
     SparesHistoryFilters,
     "fleetNo" | "assetIds" | "assetType" | "startDate" | "endDate"
@@ -443,22 +451,30 @@ export async function getStatementAlignmentEvents(
     orderBy: { date: "desc" },
   })
 
-  return events.map((event) => ({
-    id: event.id,
-    kind: "alignment" as const,
-    fitmentDate: event.date,
-    materialName: WHEEL_ALIGNMENT_MATERIAL_NAME,
-    identityNo: event.asset.assetName,
-    partNumber: "",
-    subEquipment: "",
-    quantity: null,
-    priceUsd: null,
-    amountUsd: null,
-    distance: null,
-    latestDate: null,
-    notes: event.notes,
-  }))
+  return events.map((event) => {
+    const eventType = isManualStatementEventType(event.eventType)
+      ? event.eventType
+      : "WHEEL_ALIGNMENT"
+
+    return {
+      id: event.id,
+      kind: "manual" as const,
+      fitmentDate: event.date,
+      materialName: MANUAL_EVENT_MATERIAL_NAMES[eventType],
+      identityNo: event.asset.assetName,
+      partNumber: "",
+      subEquipment: "",
+      quantity: null,
+      priceUsd: null,
+      amountUsd: null,
+      distance: null,
+      latestDate: null,
+      notes: event.notes,
+    }
+  })
 }
+
+export const getStatementAlignmentEvents = getStatementManualEvents
 
 // Fleet units offered in the executive statement's Asset ID dropdown,
 // already classified as Truck or Trailer. Unclassified "Other" units stay

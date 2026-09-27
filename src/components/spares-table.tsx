@@ -37,7 +37,7 @@ import {
   formatStatementQty,
   formatStatementUsd,
   groupSparesByAsset,
-  isAlignmentStatementRow,
+  isManualStatementRow,
   statementRowKey,
   statementTotals,
   type PartAliasMap,
@@ -262,7 +262,7 @@ export function SparesStatementTable({
                 <TableRow key={statementRowKey(spare)}>
                   <TableCell>{formatStatementDate(spare.fitmentDate)}</TableCell>
                   <TableCell className="whitespace-normal">
-                    {isAlignmentStatementRow(spare) ? (
+                    {isManualStatementRow(spare) ? (
                       <div>
                         <span>{spare.materialName}</span>
                         {spare.notes ? (
@@ -283,7 +283,7 @@ export function SparesStatementTable({
                     )}
                   </TableCell>
                   <TableCell>
-                    {isAlignmentStatementRow(spare) ? "-" : spare.partNumber}
+                    {isManualStatementRow(spare) ? "-" : spare.partNumber}
                   </TableCell>
                   <TableCell className="text-right">
                     {formatStatementLineQty(spare)}
@@ -292,7 +292,7 @@ export function SparesStatementTable({
                     {formatStatementLineAmount(spare)}
                   </TableCell>
                   <TableCell className="print:hidden">
-                    {isAlignmentStatementRow(spare) ? null : (
+                    {isManualStatementRow(spare) ? null : (
                       <Tooltip>
                         <TooltipTrigger
                           render={

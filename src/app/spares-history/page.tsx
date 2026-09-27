@@ -13,8 +13,8 @@ import { formatIsoDate, toIsoDateParam } from "@/lib/iso-date"
 import {
   getPartDescriptionAliases,
   getSparesHistory,
-  getStatementAlignmentEvents,
   getStatementAssets,
+  getStatementManualEvents,
   hasActiveSparesFilters,
   type SparesHistoryFilters,
 } from "@/lib/spares-history"
@@ -105,20 +105,22 @@ export default async function SparesHistoryPage({
         excludeTo: hasExcludeRange ? excludeTo : "",
       }
 
-  const [spares, alignmentEvents, statementAssets, partAliases] =
+  const [spares, manualEvents, statementAssets, partAliases] =
     await Promise.all([
       getSparesHistory(filters, {
         excludeStatementConsumables: statementEnabled,
       }),
       statementEnabled
-        ? getStatementAlignmentEvents(filters)
+        ? getStatementManualEvents(filters)
         : Promise.resolve([]),
       statementEnabled ? getStatementAssets() : Promise.resolve([]),
       statementEnabled ? getPartDescriptionAliases() : Promise.resolve({}),
     ])
 
+  // Manual events (alignment / checks) merge in even when the asset has
+  // no physical spare rows, so those units still get a statement section.
   const statementSpares = statementEnabled
-    ? [...spares, ...alignmentEvents]
+    ? [...spares, ...manualEvents]
     : spares
 
   return (

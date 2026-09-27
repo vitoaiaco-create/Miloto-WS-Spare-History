@@ -13,12 +13,11 @@ import {
   excludeConsumableFromStatement,
   savePartDescriptionAlias,
 } from "@/actions/spares-statement"
-import { AddAlignmentEventDialog } from "@/components/add-alignment-event-dialog"
+import { AddManualEventDialog } from "@/components/add-manual-event-dialog"
 import { SparesStatementTable } from "@/components/spares-table"
 import { Button } from "@/components/ui/button"
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -315,7 +314,7 @@ export function SparesStatementView({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 pb-20">
       <Card>
         <CardHeader>
           <CardTitle>Executive statement</CardTitle>
@@ -324,13 +323,6 @@ export function SparesStatementView({
             that part number or material name from future statements. History
             is unchanged.
           </CardDescription>
-          <CardAction>
-            <AddAlignmentEventDialog
-              assets={assets}
-              defaultAssetName={scopedAssetIds[0] ?? ""}
-              defaultDate={today}
-            />
-          </CardAction>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
@@ -637,6 +629,12 @@ export function SparesStatementView({
           }
         />
       </div>
+
+      <AddManualEventDialog
+        assets={assets}
+        defaultAssetName={scopedAssetIds[0] ?? ""}
+        defaultDate={today}
+      />
     </div>
   )
 }

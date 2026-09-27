@@ -6,10 +6,32 @@ import {
   toCanonicalFleetNumber,
 } from "@/lib/spreadsheet"
 
-export const WHEEL_ALIGNMENT_MATERIAL_NAME = "WHEEL ALIGNMENT"
+export const MANUAL_STATEMENT_EVENT_TYPES = [
+  "WHEEL_ALIGNMENT",
+  "CHECKS_OK",
+] as const
+export type ManualStatementEventType =
+  (typeof MANUAL_STATEMENT_EVENT_TYPES)[number]
+
+export const MANUAL_EVENT_LABELS: Record<ManualStatementEventType, string> = {
+  WHEEL_ALIGNMENT: "Wheel Alignment",
+  CHECKS_OK: "Checks Performed - OK",
+}
+
+export const MANUAL_EVENT_MATERIAL_NAMES: Record<
+  ManualStatementEventType,
+  string
+> = {
+  WHEEL_ALIGNMENT: "WHEEL ALIGNMENT",
+  CHECKS_OK: "CHECKS PERFORMED - OK",
+}
+
+export const WHEEL_ALIGNMENT_MATERIAL_NAME =
+  MANUAL_EVENT_MATERIAL_NAMES.WHEEL_ALIGNMENT
+export const CHECKS_OK_MATERIAL_NAME = MANUAL_EVENT_MATERIAL_NAMES.CHECKS_OK
 export const STATEMENT_BLANK_VALUE = "-"
 
-export type StatementRowKind = "spare" | "alignment"
+export type StatementRowKind = "spare" | "manual" | "alignment" | "check"
 
 // The fields the statement layout and exports actually use. Compatible
 // with `SparesHistoryRow` without importing the server-only history module.
@@ -26,9 +48,11 @@ export type StatementSpareRow = {
   notes?: string | null
 }
 
-export function isAlignmentStatementRow(row: Pick<StatementSpareRow, "kind">) {
-  return row.kind === "alignment"
+export function isManualStatementRow(row: Pick<StatementSpareRow, "kind">) {
+  return row.kind === "manual" || row.kind === "alignment" || row.kind === "check"
 }
+
+export const isAlignmentStatementRow = isManualStatementRow
 
 export function statementRowKey(row: Pick<StatementSpareRow, "id" | "kind">) {
   return `${row.kind ?? "spare"}-${row.id}`
@@ -192,12 +216,12 @@ export function formatStatementQty(value: number | null) {
 }
 
 export function formatStatementLineQty(row: StatementSpareRow) {
-  if (isAlignmentStatementRow(row)) return STATEMENT_BLANK_VALUE
+  if (isManualStatementRow(row)) return STATEMENT_BLANK_VALUE
   return formatStatementQty(row.quantity)
 }
 
 export function formatStatementLineAmount(row: StatementSpareRow) {
-  if (isAlignmentStatementRow(row)) return STATEMENT_BLANK_VALUE
+  if (isManualStatementRow(row)) return STATEMENT_BLANK_VALUE
   return formatStatementUsd(row.amountUsd)
 }
 
@@ -337,7 +361,7 @@ export function applyStatementPreviewFilters<T extends StatementSpareRow>(
     const assetKey = statementAssetKey(row.identityNo)
     if (excluded.has(assetKey)) return false
     if (selectedAssets.size > 0 && !selectedAssets.has(assetKey)) return false
-    if (isAlignmentStatementRow(row)) return true
+    if (isManualStatementRow(row)) return true
     if (rowMatchesConsumableExclusion(row, excludedConsumables)) return false
     if (selected.size === 0) return true
     return selected.has(normalizeSubEquipment(row.subEquipment))
@@ -368,7 +392,7 @@ export function groupSparesByAsset(rows: StatementSpareRow[]): StatementGroup[] 
     .map((name) => {
       const groupRows = [...(byAsset.get(name) ?? [])].sort((left, right) => {
         // Newest intervention first so physical parts and injected
-        // alignments interleave by date in the statement and exports.
+        // manual events interleave by date in the statement and exports.
         const dateCmp = right.fitmentDate.localeCompare(left.fitmentDate)
         if (dateCmp !== 0) return dateCmp
         const leftKind = left.kind ?? "spare"

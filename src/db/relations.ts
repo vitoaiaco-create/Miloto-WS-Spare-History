@@ -142,8 +142,8 @@ export const relations = defineRelations(schema, (r) => ({
     }),
   },
   manualAlignmentEventsTable: {
-    // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so an
-    // alignment event can never exist without its asset.
+    // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so a
+    // manual statement event can never exist without its asset.
     asset: r.one.assetsTable({
       from: r.manualAlignmentEventsTable.assetId,
       to: r.assetsTable.id,

@@ -14,7 +14,11 @@ import {
 } from "@/db/schema"
 import { toIsoDateParam } from "@/lib/iso-date"
 import { toCanonicalFleetNumber } from "@/lib/spreadsheet"
-import { normalizePartAliasKey } from "@/lib/spares-statement"
+import {
+  MANUAL_STATEMENT_EVENT_TYPES,
+  normalizePartAliasKey,
+  type ManualStatementEventType,
+} from "@/lib/spares-statement"
 
 const savePartDescriptionAliasSchema = z.object({
   sourceName: z.string().trim().min(1).max(255),
@@ -146,7 +150,7 @@ export async function excludeConsumableFromStatement(
   }
 }
 
-const createAlignmentEventSchema = z.object({
+const createManualEventSchema = z.object({
   assetName: z.string().trim().min(1).max(255),
   date: z
     .string()
@@ -154,21 +158,23 @@ const createAlignmentEventSchema = z.object({
     .refine((value) => Boolean(toIsoDateParam(value)), {
       message: "Enter a valid date",
     }),
+  eventType: z.enum(MANUAL_STATEMENT_EVENT_TYPES),
   notes: z.string().trim().max(2000).optional(),
 })
 
-type CreateAlignmentEventInput = z.infer<typeof createAlignmentEventSchema>
+type CreateManualEventInput = z.infer<typeof createManualEventSchema>
 
-export type CreateAlignmentEventResult = {
+export type CreateManualEventResult = {
   assetName: string
   date: string
+  eventType: ManualStatementEventType
 }
 
-export async function createManualAlignmentEvent(
-  input: CreateAlignmentEventInput
-): Promise<CreateAlignmentEventResult> {
+export async function createManualStatementEvent(
+  input: CreateManualEventInput
+): Promise<CreateManualEventResult> {
   await requireSparesHistoryAccess()
-  const data = createAlignmentEventSchema.parse(input)
+  const data = createManualEventSchema.parse(input)
   const date = toIsoDateParam(data.date)
   const assetName = toCanonicalFleetNumber(data.assetName)
 
@@ -188,6 +194,7 @@ export async function createManualAlignmentEvent(
   await db.insert(manualAlignmentEventsTable).values({
     assetId: asset.id,
     date,
+    eventType: data.eventType,
     notes: data.notes || null,
   })
 
@@ -195,5 +202,18 @@ export async function createManualAlignmentEvent(
   return {
     assetName: asset.assetName,
     date,
+    eventType: data.eventType,
   }
 }
+
+export async function createManualAlignmentEvent(
+  input: Omit<CreateManualEventInput, "eventType"> & {
+    eventType?: ManualStatementEventType
+  }
+): Promise<CreateManualEventResult> {
+  return createManualStatementEvent({
+    ...input,
+    eventType: input.eventType ?? "WHEEL_ALIGNMENT",
+  })
+}
+
