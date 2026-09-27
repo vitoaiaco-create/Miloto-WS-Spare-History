@@ -216,7 +216,7 @@ export async function exportStatementPdf(
     meta.assets.map((asset) => [asset.assetName, asset.assetType])
   )
   const assetHeaderStyles = {
-    fillColor: [24, 32, 48],
+    fillColor: [24, 32, 48] as [number, number, number],
     textColor: 255,
     fontStyle: "bold" as const,
     fontSize: 7,
