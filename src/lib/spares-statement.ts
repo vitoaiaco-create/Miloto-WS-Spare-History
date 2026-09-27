@@ -328,12 +328,14 @@ export function groupSparesByAsset(rows: StatementSpareRow[]): StatementGroup[] 
     )
     .map((name) => {
       const groupRows = [...(byAsset.get(name) ?? [])].sort((left, right) => {
-        const dateCmp = left.fitmentDate.localeCompare(right.fitmentDate)
+        // Newest intervention first so physical parts and injected
+        // alignments interleave by date in the statement and exports.
+        const dateCmp = right.fitmentDate.localeCompare(left.fitmentDate)
         if (dateCmp !== 0) return dateCmp
         const leftKind = left.kind ?? "spare"
         const rightKind = right.kind ?? "spare"
         if (leftKind !== rightKind) return leftKind === "spare" ? -1 : 1
-        return left.id - right.id
+        return right.id - left.id
       })
 
       return {

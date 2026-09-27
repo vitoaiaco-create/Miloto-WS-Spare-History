@@ -441,7 +441,7 @@ export async function getStatementAlignmentEvents(
       ...statementAssetFilter(filters),
     },
     with: { asset: true },
-    orderBy: { date: "asc" },
+    orderBy: { date: "desc" },
   })
 
   return events.map((event) => ({
