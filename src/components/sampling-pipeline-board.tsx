@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { formatDistanceToNow } from "date-fns"
-import { Trash2, Undo2 } from "lucide-react"
+import { Search, Trash2, Undo2 } from "lucide-react"
 
 import {
   advanceSampleStatus,
@@ -20,6 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/toast"
 
 export const SAMPLE_PIPELINE_COLUMNS = [
@@ -77,7 +78,14 @@ function formatCardKm(value: number | null) {
 
 export function SamplingPipelineBoard({ samples }: { samples: PipelineSample[] }) {
   const [removedIds, setRemovedIds] = useState(() => new Set<string>())
-  const visibleSamples = samples.filter((sample) => !removedIds.has(sample.id))
+  const [searchTerm, setSearchTerm] = useState("")
+  const normalizedSearch = searchTerm.trim().toLowerCase()
+  const visibleSamples = samples.filter((sample) => {
+    if (removedIds.has(sample.id)) return false
+    if (!normalizedSearch) return true
+
+    return sample.assetName.toLowerCase().includes(normalizedSearch)
+  })
 
   const byStatus = Object.fromEntries(
     SAMPLE_PIPELINE_COLUMNS.map((column) => [
@@ -87,62 +95,74 @@ export function SamplingPipelineBoard({ samples }: { samples: PipelineSample[] }
   ) as Record<PipelineSampleStatus, PipelineSample[]>
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-      {SAMPLE_PIPELINE_COLUMNS.map((column) => {
-        const columnSamples = byStatus[column.status]
-        const columnDomId = `pipeline-col-${column.id}`
+    <div className="flex flex-col gap-4">
+      <div className="relative max-w-sm">
+        <Search className="pointer-events-none absolute top-1/2 left-2.5 w-4 h-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={searchTerm}
+          onChange={(event) => setSearchTerm(event.target.value)}
+          placeholder="Search fleet number..."
+          aria-label="Search fleet number"
+          className="pl-8"
+        />
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {SAMPLE_PIPELINE_COLUMNS.map((column) => {
+          const columnSamples = byStatus[column.status]
+          const columnDomId = `pipeline-col-${column.id}`
 
-        return (
-          <section
-            key={column.status}
-            className="flex min-h-72 flex-col gap-3 rounded-xl bg-muted/40 p-3 ring-1 ring-foreground/10"
-          >
-            <header className="flex items-center justify-between gap-2 px-1">
-              <h2 className="text-sm font-medium tracking-tight">
-                {column.title}
-              </h2>
-              <div className="flex items-center gap-0.5">
-                <ShareTableButton
-                  targetId={columnDomId}
-                  compact
-                  fileName={`sampling-pipeline-${column.id}.png`}
-                  shareTitle={column.title}
-                  notFoundDescription={`Could not find the ${column.title} column.`}
-                />
-                <ExportPipelineColumnMenu
-                  rows={columnSamples}
-                  columnTitle={column.title}
-                />
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {columnSamples.length}
-                </span>
-              </div>
-            </header>
-
-            <div id={columnDomId} className="flex flex-col gap-3">
-              {columnSamples.length === 0 ? (
-                <p className="px-1 text-sm text-muted-foreground">
-                  {column.emptyLabel}
-                </p>
-              ) : (
-                columnSamples.map((sample) => (
-                  <PipelineSampleCard
-                    key={sample.id}
-                    sample={sample}
-                    onDeleted={(id) =>
-                      setRemovedIds((current) => {
-                        const next = new Set(current)
-                        next.add(id)
-                        return next
-                      })
-                    }
+          return (
+            <section
+              key={column.status}
+              className="flex min-h-72 flex-col gap-3 rounded-xl bg-muted/40 p-3 ring-1 ring-foreground/10"
+            >
+              <header className="flex items-center justify-between gap-2 px-1">
+                <h2 className="text-sm font-medium tracking-tight">
+                  {column.title}
+                </h2>
+                <div className="flex items-center gap-0.5">
+                  <ShareTableButton
+                    targetId={columnDomId}
+                    compact
+                    fileName={`sampling-pipeline-${column.id}.png`}
+                    shareTitle={column.title}
+                    notFoundDescription={`Could not find the ${column.title} column.`}
                   />
-                ))
-              )}
-            </div>
-          </section>
-        )
-      })}
+                  <ExportPipelineColumnMenu
+                    rows={columnSamples}
+                    columnTitle={column.title}
+                  />
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {columnSamples.length}
+                  </span>
+                </div>
+              </header>
+
+              <div id={columnDomId} className="flex flex-col gap-3">
+                {columnSamples.length === 0 ? (
+                  <p className="px-1 text-sm text-muted-foreground">
+                    {column.emptyLabel}
+                  </p>
+                ) : (
+                  columnSamples.map((sample) => (
+                    <PipelineSampleCard
+                      key={sample.id}
+                      sample={sample}
+                      onDeleted={(id) =>
+                        setRemovedIds((current) => {
+                          const next = new Set(current)
+                          next.add(id)
+                          return next
+                        })
+                      }
+                    />
+                  ))
+                )}
+              </div>
+            </section>
+          )
+        })}
+      </div>
     </div>
   )
 }
