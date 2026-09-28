@@ -914,7 +914,8 @@ export type AdvanceSampleStatusResult = {
 
 // Advances a pipeline card one step. Requested → drawn pulls the latest
 // mileage-log odometer for the asset (on or before today) and stamps
-// `drawnDate`. Later steps only update `status`.
+// `drawnDate`. Every step also stamps `updatedAt` so the board can keep
+// `received` cards visible for 14 days from the last status change.
 export async function advanceSampleStatus(
   sampleId: string,
   assetId: string,
@@ -970,8 +971,9 @@ export async function advanceSampleStatus(
             status: nextStatus,
             drawnDate: new Date(),
             odometer,
+            updatedAt: new Date(),
           }
-        : { status: nextStatus }
+        : { status: nextStatus, updatedAt: new Date() }
     )
     .where(
       and(
@@ -1057,8 +1059,9 @@ export async function reverseSampleStatus(
             status: previousStatus,
             odometer: null,
             drawnDate: null,
+            updatedAt: new Date(),
           }
-        : { status: previousStatus }
+        : { status: previousStatus, updatedAt: new Date() }
     )
     .where(
       and(
@@ -1125,6 +1128,57 @@ export async function deleteSampleRequest(
 
   if (!deleted) {
     throw new Error("Failed to cancel sample request.")
+  }
+
+  revalidateOilSamplePaths()
+
+  return deleted
+}
+
+const deleteOilSampleSchema = z.object({
+  id: z.string().uuid("Sample id must be a valid UUID"),
+})
+
+export type DeleteOilSampleResult = {
+  id: string
+}
+
+// Physically removes a Results Received card so staff can clear it before
+// the 14-day board archive window. Other statuses keep their existing
+// cancel / reverse paths.
+export async function deleteOilSample(
+  id: string
+): Promise<DeleteOilSampleResult> {
+  await requireOilSampleAccess()
+
+  const data = deleteOilSampleSchema.parse({ id })
+
+  const [sample] = await db
+    .select({
+      id: oilSamplesTable.id,
+      status: oilSamplesTable.status,
+    })
+    .from(oilSamplesTable)
+    .where(eq(oilSamplesTable.id, data.id))
+    .limit(1)
+
+  if (!sample) {
+    throw new Error("Oil sample not found.")
+  }
+
+  if (sample.status !== "received") {
+    throw new Error("Only results-received samples can be deleted from the board.")
+  }
+
+  const [deleted] = await db
+    .delete(oilSamplesTable)
+    .where(
+      and(eq(oilSamplesTable.id, data.id), eq(oilSamplesTable.status, "received"))
+    )
+    .returning({ id: oilSamplesTable.id })
+
+  if (!deleted) {
+    throw new Error("Failed to delete oil sample.")
   }
 
   revalidateOilSamplePaths()

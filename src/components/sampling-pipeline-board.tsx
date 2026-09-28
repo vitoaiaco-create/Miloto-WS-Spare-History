@@ -6,6 +6,7 @@ import { Trash2, Undo2 } from "lucide-react"
 
 import {
   advanceSampleStatus,
+  deleteOilSample,
   deleteSampleRequest,
   reverseSampleStatus,
 } from "@/actions/ingestion"
@@ -75,10 +76,13 @@ function formatCardKm(value: number | null) {
 }
 
 export function SamplingPipelineBoard({ samples }: { samples: PipelineSample[] }) {
+  const [removedIds, setRemovedIds] = useState(() => new Set<string>())
+  const visibleSamples = samples.filter((sample) => !removedIds.has(sample.id))
+
   const byStatus = Object.fromEntries(
     SAMPLE_PIPELINE_COLUMNS.map((column) => [
       column.status,
-      samples.filter((sample) => sample.status === column.status),
+      visibleSamples.filter((sample) => sample.status === column.status),
     ])
   ) as Record<PipelineSampleStatus, PipelineSample[]>
 
@@ -122,7 +126,17 @@ export function SamplingPipelineBoard({ samples }: { samples: PipelineSample[] }
                 </p>
               ) : (
                 columnSamples.map((sample) => (
-                  <PipelineSampleCard key={sample.id} sample={sample} />
+                  <PipelineSampleCard
+                    key={sample.id}
+                    sample={sample}
+                    onDeleted={(id) =>
+                      setRemovedIds((current) => {
+                        const next = new Set(current)
+                        next.add(id)
+                        return next
+                      })
+                    }
+                  />
                 ))
               )}
             </div>
@@ -133,7 +147,13 @@ export function SamplingPipelineBoard({ samples }: { samples: PipelineSample[] }
   )
 }
 
-function PipelineSampleCard({ sample }: { sample: PipelineSample }) {
+function PipelineSampleCard({
+  sample,
+  onDeleted,
+}: {
+  sample: PipelineSample
+  onDeleted: (id: string) => void
+}) {
   const [pendingAction, setPendingAction] = useState<
     "forward" | "reverse" | "delete" | null
   >(null)
@@ -206,6 +226,7 @@ function PipelineSampleCard({ sample }: { sample: PipelineSample }) {
 
     try {
       await deleteSampleRequest(sample.id)
+      onDeleted(sample.id)
 
       toast.add({
         title: "Sample cancelled",
@@ -219,6 +240,32 @@ function PipelineSampleCard({ sample }: { sample: PipelineSample }) {
           error instanceof Error
             ? error.message
             : "Something went wrong while cancelling the sample.",
+        type: "error",
+      })
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function onDeleteReceived() {
+    setPendingAction("delete")
+
+    try {
+      await deleteOilSample(sample.id)
+      onDeleted(sample.id)
+
+      toast.add({
+        title: "Sample deleted",
+        description: `${sample.assetName} was removed from Results Received.`,
+        type: "success",
+      })
+    } catch (error) {
+      toast.add({
+        title: "Could not delete sample",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while deleting the sample.",
         type: "error",
       })
     } finally {
@@ -274,7 +321,18 @@ function PipelineSampleCard({ sample }: { sample: PipelineSample }) {
                 ? "Moving…"
                 : FORWARD_ACTION_LABEL[sample.status]}
             </Button>
-          ) : null}
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-muted-foreground hover:text-destructive"
+              disabled={isPending}
+              onClick={onDeleteReceived}
+            >
+              <Trash2 data-icon="inline-start" />
+              {pendingAction === "delete" ? "Deleting…" : "Delete"}
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

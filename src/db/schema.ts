@@ -217,6 +217,9 @@ export const oilSamplesTable = pgTable("oil_samples", {
   notes: text("notes"),
   // Insert time — used by the pipeline board as "time since the request".
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // Last status change. The sampling pipeline keeps `received` cards
+  // visible for 14 days from this timestamp, not from `createdAt`.
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // Manual monthly kilometre override for a single asset (broken odometer).

@@ -29,9 +29,12 @@ export default async function SamplingPipelinePage() {
   }
 
   // Active pipeline cards stay on the board indefinitely. Received
-  // samples older than 7 days are left in the table for reporting but
-  // dropped here so the Results Received column does not grow without bound.
-  const receivedArchiveCutoff = subDays(new Date(), 7)
+  // samples last updated more than 14 days ago are left in the table for
+  // reporting but dropped here so the Results Received column does not
+  // grow without bound. Filter on `updatedAt` (status-change time), not
+  // `createdAt` (original request time), or cards vanish as soon as they
+  // move into this column if the request is older than the window.
+  const receivedArchiveCutoff = subDays(new Date(), 14)
 
   const rows = await db
     .select({
@@ -50,7 +53,7 @@ export default async function SamplingPipelinePage() {
         inArray(oilSamplesTable.status, ["requested", "drawn", "sent"]),
         and(
           eq(oilSamplesTable.status, "received"),
-          gte(oilSamplesTable.createdAt, receivedArchiveCutoff)
+          gte(oilSamplesTable.updatedAt, receivedArchiveCutoff)
         )
       )
     )
