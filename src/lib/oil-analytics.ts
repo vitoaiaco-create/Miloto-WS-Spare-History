@@ -109,6 +109,10 @@ function isStaleOdometer(
   )
 }
 
+function calendarDay(value: Date) {
+  return toIsoDateString(value)
+}
+
 function lastActionDateOf(
   latestService: { recordDate: Date } | null,
   latestSample: { drawnDate: Date } | null
@@ -117,7 +121,10 @@ function lastActionDateOf(
   if (!latestService) return latestSample!.drawnDate
   if (!latestSample) return latestService.recordDate
 
-  return latestSample.drawnDate >= latestService.recordDate
+  // Same calendar-day rule as the kilometre clock: a ≥35 L fill on or
+  // after the sample day is the last action, even when the sample was
+  // stamped later that afternoon.
+  return calendarDay(latestSample.drawnDate) > calendarDay(latestService.recordDate)
     ? latestSample.drawnDate
     : latestService.recordDate
 }
@@ -155,9 +162,14 @@ function pickLastComplianceEvent(
     }
   }
 
-  // The more recent of a ≥35 L service and a logged sample resets the clock.
-  // Equal timestamps prefer the sample — its odometer was locked in at draw.
-  if (sampleWithOdometer.drawnDate >= latestService.recordDate) {
+  // A ≥35 L replenishment on the same calendar day or later completely
+  // overrides the Sample Drawn baseline. Compare calendar days so a
+  // midnight service timestamp is not beaten by a same-day afternoon
+  // draw. A sample drawn on a later day still resets the kilometre clock.
+  if (
+    calendarDay(sampleWithOdometer.drawnDate) >
+    calendarDay(latestService.recordDate)
+  ) {
     return {
       lastEvent: "sample",
       odometer: sampleWithOdometer.odometer,
@@ -292,7 +304,12 @@ async function loadLatestMileageLog(assetId: number) {
   return row ?? null
 }
 
+// Nearest odometer on or before a ≥35 L replenishment. Workshop mileage
+// is often missing on the exact fill day, so this must not `eq` the date
+// — `lte` + latest row is the new service-interval baseline.
 async function loadMileageOnOrBefore(assetId: number, at: Date) {
+  const replenishmentDate = toIsoDateString(at)
+
   const [row] = await db
     .select({
       assetId: mileageLogsTable.assetId,
@@ -303,7 +320,7 @@ async function loadMileageOnOrBefore(assetId: number, at: Date) {
     .where(
       and(
         eq(mileageLogsTable.assetId, assetId),
-        lte(mileageLogsTable.date, toIsoDateString(at))
+        lte(mileageLogsTable.date, replenishmentDate)
       )
     )
     .orderBy(desc(mileageLogsTable.date))
@@ -421,6 +438,9 @@ async function loadMileageOnOrBeforeDates(
     sql`, `
   )}]::date[]`
 
+  // Same nearest-preceding rule as `loadMileageOnOrBefore`: not an exact
+  // date match. Missing the fill-day log still yields the latest odometer
+  // on or before that day, which overrides any Sample Drawn baseline.
   const result = await db.execute<{
     assetId: number
     onDate: string
