@@ -39,8 +39,13 @@ export type {
 // prime mover). Anything smaller is treated as a top-up for burn-rate.
 const SERVICE_QUANTITY_LITERS = 35
 
-// Dual-clock reset: a ≥35 L service or a logged sample keeps the unit
-// compliant below 13 000 km, due soon through 15 000 km, and overdue after.
+// Dual-clock reset for *compliance status only*: a ≥35 L service or a
+// logged sample keeps the unit compliant below 13 000 km, due soon
+// through 15 000 km, and overdue after. Oil Running KM is independent
+// of samples. KM Since Last Sample follows the last physical sample only
+// when that sample was drawn after the latest ≥35 L fill; a later
+// replenishment resets both kilometre clocks to the fill's nearest
+// odometer.
 const COMPLIANT_KM_LIMIT = 13_000
 const OVERDUE_KM_LIMIT = CRITICAL_SERVICE_INTERVAL
 
@@ -163,9 +168,10 @@ function pickLastComplianceEvent(
   }
 
   // A ≥35 L replenishment on the same calendar day or later completely
-  // overrides the Sample Drawn baseline. Compare calendar days so a
-  // midnight service timestamp is not beaten by a same-day afternoon
-  // draw. A sample drawn on a later day still resets the kilometre clock.
+  // overrides the Sample Drawn baseline for compliance and KM Since Last
+  // Sample. Compare calendar days so a midnight service timestamp is not
+  // beaten by a same-day afternoon draw. A sample drawn on a later day
+  // still resets those kilometre clocks; Oil Running KM stays on the fill.
   if (
     calendarDay(sampleWithOdometer.drawnDate) >
     calendarDay(latestService.recordDate)
@@ -182,14 +188,32 @@ function pickLastComplianceEvent(
   }
 }
 
+function kmSinceLastSampleOf(
+  currentOdometer: number | null,
+  lastSample: { drawnDate: Date; odometer: number | null } | null,
+  lastService: { recordDate: Date; odometer: number | null } | null
+): number | null {
+  if (currentOdometer === null) return null
+
+  // Same timeline as compliance: a ≥35 L fill on or after the last
+  // sample day is the testing-interval baseline. A later sample still
+  // tracks distance since that draw.
+  const lastEvent = pickLastComplianceEvent(lastService, lastSample)
+  if (lastEvent === null || lastEvent.odometer === null) return null
+
+  return currentOdometer - lastEvent.odometer
+}
+
 function unknownOilMetrics(
   currentOdometer: number | null,
-  totalTopUpLiters: number
+  totalTopUpLiters: number,
+  lastSample: { drawnDate: Date; odometer: number | null } | null
 ): OilMetrics {
   return {
     status: "unknown",
     currentKm: currentOdometer,
     oilRunningKm: null,
+    kmSinceLastSample: kmSinceLastSampleOf(currentOdometer, lastSample, null),
     totalTopUpLiters,
     burnRate: null,
     overdueKilometers: 0,
@@ -219,7 +243,11 @@ function toOilMetrics(input: {
   // structured unknown baseline instead of nulling the whole row.
   const metrics =
     input.lastService === null
-      ? unknownOilMetrics(input.currentOdometer, input.totalTopUpLiters)
+      ? unknownOilMetrics(
+          input.currentOdometer,
+          input.totalTopUpLiters,
+          input.lastSample
+        )
       : distanceBasedOilMetrics({
           currentOdometer: input.currentOdometer,
           lastService: input.lastService,
@@ -264,6 +292,7 @@ function distanceBasedOilMetrics(input: {
       ? input.currentOdometer - lastComplianceEvent.odometer
       : null
 
+  // Physical oil age only — last ≥35 L fill, never a sample draw.
   const oilRunningKm =
     input.currentOdometer !== null && input.lastService.odometer !== null
       ? input.currentOdometer - input.lastService.odometer
@@ -284,6 +313,14 @@ function distanceBasedOilMetrics(input: {
     lastEvent: lastComplianceEvent?.lastEvent ?? null,
     currentKm: input.currentOdometer,
     oilRunningKm,
+    // ≥35 L fill after the last draw (or no draw after the fill) uses the
+    // fill's nearest odometer for both clocks. A later sample keeps a
+    // separate testing-interval clock from that draw.
+    kmSinceLastSample: kmSinceLastSampleOf(
+      input.currentOdometer,
+      input.lastSample,
+      input.lastService
+    ),
     isTimeBased: false,
     daysSinceAction: null,
   }

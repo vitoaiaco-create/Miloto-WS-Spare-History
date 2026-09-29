@@ -33,6 +33,7 @@ type SortColumn =
   | "status"
   | "currentKm"
   | "oilRunningKm"
+  | "kmSinceLastSample"
   | "totalTopUpLiters"
   | "burnRate"
   | "overdueKilometers"
@@ -49,6 +50,7 @@ const STATUS_SORT_RANK: Record<OilComplianceStatus, number> = {
 const NUMERIC_SORT_COLUMNS: SortColumn[] = [
   "currentKm",
   "oilRunningKm",
+  "kmSinceLastSample",
   "totalTopUpLiters",
   "burnRate",
   "overdueKilometers",
@@ -70,6 +72,12 @@ function formatInteger(value: number | null) {
 }
 
 function formatOptionalKm(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "—"
+
+  return formatInteger(value)
+}
+
+function formatKmSinceLastSample(value: number | null) {
   if (value === null || !Number.isFinite(value)) return "—"
 
   return formatInteger(value)
@@ -158,6 +166,9 @@ function compareRows(
       result =
         (a.isTimeBased ? (a.daysSinceAction ?? -1) : (a.oilRunningKm ?? -1)) -
         (b.isTimeBased ? (b.daysSinceAction ?? -1) : (b.oilRunningKm ?? -1))
+      break
+    case "kmSinceLastSample":
+      result = (a.kmSinceLastSample ?? -1) - (b.kmSinceLastSample ?? -1)
       break
     case "totalTopUpLiters":
       result = a.totalTopUpLiters - b.totalTopUpLiters
@@ -381,6 +392,15 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                 align="right"
               />
               <SortableHead
+                label="KM Since Last Sample"
+                column="kmSinceLastSample"
+                sortColumn={sortColumn}
+                sortDirection={sortDirection}
+                onSort={onSort}
+                className="sticky top-0 z-20 bg-card text-right shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]"
+                align="right"
+              />
+              <SortableHead
                 label="Total Top-up (L)"
                 column="totalTopUpLiters"
                 sortColumn={sortColumn}
@@ -416,7 +436,7 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
             {sortedRows.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={8}
+                  colSpan={9}
                   className="text-center text-muted-foreground"
                 >
                   {assetFilter
@@ -466,6 +486,9 @@ export function OilHealthTable({ rows }: { rows: OilHealthRow[] }) {
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {oilRunningDisplay(row)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatKmSinceLastSample(row.kmSinceLastSample)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatInteger(row.totalTopUpLiters)}

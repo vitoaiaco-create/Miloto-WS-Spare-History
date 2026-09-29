@@ -21,7 +21,15 @@ export type OilMetrics = {
   burnRate: number | null
   lastEvent: OilComplianceEvent | null
   currentKm: number | null
+  // Physical oil age: current KM minus the nearest preceding odometer of
+  // the last ≥35 L replenishment. A sample draw never resets this.
   oilRunningKm: number | null
+  // Testing interval: current KM minus the last physical sample, but only
+  // when that sample was drawn after the latest ≥35 L fill. A later
+  // replenishment (or a fill with no sample after it) uses the fill's
+  // nearest odometer, same as Oil Running KM. Null when neither event
+  // has a usable odometer.
+  kmSinceLastSample: number | null
   // True when the latest odometer reading is ≥30 days old (or missing).
   // Status then follows the 75-day time clock instead of kilometres.
   isTimeBased: boolean
