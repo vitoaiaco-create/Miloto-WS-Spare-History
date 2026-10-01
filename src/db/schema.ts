@@ -121,17 +121,33 @@ export const manualStatementEventTypeEnum = pgEnum(
   MANUAL_STATEMENT_EVENT_TYPES
 );
 
-export const manualAlignmentEventsTable = pgTable("manual_alignment_events", {
-  id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  assetId: integer("asset_id")
-    .notNull()
-    .references(() => assetsTable.id, { onDelete: "cascade" }),
-  date: date("date").notNull(),
-  eventType: manualStatementEventTypeEnum("event_type")
-    .notNull()
-    .default("WHEEL_ALIGNMENT"),
-  notes: text("notes"),
-});
+export const manualAlignmentEventsTable = pgTable(
+  "manual_alignment_events",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => assetsTable.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    eventType: manualStatementEventTypeEnum("event_type")
+      .notNull()
+      .default("WHEEL_ALIGNMENT"),
+    notes: text("notes"),
+  },
+  (table) => [
+    // Lets the "Upload Alignments CSV" bulk import in `ingestAlignments`
+    // (src/actions/ingestion.ts) re-run the same file without double-
+    // counting: a row is skipped via `.onConflictDoNothing()` once its
+    // asset/date/event type is already on file. Scoped to all three columns
+    // (rather than just asset+date) so a wheel alignment and a checks note
+    // can still both be logged for the same asset on the same day.
+    uniqueIndex("manual_alignment_events_asset_date_type_idx").on(
+      table.assetId,
+      table.date,
+      table.eventType
+    ),
+  ]
+);
 
 // Consumables (nuts, bolts, electrodes, etc.) permanently omitted from
 // executive statements. Shared across all staff. A spare is hidden when

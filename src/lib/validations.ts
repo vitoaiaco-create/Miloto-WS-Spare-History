@@ -291,3 +291,24 @@ export const tirePenaltyRowSchema = z.preprocess((row) => {
 }))
 
 export type TirePenaltyRow = z.infer<typeof tirePenaltyRowSchema>
+
+// A single row of the bulk Wheel Alignments CSV, mapped onto
+// `manualAlignmentEventsTable`. The file has two columns: DATE (YYYY-MM-DD)
+// and Identity No (e.g. "MTL01"). `ingestAlignments` in
+// `src/actions/ingestion.ts` resolves `fleetNumber` to an existing
+// `assetsTable.id` — unlike the other bulk importers, an Identity No that
+// doesn't match a fleet asset is skipped rather than registering a new one,
+// since this file carries no asset type to classify it with.
+export const alignmentRowSchema = z.preprocess((row) => {
+  const cells = indexRowByHeader(row)
+
+  return {
+    fleetNumber: toCanonicalFleetNumber(toTrimmedString(cells.get("identity no"))),
+    date: parseSpreadsheetDate(cells.get("date")),
+  }
+}, z.object({
+  fleetNumber: fleetNumberSchema("Identity No"),
+  date: z.date({ error: "DATE must be a valid date (YYYY-MM-DD)" }),
+}))
+
+export type AlignmentRow = z.infer<typeof alignmentRowSchema>

@@ -3,6 +3,7 @@ import { ArrowLeft, FileText } from "lucide-react"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
+import { AlignmentsUploadButton } from "@/components/alignments-upload-button"
 import { ExportTableMenu } from "@/components/export-table-menu"
 import { ShareTableButton } from "@/components/share-table-button"
 import { SparesFilterBar } from "@/components/spares-filter-bar"
@@ -62,6 +63,11 @@ export default async function SparesHistoryPage({
   if (!allowedModules.includes("spares_history")) {
     redirect("/")
   }
+
+  // Bulk CSV imports (ingestAlignments and friends in
+  // src/actions/ingestion.ts) are admin-only, so the upload control itself
+  // stays hidden from staff who'd just hit "Unauthorized" using it.
+  const isAdmin = sessionClaims?.metadata?.role === "admin"
 
   const resolvedSearchParams = await searchParams
   const today = formatIsoDate(new Date())
@@ -139,32 +145,36 @@ export default async function SparesHistoryPage({
             Central Hub
           </Button>
 
-          {statementEnabled ? (
-            <Button
-              variant="outline"
-              size="sm"
-              nativeButton={false}
-              render={<Link href="/spares-history" />}
-            >
-              Exit statement
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              nativeButton={false}
-              render={
-                <Link
-                  href={sparesStatementHref({
-                    period: "mtd",
-                    assetType: "All",
-                  })}
-                />
-              }
-            >
-              <FileText data-icon="inline-start" />
-              Generate Executive Statement
-            </Button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {isAdmin ? <AlignmentsUploadButton size="sm" /> : null}
+
+            {statementEnabled ? (
+              <Button
+                variant="outline"
+                size="sm"
+                nativeButton={false}
+                render={<Link href="/spares-history" />}
+              >
+                Exit statement
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                nativeButton={false}
+                render={
+                  <Link
+                    href={sparesStatementHref({
+                      period: "mtd",
+                      assetType: "All",
+                    })}
+                  />
+                }
+              >
+                <FileText data-icon="inline-start" />
+                Generate Executive Statement
+              </Button>
+            )}
+          </div>
         </div>
 
         <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">

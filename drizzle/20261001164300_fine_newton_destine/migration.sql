@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "manual_alignment_events_asset_date_type_idx" ON "manual_alignment_events" ("asset_id","date","event_type");

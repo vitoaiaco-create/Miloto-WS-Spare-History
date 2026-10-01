@@ -11,6 +11,7 @@ import { db } from "@/db"
 import {
   assetsTable,
   driversTable,
+  manualAlignmentEventsTable,
   mechanicalSparesTable,
   mileageLogsTable,
   monthlyPairingsTable,
@@ -28,11 +29,13 @@ import {
   toTrimmedString,
 } from "@/lib/spreadsheet"
 import {
+  alignmentRowSchema,
   assetRowSchema,
   oilConsumptionRowSchema,
   pairingRowSchema,
   sparesRowSchema,
   tirePenaltyRowSchema,
+  type AlignmentRow,
   type OilConsumptionRow,
   type PairingRow,
   type SparesRow,
@@ -786,6 +789,150 @@ export async function uploadTirePenalties(
 
   revalidatePath("/logistics")
   revalidatePath("/data-ingestion")
+
+  return {
+    imported,
+    duplicates: matched.length - imported,
+    skipped,
+    createdAssets: [],
+  }
+}
+
+const uploadAlignmentsSchema = z.object({
+  csvText: z.string().min(1, "CSV file is required"),
+})
+
+export type UploadAlignmentsInput = z.infer<typeof uploadAlignmentsSchema>
+
+function toAlignmentInsertValues(
+  row: AlignmentRow,
+  assetIdByFleetNumber: Map<string, number>
+) {
+  return {
+    assetId: assetIdByFleetNumber.get(row.fleetNumber)!,
+    date: toIsoDateString(row.date),
+    // Hardcoded: this importer only ever injects wheel alignments into the
+    // executive statement — see `manualAlignmentEventsTable` in
+    // src/db/schema.ts for the other event types (checks OK / pending),
+    // which are added one at a time via `createManualStatementEvent`.
+    eventType: "WHEEL_ALIGNMENT" as const,
+  }
+}
+
+// Bulk-imports the "Upload Alignments CSV" file into
+// `manualAlignmentEventsTable` so wheel alignments appear on the Executive
+// Spare Statement alongside physical spare replacements. The file has two
+// columns — DATE (YYYY-MM-DD) and Identity No (e.g. "MTL01") — and every row
+// becomes a WHEEL_ALIGNMENT event. Unlike `ingestSpares`/`ingestMileage`, an
+// Identity No that doesn't match an existing `assetsTable.assetName` is
+// skipped rather than registering a new asset, since this file carries no
+// asset type to classify it with. Re-uploading the same file is a no-op: the
+// unique index on (asset, date, event type) in `src/db/schema.ts` makes a
+// repeat row a duplicate rather than a second alignment.
+export async function ingestAlignments(
+  input: UploadAlignmentsInput
+): Promise<IngestResult> {
+  await requireAdmin()
+
+  const { csvText } = uploadAlignmentsSchema.parse(input)
+  const parsed = Papa.parse<Record<string, unknown>>(csvText, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (header) => header.replace(/^\uFEFF/, "").trim(),
+  })
+
+  const fatalParseError = parsed.errors.find(
+    (error) => error.type === "Quotes" || error.type === "Delimiter"
+  )
+
+  if (fatalParseError) {
+    throw new Error(
+      fatalParseError.row !== undefined
+        ? `CSV could not be parsed at row ${fatalParseError.row + 1}: ${fatalParseError.message}`
+        : `CSV could not be parsed: ${fatalParseError.message}`
+    )
+  }
+
+  const rows = parsed.data.filter(isPopulatedCsvRow)
+  // Row 1 of the sheet is the header, so the first data row is row 2.
+  const firstRowNumber = 2
+  // Tracked alongside each parsed row (rather than via `partitionRows`,
+  // whose returned `valid` array no longer lines up with the original CSV
+  // row positions) so a row that fails the asset lookup below still gets
+  // reported against the correct spreadsheet row number.
+  const valid: { data: AlignmentRow; rowNumber: number }[] = []
+  const skipped: SkippedRow[] = []
+
+  for (const [index, row] of rows.entries()) {
+    const rowNumber = firstRowNumber + index
+    const parsedRow = alignmentRowSchema.safeParse(row)
+
+    if (!parsedRow.success) {
+      skipped.push({
+        rowNumber,
+        error: parsedRow.error.issues[0]?.message ?? "Row could not be validated",
+      })
+      continue
+    }
+
+    valid.push({ data: parsedRow.data, rowNumber })
+  }
+
+  if (valid.length === 0) {
+    return { imported: 0, duplicates: 0, skipped, createdAssets: [] }
+  }
+
+  const fleetNumbers = [...new Set(valid.map(({ data }) => data.fleetNumber))]
+  const assetIdByFleetNumber = new Map<string, number>()
+
+  for (const batch of chunk(fleetNumbers, INSERT_CHUNK_SIZE)) {
+    const assets = await selectAssetsByName(batch)
+
+    for (const asset of assets) {
+      assetIdByFleetNumber.set(asset.assetName, asset.id)
+    }
+  }
+
+  const matched: AlignmentRow[] = []
+
+  for (const { data, rowNumber } of valid) {
+    if (!assetIdByFleetNumber.has(data.fleetNumber)) {
+      skipped.push({
+        rowNumber,
+        error: `No fleet asset found for Identity No ${data.fleetNumber}`,
+      })
+      continue
+    }
+
+    matched.push(data)
+  }
+
+  let imported = 0
+
+  for (const batch of chunk(matched, INSERT_CHUNK_SIZE)) {
+    const inserted = await db
+      .insert(manualAlignmentEventsTable)
+      .values(
+        batch.map((row) => toAlignmentInsertValues(row, assetIdByFleetNumber))
+      )
+      // Unique index `manual_alignment_events_asset_date_type_idx` — skips a
+      // row whose asset, date and event type are already on file so the
+      // same CSV can be re-uploaded without double-counting.
+      .onConflictDoNothing({
+        target: [
+          manualAlignmentEventsTable.assetId,
+          manualAlignmentEventsTable.date,
+          manualAlignmentEventsTable.eventType,
+        ],
+      })
+      .returning({ id: manualAlignmentEventsTable.id })
+
+    imported += inserted.length
+  }
+
+  skipped.sort((a, b) => a.rowNumber - b.rowNumber)
+
+  revalidatePath("/spares-history")
 
   return {
     imported,
