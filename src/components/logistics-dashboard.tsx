@@ -76,19 +76,58 @@ import type {
   PenaltyDetail,
 } from "@/lib/logistics-scoring"
 
-const PERIOD_LABEL = "September 2026"
-const YTD_PERIOD_LABEL = "January–August 2026"
-
-const YTD_MONTHS = [
-  { month: 1, label: "Jan" },
-  { month: 2, label: "Feb" },
-  { month: 3, label: "Mar" },
-  { month: 4, label: "Apr" },
-  { month: 5, label: "May" },
-  { month: 6, label: "Jun" },
-  { month: 7, label: "Jul" },
-  { month: 8, label: "Aug" },
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ] as const
+
+const MONTH_FULL_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+] as const
+
+type YtdMonthColumn = { month: number; label: string }
+
+// `endMonth` is the latest *completed* calendar month (see
+// `getLatestCompletedMonth` in `src/lib/iso-date.ts`), computed from
+// today's date on the server. Building the column list from it (rather
+// than a hardcoded Jan–Aug array) keeps the table in sync as new months
+// complete.
+function buildYtdMonths(endMonth: number): YtdMonthColumn[] {
+  return Array.from({ length: endMonth }, (_, index) => ({
+    month: index + 1,
+    label: MONTH_LABELS[index],
+  }))
+}
+
+function periodLabelFor(year: number, month: number) {
+  return `${MONTH_FULL_NAMES[month - 1]} ${year}`
+}
+
+function ytdPeriodLabelFor(year: number, endMonth: number) {
+  if (endMonth <= 1) return periodLabelFor(year, endMonth || 1)
+  return `${MONTH_FULL_NAMES[0]}–${MONTH_FULL_NAMES[endMonth - 1]} ${year}`
+}
 
 const MATRIX_CLASSES = [
   "Class A",
@@ -205,7 +244,7 @@ function monthNetScore(
 }
 
 function monthName(month: number) {
-  return YTD_MONTHS.find((column) => column.month === month)?.label ?? String(month)
+  return MONTH_LABELS[month - 1] ?? String(month)
 }
 
 function isEntityFilter(value: string | null): value is EntityFilter {
@@ -367,7 +406,13 @@ function YieldTooltip({
   )
 }
 
-function YieldMatrix({ data }: { data: MonthlyYieldScore[] }) {
+function YieldMatrix({
+  data,
+  periodLabel,
+}: {
+  data: MonthlyYieldScore[]
+  periodLabel: string
+}) {
   const [entityFilter, setEntityFilter] = useState<EntityFilter>("all")
   const points = useMemo(
     () =>
@@ -382,7 +427,7 @@ function YieldMatrix({ data }: { data: MonthlyYieldScore[] }) {
       <CardHeader>
         <CardTitle>Yield Matrix (Chart)</CardTitle>
         <CardDescription>
-          Net score from −20 to +45 against total mileage for {PERIOD_LABEL}.
+          Net score from −20 to +45 against total mileage for {periodLabel}.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -422,7 +467,7 @@ function YieldMatrix({ data }: { data: MonthlyYieldScore[] }) {
 
         {points.length === 0 ? (
           <p className="py-16 text-center text-sm text-muted-foreground">
-            No yield scores for this entity type in {PERIOD_LABEL}.
+            No yield scores for this entity type in {periodLabel}.
           </p>
         ) : (
           <ChartContainer
@@ -600,12 +645,14 @@ function SortableColumnHead({
 
 function RankingsMacroTable<T extends RankableYield>({
   data,
+  ytdMonths,
   emptyMessage,
   renderDetails,
   sortConfig,
   onSort,
 }: {
   data: T[]
+  ytdMonths: YtdMonthColumn[]
   emptyMessage: string
   renderDetails: (row: T) => ReactNode
   sortConfig: SortConfig
@@ -623,7 +670,7 @@ function RankingsMacroTable<T extends RankableYield>({
             sortConfig={sortConfig}
             onSort={onSort}
           />
-          {YTD_MONTHS.map((column) => (
+          {ytdMonths.map((column) => (
             <TableHead key={column.month} className="text-right">
               {column.label}
             </TableHead>
@@ -647,7 +694,7 @@ function RankingsMacroTable<T extends RankableYield>({
         {data.length === 0 ? (
           <TableRow>
             <TableCell
-              colSpan={YTD_MONTHS.length + 3}
+              colSpan={ytdMonths.length + 3}
               className="py-10 text-center text-muted-foreground"
             >
               {emptyMessage}
@@ -666,7 +713,7 @@ function RankingsMacroTable<T extends RankableYield>({
                 }
               >
                 <TableCell className="font-medium">{row.displayName}</TableCell>
-                {YTD_MONTHS.map((column) => (
+                {ytdMonths.map((column) => (
                   <TableCell
                     key={column.month}
                     className="text-right tabular-nums"
@@ -684,7 +731,7 @@ function RankingsMacroTable<T extends RankableYield>({
               {expandedRows[row.id] ? (
                 <TableRow>
                   <TableCell
-                    colSpan={YTD_MONTHS.length + 3}
+                    colSpan={ytdMonths.length + 3}
                     className="bg-muted/30"
                   >
                     {renderDetails(row)}
@@ -1057,10 +1104,14 @@ function AssetRankings({
   motiveData,
   operatorData,
   year,
+  ytdMonths,
+  ytdPeriodLabel,
 }: {
   motiveData: MotiveUnitYieldScore[]
   operatorData: OperatorYieldScore[]
   year: number
+  ytdMonths: YtdMonthColumn[]
+  ytdPeriodLabel: string
 }) {
   const [searchQuery, setSearchQuery] = useState("")
   const [classFilter, setClassFilter] = useState("All")
@@ -1105,7 +1156,7 @@ function AssetRankings({
       <CardHeader>
         <CardTitle>Asset Rankings (Table)</CardTitle>
         <CardDescription>
-          Average monthly scores for {YTD_PERIOD_LABEL}, sorted by avg. score.
+          Average monthly scores for {ytdPeriodLabel}, sorted by avg. score.
         </CardDescription>
         <CardAction>
           <Button
@@ -1164,10 +1215,11 @@ function AssetRankings({
             </p>
             <RankingsMacroTable
               data={motiveUnits}
+              ytdMonths={ytdMonths}
               emptyMessage={
                 filtersActive
                   ? "No motive units match the current search or class filter."
-                  : `No year-to-date yield scores for ${YTD_PERIOD_LABEL}.`
+                  : `No year-to-date yield scores for ${ytdPeriodLabel}.`
               }
               renderDetails={(truck) => (
                 <MotiveUnitDetails truck={truck} year={year} />
@@ -1183,10 +1235,11 @@ function AssetRankings({
             </p>
             <RankingsMacroTable
               data={operators}
+              ytdMonths={ytdMonths}
               emptyMessage={
                 filtersActive
                   ? "No operators match the current search or class filter."
-                  : `No year-to-date operator scores for ${YTD_PERIOD_LABEL}.`
+                  : `No year-to-date operator scores for ${ytdPeriodLabel}.`
               }
               renderDetails={(driver) => <OperatorDetails driver={driver} />}
               sortConfig={sortConfig}
@@ -1266,12 +1319,22 @@ export function LogisticsDashboard({
   motiveData,
   operatorData,
   year,
+  month,
 }: {
   data: MonthlyYieldScore[]
   motiveData: MotiveUnitYieldScore[]
   operatorData: OperatorYieldScore[]
   year: number
+  /** Latest completed calendar month (1-12); also the YTD end month. */
+  month: number
 }) {
+  const ytdMonths = useMemo(() => buildYtdMonths(month), [month])
+  const periodLabel = useMemo(() => periodLabelFor(year, month), [year, month])
+  const ytdPeriodLabel = useMemo(
+    () => ytdPeriodLabelFor(year, month),
+    [year, month]
+  )
+
   return (
     <Tabs defaultValue="matrix" className="gap-6">
       <TabsList className="h-9 w-full max-w-3xl justify-start overflow-x-auto print:hidden group-data-horizontal/tabs:h-9">
@@ -1286,13 +1349,15 @@ export function LogisticsDashboard({
         </TabsTrigger>
       </TabsList>
       <TabsContent value="matrix">
-        <YieldMatrix data={data} />
+        <YieldMatrix data={data} periodLabel={periodLabel} />
       </TabsContent>
       <TabsContent value="rankings">
         <AssetRankings
           motiveData={motiveData}
           operatorData={operatorData}
           year={year}
+          ytdMonths={ytdMonths}
+          ytdPeriodLabel={ytdPeriodLabel}
         />
       </TabsContent>
       <TabsContent value="rules">

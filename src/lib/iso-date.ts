@@ -38,3 +38,16 @@ export function formatIsoDate(date: Date) {
   const day = String(date.getDate()).padStart(2, "0")
   return `${year}-${month}-${day}`
 }
+
+// The current calendar month is always in progress, so analytics that
+// report on a completed month (e.g. YTD rankings) should anchor to the
+// month before `referenceDate`, not a hardcoded value. Handles the
+// January rollover into December of the prior year.
+export function getLatestCompletedMonth(referenceDate: Date = new Date()) {
+  const year = referenceDate.getFullYear()
+  const month = referenceDate.getMonth() + 1 // 1-12, the in-progress month
+
+  return month === 1
+    ? { year: year - 1, month: 12 }
+    : { year, month: month - 1 }
+}
