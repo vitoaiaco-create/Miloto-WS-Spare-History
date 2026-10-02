@@ -3,8 +3,15 @@ import { redirect } from "next/navigation"
 
 import { getSpendPacing, getYtdAnalytics } from "@/actions/analytics"
 import { AnalyticsDashboard } from "@/components/analytics-dashboard"
+import { parseAnalyticsPeriod } from "@/lib/analytics-period"
 
-export default async function AnalyticsFinancialsPage() {
+type SearchParams = { [key: string]: string | string[] | undefined }
+
+export default async function AnalyticsFinancialsPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>
+}) {
   const { userId, sessionClaims } = await auth()
 
   if (!userId) {
@@ -20,7 +27,12 @@ export default async function AnalyticsFinancialsPage() {
     redirect("/")
   }
 
+  // The Monthly Spend chart (`getYtdAnalytics`) always covers the full
+  // calendar year and is never scoped by the `period` selector below —
+  // only the Daily/Weekly spend pacing charts (`getSpendPacing`) are.
   const year = new Date().getFullYear()
+  const resolvedSearchParams = await searchParams
+  const period = parseAnalyticsPeriod(resolvedSearchParams.period)
 
   const [
     combinedCpk,
@@ -33,13 +45,14 @@ export default async function AnalyticsFinancialsPage() {
     getYtdAnalytics(year, "combined"),
     getYtdAnalytics(year, "motive"),
     getYtdAnalytics(year, "towed"),
-    getSpendPacing("combined"),
-    getSpendPacing("motive"),
-    getSpendPacing("towed"),
+    getSpendPacing("combined", period),
+    getSpendPacing("motive", period),
+    getSpendPacing("towed", period),
   ])
 
   return (
     <AnalyticsDashboard
+      period={period}
       combinedCpk={combinedCpk}
       motiveCpk={motiveCpk}
       towedCpk={towedCpk}

@@ -8,13 +8,16 @@ import {
 import { AnalyticsCpkChart } from "@/components/analytics-cpk-chart"
 import { MomDataTable } from "@/components/mom-data-table"
 import { SpendPacingDashboard } from "@/components/spend-pacing-dashboard"
+import { SpendPacingPeriodSelect } from "@/components/spend-pacing-period-select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import type { AnalyticsPeriod } from "@/lib/analytics-period"
 
 export type AnalyticsViewProps = {
   cpkData: YtdAnalyticsPoint[]
   avgTotalUsd: number | null
   avgCpk: number | null
   spendPacing: SpendPacing
+  period: AnalyticsPeriod
 }
 
 function FleetAnalyticsView({
@@ -22,6 +25,7 @@ function FleetAnalyticsView({
   avgTotalUsd,
   avgCpk,
   spendPacing,
+  period,
 }: AnalyticsViewProps) {
   return (
     <div className="flex flex-col gap-6">
@@ -34,12 +38,13 @@ function FleetAnalyticsView({
         avgTotalUsd={avgTotalUsd}
         avgCpk={avgCpk}
       />
-      <SpendPacingDashboard {...spendPacing} />
+      <SpendPacingDashboard {...spendPacing} period={period} />
     </div>
   )
 }
 
 export function AnalyticsDashboard({
+  period,
   combinedCpk,
   motiveCpk,
   towedCpk,
@@ -47,6 +52,7 @@ export function AnalyticsDashboard({
   motivePacing,
   towedPacing,
 }: {
+  period: AnalyticsPeriod
   combinedCpk: YtdAnalytics
   motiveCpk: YtdAnalytics
   towedCpk: YtdAnalytics
@@ -59,42 +65,48 @@ export function AnalyticsDashboard({
     avgTotalUsd: combinedCpk.avgTotalUsd,
     avgCpk: combinedCpk.avgCpk,
     spendPacing: combinedPacing,
+    period,
   }
   const motiveViewProps: AnalyticsViewProps = {
     cpkData: motiveCpk.months,
     avgTotalUsd: motiveCpk.avgTotalUsd,
     avgCpk: motiveCpk.avgCpk,
     spendPacing: motivePacing,
+    period,
   }
   const towedViewProps: AnalyticsViewProps = {
     cpkData: towedCpk.months,
     avgTotalUsd: towedCpk.avgTotalUsd,
     avgCpk: towedCpk.avgCpk,
     spendPacing: towedPacing,
+    period,
   }
 
   return (
-    <Tabs defaultValue="combined" className="gap-6">
-      <TabsList className="grid w-full max-w-[400px] grid-cols-3">
-        <TabsTrigger className="px-6 text-base" value="combined">
-          All Miloto
-        </TabsTrigger>
-        <TabsTrigger className="px-6 text-base" value="motive">
-          Trucks
-        </TabsTrigger>
-        <TabsTrigger className="px-6 text-base" value="towed">
-          Trailers
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent value="combined">
-        <FleetAnalyticsView {...combinedViewProps} />
-      </TabsContent>
-      <TabsContent value="motive">
-        <FleetAnalyticsView {...motiveViewProps} />
-      </TabsContent>
-      <TabsContent value="towed">
-        <FleetAnalyticsView {...towedViewProps} />
-      </TabsContent>
-    </Tabs>
+    <div className="flex flex-col gap-6">
+      <SpendPacingPeriodSelect period={period} />
+      <Tabs defaultValue="combined" className="gap-6">
+        <TabsList className="grid w-full max-w-[400px] grid-cols-3">
+          <TabsTrigger className="px-6 text-base" value="combined">
+            All Miloto
+          </TabsTrigger>
+          <TabsTrigger className="px-6 text-base" value="motive">
+            Trucks
+          </TabsTrigger>
+          <TabsTrigger className="px-6 text-base" value="towed">
+            Trailers
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="combined">
+          <FleetAnalyticsView {...combinedViewProps} />
+        </TabsContent>
+        <TabsContent value="motive">
+          <FleetAnalyticsView {...motiveViewProps} />
+        </TabsContent>
+        <TabsContent value="towed">
+          <FleetAnalyticsView {...towedViewProps} />
+        </TabsContent>
+      </Tabs>
+    </div>
   )
 }

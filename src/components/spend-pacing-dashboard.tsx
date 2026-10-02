@@ -30,17 +30,20 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
+import { analyticsPeriodLabel, type AnalyticsPeriod } from "@/lib/analytics-period"
 
-const chartConfig = {
-  actual: {
-    label: "This month",
-    color: "var(--chart-1)",
-  },
-  target: {
-    label: "YTD average",
-    color: "var(--chart-2)",
-  },
-} satisfies ChartConfig
+function buildChartConfig(periodLabel: string) {
+  return {
+    actual: {
+      label: periodLabel,
+      color: "var(--chart-1)",
+    },
+    target: {
+      label: "YTD average",
+      color: "var(--chart-2)",
+    },
+  } satisfies ChartConfig
+}
 
 const usdCompact = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -58,10 +61,13 @@ export function SpendPacingDashboard({
   weeklyPacing,
   historicalDailyAvg,
   historicalWeeklyAvg,
-}: SpendPacing) {
+  period,
+}: SpendPacing & { period: AnalyticsPeriod }) {
   const fillId = `spend-pacing-actual-${useId().replace(/:/g, "")}`
   const dailyChartRef = useRef<HTMLDivElement>(null)
   const weeklyChartRef = useRef<HTMLDivElement>(null)
+  const periodLabel = analyticsPeriodLabel(period)
+  const chartConfig = buildChartConfig(periodLabel)
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -69,7 +75,7 @@ export function SpendPacingDashboard({
         <CardHeader>
           <CardTitle>Daily spend pacing</CardTitle>
           <CardDescription>
-            This month&apos;s daily spend versus the year-to-date daily
+            {periodLabel}&apos;s daily spend versus the year-to-date daily
             average
           </CardDescription>
         </CardHeader>
@@ -169,7 +175,7 @@ export function SpendPacingDashboard({
         <CardHeader>
           <CardTitle>Weekly spend pacing</CardTitle>
           <CardDescription>
-            This month&apos;s weekly spend versus the year-to-date weekly
+            {periodLabel}&apos;s weekly spend versus the year-to-date weekly
             average
           </CardDescription>
         </CardHeader>

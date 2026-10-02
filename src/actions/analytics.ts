@@ -361,7 +361,22 @@ export async function getYtdAnalytics(
 
 const getSpendPacingSchema = z.object({
   fleetType: z.enum(["combined", "motive", "towed"]),
+  year: z.number({ error: "Year is required" }).int().min(2000).max(2100),
+  month: z
+    .number({ error: "Month is required" })
+    .int()
+    .min(1, "Month must be between 1 and 12")
+    .max(12, "Month must be between 1 and 12"),
 })
+
+// The calendar month to pace against. Defaults to the current month when
+// omitted — see the `period` search param on the Financials page, which
+// drives the Daily/Weekly pacing charts only (never the Monthly Spend
+// chart, which stays on `getYtdAnalytics` and always shows the full year).
+export type SpendPacingPeriod = {
+  year: number
+  month: number
+}
 
 export type DailyPacingPoint = {
   day: number
@@ -390,19 +405,33 @@ function spendByIsoDate(
   return totals
 }
 
-// Current-month spend vs a single YTD run-rate. Historical daily/weekly
-// averages are total year-to-date spend (strictly excluding the in-progress
+// Selected-month spend vs a single YTD run-rate. Historical daily/weekly
+// averages are total year-to-date spend (strictly excluding the selected
 // calendar month) divided by elapsed YTD days and weeks. Week 1 is days
-// 1–7, week 2 is 8–14, and so on.
+// 1–7, week 2 is 8–14, and so on. `period` defaults to the current month
+// and is clamped to it if a future month is ever passed in.
 export async function getSpendPacing(
-  fleetType: AnalyticsFleetType
+  fleetType: AnalyticsFleetType,
+  period?: SpendPacingPeriod
 ): Promise<SpendPacing> {
   await requireWorkshopAnalyticsAccess()
 
-  const data = getSpendPacingSchema.parse({ fleetType })
   const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth() + 1
+  const currentYear = now.getFullYear()
+  const currentMonth = now.getMonth() + 1
+  const requestedYear = period?.year ?? currentYear
+  const requestedMonth = period?.month ?? currentMonth
+  const isFutureMonth =
+    requestedYear > currentYear ||
+    (requestedYear === currentYear && requestedMonth > currentMonth)
+
+  const data = getSpendPacingSchema.parse({
+    fleetType,
+    year: isFutureMonth ? currentYear : requestedYear,
+    month: isFutureMonth ? currentMonth : requestedMonth,
+  })
+  const year = data.year
+  const month = data.month
   const daysInCurrentMonth = daysInCalendarMonth(year, month)
   const yearStart = toIsoDate(year, 1, 1)
   const currentMonthStart = toFirstOfMonthIso(year, month)
