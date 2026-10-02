@@ -578,14 +578,21 @@ function compareRankable(a: RankableYield, b: RankableYield, sortConfig: SortCon
  * surface the parent truck row (which can then be expanded to see the
  * matching trailer), even though the trailer isn't the row's own name.
  */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
 function matchesSearchQuery(row: RankableYield, query: string): boolean {
   if (query.length === 0) return true
 
-  if (row.displayName.toLowerCase().includes(query)) return true
+  const escapedQuery = escapeRegExp(query)
+  const searchRegex = new RegExp(`\\b${escapedQuery}\\b`, "i")
+
+  if (searchRegex.test(row.displayName)) return true
 
   return row.monthlyData.some((month) =>
     Object.values(month as Record<string, unknown>).some(
-      (value) => typeof value === "string" && value.toLowerCase().includes(query)
+      (value) => typeof value === "string" && searchRegex.test(value)
     )
   )
 }
