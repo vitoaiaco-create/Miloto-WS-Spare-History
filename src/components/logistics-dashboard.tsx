@@ -570,6 +570,26 @@ function compareRankable(a: RankableYield, b: RankableYield, sortConfig: SortCon
   return a.displayName.localeCompare(b.displayName) || a.id - b.id
 }
 
+/**
+ * Checks whether `row` matches `query`, searching not just the primary
+ * `displayName` (the truck or driver) but also every nested string field
+ * inside `row.monthlyData` — e.g. `trailerName`, `trucksOperated`,
+ * `trailersPulled`, `driverName`. This lets a search for a trailer's name
+ * surface the parent truck row (which can then be expanded to see the
+ * matching trailer), even though the trailer isn't the row's own name.
+ */
+function matchesSearchQuery(row: RankableYield, query: string): boolean {
+  if (query.length === 0) return true
+
+  if (row.displayName.toLowerCase().includes(query)) return true
+
+  return row.monthlyData.some((month) =>
+    Object.values(month as Record<string, unknown>).some(
+      (value) => typeof value === "string" && value.toLowerCase().includes(query)
+    )
+  )
+}
+
 function filterAndSortYields<T extends RankableYield>(
   rows: T[],
   searchQuery: string,
@@ -580,8 +600,7 @@ function filterAndSortYields<T extends RankableYield>(
 
   return rows
     .filter((row) => {
-      const matchesSearch =
-        query.length === 0 || row.displayName.toLowerCase().includes(query)
+      const matchesSearch = matchesSearchQuery(row, query)
       const matchesClass =
         classFilter === "All" || row.currentClass === classFilter
       return matchesSearch && matchesClass
