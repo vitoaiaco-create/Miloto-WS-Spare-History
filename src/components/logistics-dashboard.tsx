@@ -246,6 +246,72 @@ const SCORING_RULES: {
   },
 ]
 
+const DIAGNOSTIC_CLASSIFICATION_MATRIX: {
+  category: string
+  metricBasis: string
+  classA: string
+  classB: string
+  classC: string
+  classD: string
+}[] = [
+  {
+    category: "Distance Class",
+    metricBasis: "Avg. KM per active month",
+    classA: "≥ 6,000 km",
+    classB: "5,000 – 5,999 km",
+    classC: "4,500 – 4,999 km",
+    classD: "< 4,500 km",
+  },
+  {
+    category: "Safety Class",
+    metricBasis: "% of active months with Safety pts > 0",
+    classA: "≥ 80%",
+    classB: "60% – 79.9%",
+    classC: "40% – 59.9%",
+    classD: "< 40%",
+  },
+  {
+    category: "Truck Penalties",
+    metricBasis: "% of active months with 0 penalty pts",
+    classA: "≥ 80%",
+    classB: "60% – 79.9%",
+    classC: "40% – 59.9%",
+    classD: "< 40%",
+  },
+  {
+    category: "Trailer Penalties",
+    metricBasis: "% of active months with 0 penalty pts",
+    classA: "≥ 80%",
+    classB: "60% – 79.9%",
+    classC: "40% – 59.9%",
+    classD: "< 40%",
+  },
+  {
+    category: "Tyre Penalties",
+    metricBasis: "Avg. penalty points per active month",
+    classA: "0 pts",
+    classB: "-0.1 to -4.9 pts",
+    classC: "-5.0 to -9.9 pts",
+    classD: "≤ -10.0 pts",
+  },
+  {
+    category: "Susp. Penalties",
+    metricBasis: "Avg. penalty points per active month",
+    classA: "0 pts",
+    classB: "-0.1 to -4.9 pts",
+    classC: "-5.0 to -9.9 pts",
+    classD: "≤ -10.0 pts",
+  },
+  {
+    category: "Overall Class",
+    metricBasis: "Total net score average",
+    classA: "≥ 20.0 pts",
+    classB: "15.0 to 19.9 pts",
+    classC: "0.0 to 14.9 pts",
+    classD: "< 0.0 pts",
+  },
+]
+
 function formatKm(km: number) {
   return `${km.toLocaleString("en-US", { maximumFractionDigits: 2 })} km`
 }
@@ -1467,6 +1533,48 @@ function ScoringRules() {
             penalties due to extended road exposure.
           </TableCaption>
         </Table>
+
+        <div className="mt-8 space-y-3">
+          <div>
+            <h3 className="font-heading text-base leading-snug font-medium">
+              Diagnostic Classification Matrix
+            </h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Note: All percentage and average calculations are based
+              strictly on &ldquo;Active Months&rdquo; (months where the asset
+              or driver recorded &gt; 0 km). Parked months do not penalize an
+              average.
+            </p>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Category</TableHead>
+                <TableHead>Metric Basis</TableHead>
+                <TableHead className="text-center">Class A (Green)</TableHead>
+                <TableHead className="text-center">Class B (Blue)</TableHead>
+                <TableHead className="text-center">Class C (Orange)</TableHead>
+                <TableHead className="text-center">Class D (Red)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {DIAGNOSTIC_CLASSIFICATION_MATRIX.map((row) => (
+                <TableRow key={row.category}>
+                  <TableCell className="font-medium">
+                    {row.category}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {row.metricBasis}
+                  </TableCell>
+                  <TableCell className="text-center">{row.classA}</TableCell>
+                  <TableCell className="text-center">{row.classB}</TableCell>
+                  <TableCell className="text-center">{row.classC}</TableCell>
+                  <TableCell className="text-center">{row.classD}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </CardContent>
     </Card>
   )
