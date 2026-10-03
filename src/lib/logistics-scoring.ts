@@ -388,12 +388,12 @@ function isActiveDistanceMonth(distance: number) {
   return distance > 0
 }
 
-// distanceClass: Total distance points / activeDistanceMonths.
-// A ≥ 20, B 10–19.9, C 0–9.9, D < 0.
-function distancePointsAverageClass(average: number): ScorecardClass {
-  if (average >= 20) return "Class A"
-  if (average >= 10) return "Class B"
-  if (average >= 0) return "Class C"
+// distanceClass: Average Monthly Kilometers (total km / activeDistanceMonths).
+// A ≥ 6000, B ≥ 5000 (< 6000), C ≥ 4500 (< 5000), D < 4500.
+function distanceKmAverageClass(averageKm: number): ScorecardClass {
+  if (averageKm >= 6000) return "Class A"
+  if (averageKm >= 5000) return "Class B"
+  if (averageKm >= 4500) return "Class C"
   return "Class D"
 }
 
@@ -424,7 +424,7 @@ function penaltyPointsAverageClass(average: number): ScorecardClass {
 
 type ScorecardTotals = {
   activeDistanceMonths: number
-  distancePointsTotal: number
+  distanceKmTotal: number
   safetyActiveMonths: number
   truckPenaltyZeroMonths: number
   trailerPenaltyZeroMonths: number
@@ -458,8 +458,8 @@ function gradeScorecard(totals: ScorecardTotals): ScorecardGrades {
   }
 
   return {
-    distanceClass: distancePointsAverageClass(
-      totals.distancePointsTotal / activeDistanceMonths
+    distanceClass: distanceKmAverageClass(
+      totals.distanceKmTotal / activeDistanceMonths
     ),
     safetyClass: activeMonthPercentageClass(
       totals.safetyActiveMonths,
@@ -1352,7 +1352,7 @@ export async function calculateMotiveUnitYield(
       let ytdNetScore = 0
       let activeMonths = 0
       let activeDistanceMonths = 0
-      let distancePointsTotal = 0
+      let distanceKmTotal = 0
       let safetyActiveMonths = 0
       let truckPenaltyZeroMonths = 0
       let trailerPenaltyZeroMonths = 0
@@ -1431,7 +1431,6 @@ export async function calculateMotiveUnitYield(
 
         monthlyData.push(row)
         ytdNetScore += netScore
-        distancePointsTotal += distancePoints
         tyrePenaltyTotal += truckTirePen + trailerTirePen
         suspensionPenaltyTotal += truckSuspensionPen + trailerSuspensionPen
         if (isActiveScoringMonth(effectiveDistance, penalties)) {
@@ -1439,6 +1438,7 @@ export async function calculateMotiveUnitYield(
         }
         if (isActiveDistanceMonth(effectiveDistance)) {
           activeDistanceMonths += 1
+          distanceKmTotal += effectiveDistance
           if (safeDrivingBonus > 0) safetyActiveMonths += 1
           if (truckPen === 0) truckPenaltyZeroMonths += 1
           if (trailerPen === 0) trailerPenaltyZeroMonths += 1
@@ -1451,7 +1451,7 @@ export async function calculateMotiveUnitYield(
 
       const scorecard = gradeScorecard({
         activeDistanceMonths,
-        distancePointsTotal,
+        distanceKmTotal,
         safetyActiveMonths,
         truckPenaltyZeroMonths,
         trailerPenaltyZeroMonths,
@@ -1488,7 +1488,7 @@ export async function calculateOperatorYield(
       let ytdNetScore = 0
       let activeMonths = 0
       let activeDistanceMonths = 0
-      let distancePointsTotal = 0
+      let distanceKmTotal = 0
       let safetyActiveMonths = 0
       let truckPenaltyZeroMonths = 0
       let trailerPenaltyZeroMonths = 0
@@ -1576,7 +1576,6 @@ export async function calculateOperatorYield(
           netScore,
         })
         ytdNetScore += netScore
-        distancePointsTotal += distancePoints
         tyrePenaltyTotal += truckTirePenalty + trailerTirePenalty
         suspensionPenaltyTotal += truckSuspensionPenalty + trailerSuspensionPenalty
         if (isActiveScoringMonth(distance, penalties)) {
@@ -1584,6 +1583,7 @@ export async function calculateOperatorYield(
         }
         if (isActiveDistanceMonth(distance)) {
           activeDistanceMonths += 1
+          distanceKmTotal += distance
           if (safeDrivingBonus > 0) safetyActiveMonths += 1
           if (truckPenalty === 0) truckPenaltyZeroMonths += 1
           if (trailerPenalty === 0) trailerPenaltyZeroMonths += 1
@@ -1596,7 +1596,7 @@ export async function calculateOperatorYield(
 
       const scorecard = gradeScorecard({
         activeDistanceMonths,
-        distancePointsTotal,
+        distanceKmTotal,
         safetyActiveMonths,
         truckPenaltyZeroMonths,
         trailerPenaltyZeroMonths,
