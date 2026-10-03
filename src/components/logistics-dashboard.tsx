@@ -1,6 +1,13 @@
 "use client"
 
-import { Fragment, useMemo, useState, type FormEvent, type ReactNode } from "react"
+import {
+  Fragment,
+  useId,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react"
 import { useRouter } from "next/navigation"
 import { ArrowDown, ArrowUp, ArrowUpDown, Pencil, Printer } from "lucide-react"
 import {
@@ -41,6 +48,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import {
   Table,
   TableBody,
@@ -672,13 +680,42 @@ type RankableYield = {
   monthlyData: Array<{ month: number; netScore: number }>
 }
 
-type SortKey = "displayName" | "averageMonthlyScore" | "currentClass"
+type SortKey =
+  | "displayName"
+  | "averageMonthlyScore"
+  | "currentClass"
+  | "distanceClass"
+  | "safetyClass"
+  | "tyrePenaltyClass"
+  | "suspensionPenaltyClass"
 type SortDirection = "asc" | "desc"
 type SortConfig = { key: SortKey; direction: SortDirection }
 
 const DEFAULT_SORT: SortConfig = {
   key: "averageMonthlyScore",
   direction: "desc",
+}
+
+const CLASS_SORT_RANK: Record<ScorecardClass, number> = {
+  "Class A": 0,
+  "Class B": 1,
+  "Class C": 2,
+  "Class D": 3,
+  "N/A": 4,
+}
+
+const CLASS_SORT_KEYS = [
+  "currentClass",
+  "distanceClass",
+  "safetyClass",
+  "tyrePenaltyClass",
+  "suspensionPenaltyClass",
+] as const satisfies readonly SortKey[]
+
+type ClassSortKey = (typeof CLASS_SORT_KEYS)[number]
+
+function isClassSortKey(key: SortKey): key is ClassSortKey {
+  return (CLASS_SORT_KEYS as readonly string[]).includes(key)
 }
 
 const CLASS_FILTERS = ["All", ...MATRIX_CLASSES] as const
@@ -689,10 +726,16 @@ function isClassFilter(value: string | null): value is (typeof CLASS_FILTERS)[nu
 
 function compareRankable(a: RankableYield, b: RankableYield, sortConfig: SortConfig) {
   const direction = sortConfig.direction === "asc" ? 1 : -1
-  const primary =
-    sortConfig.key === "averageMonthlyScore"
-      ? a.averageMonthlyScore - b.averageMonthlyScore
-      : a[sortConfig.key].localeCompare(b[sortConfig.key])
+  let primary: number
+
+  if (sortConfig.key === "averageMonthlyScore") {
+    primary = a.averageMonthlyScore - b.averageMonthlyScore
+  } else if (isClassSortKey(sortConfig.key)) {
+    primary =
+      CLASS_SORT_RANK[a[sortConfig.key]] - CLASS_SORT_RANK[b[sortConfig.key]]
+  } else {
+    primary = a.displayName.localeCompare(b.displayName)
+  }
 
   if (primary !== 0) return primary * direction
   return a.displayName.localeCompare(b.displayName) || a.id - b.id
@@ -823,6 +866,8 @@ function RankingsMacroTable<T extends RankableYield>({
   renderDetails,
   sortConfig,
   onSort,
+  showMonthlyPoints,
+  onShowMonthlyPointsChange,
 }: {
   data: T[]
   ytdMonths: YtdMonthColumn[]
@@ -830,116 +875,153 @@ function RankingsMacroTable<T extends RankableYield>({
   renderDetails: (row: T) => ReactNode
   sortConfig: SortConfig
   onSort: (key: SortKey) => void
+  showMonthlyPoints: boolean
+  onShowMonthlyPointsChange: (show: boolean) => void
 }) {
   const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
+  const monthlyPointsSwitchId = useId()
+  const columnCount = (showMonthlyPoints ? ytdMonths.length : 0) + 9
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <SortableColumnHead
-            label="Entity Name"
-            sortKey="displayName"
-            sortConfig={sortConfig}
-            onSort={onSort}
-          />
-          {ytdMonths.map((column) => (
-            <TableHead key={column.month} className="text-right">
-              {column.label}
-            </TableHead>
-          ))}
-          <SortableColumnHead
-            label="Avg. Score"
-            sortKey="averageMonthlyScore"
-            sortConfig={sortConfig}
-            onSort={onSort}
-            align="right"
-          />
-          <TableHead className="text-center" title="Distance Class">
-            Dist. Class
-          </TableHead>
-          <TableHead className="text-center" title="Safety Class">
-            Safety Class
-          </TableHead>
-          <TableHead className="text-center" title="Truck Penalty Class">
-            Truck Pen.
-          </TableHead>
-          <TableHead className="text-center" title="Trailer Penalty Class">
-            Trailer Pen.
-          </TableHead>
-          <TableHead className="text-center" title="Tyre Penalty Class">
-            Tyre Pen.
-          </TableHead>
-          <TableHead className="text-center" title="Suspension Penalty Class">
-            Susp. Pen.
-          </TableHead>
-          <SortableColumnHead
-            label="Overall Class"
-            sortKey="currentClass"
-            sortConfig={sortConfig}
-            onSort={onSort}
-            align="center"
-            title="Overall Class"
-          />
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {data.length === 0 ? (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-2 print:hidden">
+        <Switch
+          id={monthlyPointsSwitchId}
+          checked={showMonthlyPoints}
+          onCheckedChange={onShowMonthlyPointsChange}
+        />
+        <Label htmlFor={monthlyPointsSwitchId}>Monthly points</Label>
+      </div>
+      <Table
+        containerClassName="relative w-full max-h-[calc(100vh-250px)] overflow-auto print:max-h-none"
+      >
+        <TableHeader className="sticky top-0 z-10 bg-background shadow-sm [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
           <TableRow>
-            <TableCell
-              colSpan={ytdMonths.length + 9}
-              className="py-10 text-center text-muted-foreground"
-            >
-              {emptyMessage}
-            </TableCell>
+            <SortableColumnHead
+              label="Entity Name"
+              sortKey="displayName"
+              sortConfig={sortConfig}
+              onSort={onSort}
+            />
+            {showMonthlyPoints
+              ? ytdMonths.map((column) => (
+                  <TableHead key={column.month} className="text-right">
+                    {column.label}
+                  </TableHead>
+                ))
+              : null}
+            <SortableColumnHead
+              label="Avg. Score"
+              sortKey="averageMonthlyScore"
+              sortConfig={sortConfig}
+              onSort={onSort}
+              align="right"
+            />
+            <SortableColumnHead
+              label="Dist. Class"
+              sortKey="distanceClass"
+              sortConfig={sortConfig}
+              onSort={onSort}
+              align="center"
+              title="Distance Class"
+            />
+            <SortableColumnHead
+              label="Safety Class"
+              sortKey="safetyClass"
+              sortConfig={sortConfig}
+              onSort={onSort}
+              align="center"
+              title="Safety Class"
+            />
+            <TableHead className="text-center" title="Truck Penalty Class">
+              Truck Pen.
+            </TableHead>
+            <TableHead className="text-center" title="Trailer Penalty Class">
+              Trailer Pen.
+            </TableHead>
+            <SortableColumnHead
+              label="Tyre Pen."
+              sortKey="tyrePenaltyClass"
+              sortConfig={sortConfig}
+              onSort={onSort}
+              align="center"
+              title="Tyre Damages"
+            />
+            <SortableColumnHead
+              label="Susp. Pen."
+              sortKey="suspensionPenaltyClass"
+              sortConfig={sortConfig}
+              onSort={onSort}
+              align="center"
+              title="Suspension"
+            />
+            <SortableColumnHead
+              label="Overall Class"
+              sortKey="currentClass"
+              sortConfig={sortConfig}
+              onSort={onSort}
+              align="center"
+              title="Overall Class"
+            />
           </TableRow>
-        ) : (
-          data.map((row) => (
-            <Fragment key={row.id}>
-              <TableRow
-                className="cursor-pointer hover:bg-muted/50"
-                onClick={() =>
-                  setExpandedRows((prev) => ({
-                    ...prev,
-                    [row.id]: !prev[row.id],
-                  }))
-                }
+        </TableHeader>
+        <TableBody>
+          {data.length === 0 ? (
+            <TableRow>
+              <TableCell
+                colSpan={columnCount}
+                className="py-10 text-center text-muted-foreground"
               >
-                <TableCell className="font-medium">{row.displayName}</TableCell>
-                {ytdMonths.map((column) => (
-                  <TableCell
-                    key={column.month}
-                    className="text-right tabular-nums"
-                  >
-                    {monthNetScore(row.monthlyData, column.month)}
+                {emptyMessage}
+              </TableCell>
+            </TableRow>
+          ) : (
+            data.map((row) => (
+              <Fragment key={row.id}>
+                <TableRow
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() =>
+                    setExpandedRows((prev) => ({
+                      ...prev,
+                      [row.id]: !prev[row.id],
+                    }))
+                  }
+                >
+                  <TableCell className="font-medium">{row.displayName}</TableCell>
+                  {showMonthlyPoints
+                    ? ytdMonths.map((column) => (
+                        <TableCell
+                          key={column.month}
+                          className="text-right tabular-nums"
+                        >
+                          {monthNetScore(row.monthlyData, column.month)}
+                        </TableCell>
+                      ))
+                    : null}
+                  <TableCell className="text-right font-medium tabular-nums">
+                    {formatAverageScore(row.averageMonthlyScore)}
                   </TableCell>
-                ))}
-                <TableCell className="text-right font-medium tabular-nums">
-                  {formatAverageScore(row.averageMonthlyScore)}
-                </TableCell>
-                <ScorecardCell value={row.distanceClass} />
-                <ScorecardCell value={row.safetyClass} />
-                <ScorecardCell value={row.truckPenaltyClass} />
-                <ScorecardCell value={row.trailerPenaltyClass} />
-                <ScorecardCell value={row.tyrePenaltyClass} />
-                <ScorecardCell value={row.suspensionPenaltyClass} />
-                <ScorecardCell value={row.currentClass} />
-              </TableRow>
-              {expandedRows[row.id] ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={ytdMonths.length + 9}
-                    className="bg-muted/30"
-                  >
-                    {renderDetails(row)}
-                  </TableCell>
+                  <ScorecardCell value={row.distanceClass} />
+                  <ScorecardCell value={row.safetyClass} />
+                  <ScorecardCell value={row.truckPenaltyClass} />
+                  <ScorecardCell value={row.trailerPenaltyClass} />
+                  <ScorecardCell value={row.tyrePenaltyClass} />
+                  <ScorecardCell value={row.suspensionPenaltyClass} />
+                  <ScorecardCell value={row.currentClass} />
                 </TableRow>
-              ) : null}
-            </Fragment>
-          ))
-        )}
-      </TableBody>
-    </Table>
+                {expandedRows[row.id] ? (
+                  <TableRow>
+                    <TableCell colSpan={columnCount} className="bg-muted/30">
+                      {renderDetails(row)}
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </Fragment>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
   )
 }
 
@@ -1313,6 +1395,7 @@ function AssetRankings({
   const [searchQuery, setSearchQuery] = useState("")
   const [classFilter, setClassFilter] = useState("All")
   const [sortConfig, setSortConfig] = useState<SortConfig>(DEFAULT_SORT)
+  const [showMonthlyPoints, setShowMonthlyPoints] = useState(true)
 
   const motiveUnits = useMemo(
     () => filterAndSortYields(motiveData, searchQuery, classFilter, sortConfig),
@@ -1367,7 +1450,7 @@ function AssetRankings({
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4 overflow-x-auto">
+      <CardContent className="flex flex-col gap-4">
         <Tabs defaultValue="motive" className="gap-4">
           <TabsList className="grid w-full max-w-[360px] grid-cols-2 print:hidden">
             <TabsTrigger value="motive">Motive Units</TabsTrigger>
@@ -1423,6 +1506,8 @@ function AssetRankings({
               )}
               sortConfig={sortConfig}
               onSort={updateSort}
+              showMonthlyPoints={showMonthlyPoints}
+              onShowMonthlyPointsChange={setShowMonthlyPoints}
             />
           </TabsContent>
           <TabsContent value="operators">
@@ -1441,6 +1526,8 @@ function AssetRankings({
               renderDetails={(driver) => <OperatorDetails driver={driver} />}
               sortConfig={sortConfig}
               onSort={updateSort}
+              showMonthlyPoints={showMonthlyPoints}
+              onShowMonthlyPointsChange={setShowMonthlyPoints}
             />
           </TabsContent>
         </Tabs>
