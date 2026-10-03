@@ -13,7 +13,10 @@ import {
   ZAxis,
 } from "recharts"
 
-import { upsertMonthlyManualDistance } from "@/actions/logistics"
+import {
+  upsertMonthlyManualDistance,
+  type TireDamagesByFleetType,
+} from "@/actions/logistics"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -62,6 +65,7 @@ import {
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
+import { TireDamagesCharts } from "@/components/tire-damages-charts"
 import {
   Tooltip,
   TooltipContent,
@@ -75,6 +79,10 @@ import type {
   OperatorYieldScore,
   PenaltyDetail,
 } from "@/lib/logistics-scoring"
+import {
+  SUSPENSION_PENALTY_FAULTS,
+  TIRE_PENALTY_CONFIG,
+} from "@/lib/penalty-rules"
 
 const MONTH_LABELS = [
   "Jan",
@@ -175,7 +183,12 @@ const ENTITY_FILTERS: { value: EntityFilter; label: string }[] = [
 
 const SCORING_RULES: {
   category: string
-  rows: { rule: string; score: string; matrixClass?: MatrixClass }[]
+  rows: {
+    rule: string
+    score: string
+    matrixClass?: MatrixClass
+    scoreList?: { label: string; points: number }[]
+  }[]
 }[] = [
   {
     category: "Distance",
@@ -195,8 +208,22 @@ const SCORING_RULES: {
   {
     category: "Penalties",
     rows: [
-      { rule: "Tire damage", score: "Variable based on type" },
-      { rule: "Suspension job card", score: "−5 pts per card" },
+      {
+        rule: "Tire damage",
+        score: "",
+        scoreList: TIRE_PENALTY_CONFIG.map((entry) => ({
+          label: entry.damageType,
+          points: entry.points,
+        })),
+      },
+      {
+        rule: "Suspension job card",
+        score: "",
+        scoreList: SUSPENSION_PENALTY_FAULTS.map((entry) => ({
+          label: entry.fault,
+          points: entry.points,
+        })),
+      },
     ],
   },
   {
@@ -1278,6 +1305,30 @@ function AssetRankings({
   )
 }
 
+function ScoringRuleScoreCell({
+  score,
+  scoreList,
+}: {
+  score: string
+  scoreList?: { label: string; points: number }[]
+}) {
+  if (!scoreList || scoreList.length === 0) {
+    return <TableCell className="tabular-nums">{score}</TableCell>
+  }
+
+  return (
+    <TableCell className="tabular-nums">
+      <ul className="list-disc space-y-0.5 pl-4">
+        {scoreList.map((item) => (
+          <li key={item.label}>
+            {item.label}: {formatPoints(item.points)} pts
+          </li>
+        ))}
+      </ul>
+    </TableCell>
+  )
+}
+
 function ScoringRules() {
   return (
     <Card>
@@ -1322,7 +1373,10 @@ function ScoringRules() {
                       row.rule
                     )}
                   </TableCell>
-                  <TableCell className="tabular-nums">{row.score}</TableCell>
+                  <ScoringRuleScoreCell
+                    score={row.score}
+                    scoreList={row.scoreList}
+                  />
                 </TableRow>
               ))
             )}
@@ -1344,12 +1398,14 @@ export function LogisticsDashboard({
   data,
   motiveData,
   operatorData,
+  tireDamages,
   year,
   month,
 }: {
   data: MonthlyYieldScore[]
   motiveData: MotiveUnitYieldScore[]
   operatorData: OperatorYieldScore[]
+  tireDamages: TireDamagesByFleetType
   year: number
   /** Latest completed calendar month (1-12); also the YTD end month. */
   month: number
@@ -1370,6 +1426,9 @@ export function LogisticsDashboard({
         <TabsTrigger className="px-3" value="rankings">
           Asset Rankings (Table)
         </TabsTrigger>
+        <TabsTrigger className="px-3" value="tyre-damages">
+          Tyre Damages
+        </TabsTrigger>
         <TabsTrigger className="px-3" value="rules">
           Scoring Rules
         </TabsTrigger>
@@ -1384,6 +1443,13 @@ export function LogisticsDashboard({
           year={year}
           ytdMonths={ytdMonths}
           ytdPeriodLabel={ytdPeriodLabel}
+        />
+      </TabsContent>
+      <TabsContent value="tyre-damages">
+        <TireDamagesCharts
+          trucks={tireDamages.trucks}
+          trailers={tireDamages.trailers}
+          year={year}
         />
       </TabsContent>
       <TabsContent value="rules">

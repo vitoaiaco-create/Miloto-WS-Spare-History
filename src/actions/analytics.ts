@@ -8,12 +8,10 @@ import {
   desc,
   eq,
   gte,
-  ilike,
   isNotNull,
   lt,
   ne,
   not,
-  or,
   sql,
   sum,
   type SQL,
@@ -27,6 +25,7 @@ import {
   mechanicalSparesTable,
   monthlyFleetKmTable,
 } from "@/db/schema"
+import { trailerIdentityFilter } from "@/lib/fleet-identity"
 import { toCanonicalFleetNumber } from "@/lib/spreadsheet"
 
 const upsertMonthlyFleetKmSchema = z.object({
@@ -167,22 +166,6 @@ function toNumber(value: string | number | null | undefined) {
 
 function monthNumberFromIsoDate(value: string) {
   return Number(value.slice(5, 7))
-}
-
-// Source identities look like "MT124(TRAILER124)", but ingestion stores
-// trailers as `MT124` with `assetType = "Trailer"`. Match both so the
-// motive/towed split still works after canonicalization.
-function trailerIdentityFilter() {
-  const filter = or(
-    ilike(assetsTable.assetName, "%TRAILER%"),
-    eq(assetsTable.assetType, "Trailer")
-  )
-
-  if (!filter) {
-    throw new Error("Trailer identity filter is required")
-  }
-
-  return filter
 }
 
 function fleetTypeFilter(fleetType: AnalyticsFleetType) {

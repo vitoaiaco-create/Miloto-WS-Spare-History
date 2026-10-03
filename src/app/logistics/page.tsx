@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 
+import { getTireDamagesByAsset } from "@/actions/logistics"
 import { LogisticsDashboard } from "@/components/logistics-dashboard"
 import { getLatestCompletedMonth } from "@/lib/iso-date"
 import {
@@ -32,17 +33,20 @@ export default async function LogisticsAnalyticsPage() {
 
   const { year, month } = getLatestCompletedMonth()
 
-  const [yieldData, motiveData, operatorData] = await Promise.all([
-    calculateMonthlyYield(year, month),
-    calculateMotiveUnitYield(year, month),
-    calculateOperatorYield(year, month),
-  ])
+  const [yieldData, motiveData, operatorData, tireDamages] =
+    await Promise.all([
+      calculateMonthlyYield(year, month),
+      calculateMotiveUnitYield(year, month),
+      calculateOperatorYield(year, month),
+      getTireDamagesByAsset(year),
+    ])
 
   return (
     <LogisticsDashboard
       data={yieldData}
       motiveData={motiveData}
       operatorData={operatorData}
+      tireDamages={tireDamages}
       year={year}
       month={month}
     />

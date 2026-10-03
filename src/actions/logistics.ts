@@ -1,12 +1,18 @@
 "use server"
 
 import { auth } from "@clerk/nextjs/server"
-import { and, eq } from "drizzle-orm"
+import { and, desc, eq, ne, not, sql, type SQL } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 
 import { db } from "@/db"
-import { assetsTable, monthlyAssetDistancesTable } from "@/db/schema"
+import {
+  assetsTable,
+  monthlyAssetDistancesTable,
+  tirePenaltiesTable,
+} from "@/db/schema"
+import { trailerIdentityFilter } from "@/lib/fleet-identity"
+import { toCanonicalFleetNumber } from "@/lib/spreadsheet"
 
 const upsertMonthlyManualDistanceSchema = z.object({
   assetId: z.number({ error: "Asset is required" }).int().positive(),
@@ -136,4 +142,96 @@ export async function upsertMonthlyManualDistance(
     monthYear: row.monthYear,
     manualDistance: row.manualDistance,
   }
+}
+
+const getTireDamagesByAssetSchema = z.object({
+  year: z.number({ error: "Year is required" }).int().min(2000).max(2100),
+})
+
+export type TireDamageAssetCount = {
+  assetId: string
+  assetName: string
+  damageCount: number
+}
+
+export type TireDamagesByFleetType = {
+  trucks: TireDamageAssetCount[]
+  trailers: TireDamageAssetCount[]
+}
+
+// Cranes match the generic "motive" definition (anything that isn't a
+// trailer — see `trailerIdentityFilter` in src/actions/analytics.ts), but
+// they are not Trucks and must never appear in the Tyre Damages chart's
+// Motive Units dataset. Excluded explicitly rather than relying on the
+// trailer filter alone.
+function tireDamageTruckFilter(): SQL {
+  const filter = and(
+    not(trailerIdentityFilter()),
+    ne(assetsTable.assetType, "Crane")
+  )
+
+  if (!filter) {
+    throw new Error("Truck identity filter is required")
+  }
+
+  return filter
+}
+
+// Repeat tire-damage offenders for a calendar year, backing the Tyre
+// Damages tab on the Logistics Analytics dashboard. An "operational
+// damage" is any `tire_penalties` row with a non-zero `amount` — the
+// processed scrap CSV can in principle store a deduction as either a
+// positive or negative figure (see `tirePenaltyRowSchema` in
+// src/lib/validations.ts), so this checks magnitude via `ne(..., 0)`
+// rather than assuming a sign. Assets are grouped and counted, then
+// trimmed to those with 2+ damages for the year and split into Trucks
+// (motive units, Cranes excluded) and Trailers (towed units).
+async function queryTireDamageCounts(
+  identityFilter: SQL,
+  dateFilter: SQL
+): Promise<TireDamageAssetCount[]> {
+  const damageCountExpr = sql<number>`count(*)`
+
+  const rows = await db
+    .select({
+      assetName: assetsTable.assetName,
+      damageCount: damageCountExpr.mapWith(Number),
+    })
+    .from(tirePenaltiesTable)
+    .innerJoin(assetsTable, eq(tirePenaltiesTable.assetId, assetsTable.id))
+    .where(and(dateFilter, identityFilter, ne(tirePenaltiesTable.amount, 0)))
+    .groupBy(assetsTable.assetName)
+    .having(sql`count(*) >= 2`)
+    .orderBy(desc(damageCountExpr))
+
+  return rows.map((row) => ({
+    assetId: toCanonicalFleetNumber(row.assetName),
+    assetName: row.assetName,
+    damageCount: row.damageCount,
+  }))
+}
+
+export async function getTireDamagesByAsset(
+  year: number
+): Promise<TireDamagesByFleetType> {
+  await requireLogisticsAccess()
+
+  const data = getTireDamagesByAssetSchema.parse({ year })
+  const yearStart = `${data.year}-01-01`
+  const yearEnd = `${data.year}-12-31`
+  const dateFilter = and(
+    sql`(${tirePenaltiesTable.date})::date >= ${yearStart}::date`,
+    sql`(${tirePenaltiesTable.date})::date <= ${yearEnd}::date`
+  )
+
+  if (!dateFilter) {
+    throw new Error("Tire damage date filter is required")
+  }
+
+  const [trucks, trailers] = await Promise.all([
+    queryTireDamageCounts(tireDamageTruckFilter(), dateFilter),
+    queryTireDamageCounts(trailerIdentityFilter(), dateFilter),
+  ])
+
+  return { trucks, trailers }
 }
