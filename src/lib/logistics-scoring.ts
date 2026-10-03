@@ -28,6 +28,10 @@ export type LogisticsEntityType = "Truck" | "Trailer" | "Driver"
 // Class is the average monthly score: A ≥ 20, B ≥ 10, C ≥ 0, D < 0.
 export type MatrixClass = "Class A" | "Class B" | "Class C" | "Class D"
 
+// The 6-column scorecard grades fall back to "N/A" when an asset/driver has
+// no active-distance months (nothing to grade against) in the YTD window.
+export type ScorecardClass = MatrixClass | "N/A"
+
 export type MonthlyYieldScore = {
   entityType: LogisticsEntityType
   entityId: number
@@ -71,6 +75,13 @@ export type MotiveUnitYieldScore = {
   ytdNetScore: number
   averageMonthlyScore: number
   currentClass: MatrixClass
+  // 6-column scorecard breakdown graded against activeDistanceMonths.
+  distanceClass: ScorecardClass
+  safetyClass: ScorecardClass
+  truckPenaltyClass: ScorecardClass
+  trailerPenaltyClass: ScorecardClass
+  tyrePenaltyClass: ScorecardClass
+  suspensionPenaltyClass: ScorecardClass
   monthlyData: MotiveUnitMonthYield[]
 }
 
@@ -93,6 +104,13 @@ export type OperatorYieldScore = {
   ytdNetScore: number
   averageMonthlyScore: number
   currentClass: MatrixClass
+  // 6-column scorecard breakdown graded against activeDistanceMonths.
+  distanceClass: ScorecardClass
+  safetyClass: ScorecardClass
+  truckPenaltyClass: ScorecardClass
+  trailerPenaltyClass: ScorecardClass
+  tyrePenaltyClass: ScorecardClass
+  suspensionPenaltyClass: ScorecardClass
   monthlyData: OperatorMonthYield[]
 }
 
@@ -360,6 +378,108 @@ function matrixClassFor(
 
 function isActiveScoringMonth(distance: number, penalties: number) {
   return distance > 0 || penalties < 0
+}
+
+// Strict "Active Months" tally for the scorecard: a month counts only when
+// the asset/driver recorded a distance > 0 km. This is narrower than
+// `isActiveScoringMonth` above (which also treats penalty-only months as
+// active for the existing Overall Class average).
+function isActiveDistanceMonth(distance: number) {
+  return distance > 0
+}
+
+// distanceClass: Total distance points / activeDistanceMonths.
+// A ≥ 20, B 10–19.9, C 0–9.9, D < 0.
+function distancePointsAverageClass(average: number): ScorecardClass {
+  if (average >= 20) return "Class A"
+  if (average >= 10) return "Class B"
+  if (average >= 0) return "Class C"
+  return "Class D"
+}
+
+// safetyClass / truckPenaltyClass / trailerPenaltyClass: % of
+// activeDistanceMonths meeting the band's condition.
+// A ≥ 80%, B 60–79.9%, C 40–59.9%, D < 40%.
+function activeMonthPercentageClass(
+  qualifyingMonths: number,
+  activeDistanceMonths: number
+): ScorecardClass {
+  const percentage = (qualifyingMonths / activeDistanceMonths) * 100
+  if (percentage >= 80) return "Class A"
+  if (percentage >= 60) return "Class B"
+  if (percentage >= 40) return "Class C"
+  return "Class D"
+}
+
+// tyrePenaltyClass / suspensionPenaltyClass: Total penalty points /
+// activeDistanceMonths. A = exactly 0, B = -0.1 to -4.9, C = -5.0 to -9.9,
+// D ≤ -10.0. Penalty totals are always ≤ 0, so the bands can be checked in
+// descending (least negative first) order.
+function penaltyPointsAverageClass(average: number): ScorecardClass {
+  if (average === 0) return "Class A"
+  if (average >= -4.9) return "Class B"
+  if (average >= -9.9) return "Class C"
+  return "Class D"
+}
+
+type ScorecardTotals = {
+  activeDistanceMonths: number
+  distancePointsTotal: number
+  safetyActiveMonths: number
+  truckPenaltyZeroMonths: number
+  trailerPenaltyZeroMonths: number
+  tyrePenaltyTotal: number
+  suspensionPenaltyTotal: number
+}
+
+type ScorecardGrades = {
+  distanceClass: ScorecardClass
+  safetyClass: ScorecardClass
+  truckPenaltyClass: ScorecardClass
+  trailerPenaltyClass: ScorecardClass
+  tyrePenaltyClass: ScorecardClass
+  suspensionPenaltyClass: ScorecardClass
+}
+
+// Shared grading entry point for both the motive-unit and operator
+// scorecards: no active-distance months means there is nothing to grade.
+function gradeScorecard(totals: ScorecardTotals): ScorecardGrades {
+  const { activeDistanceMonths } = totals
+
+  if (activeDistanceMonths === 0) {
+    return {
+      distanceClass: "N/A",
+      safetyClass: "N/A",
+      truckPenaltyClass: "N/A",
+      trailerPenaltyClass: "N/A",
+      tyrePenaltyClass: "N/A",
+      suspensionPenaltyClass: "N/A",
+    }
+  }
+
+  return {
+    distanceClass: distancePointsAverageClass(
+      totals.distancePointsTotal / activeDistanceMonths
+    ),
+    safetyClass: activeMonthPercentageClass(
+      totals.safetyActiveMonths,
+      activeDistanceMonths
+    ),
+    truckPenaltyClass: activeMonthPercentageClass(
+      totals.truckPenaltyZeroMonths,
+      activeDistanceMonths
+    ),
+    trailerPenaltyClass: activeMonthPercentageClass(
+      totals.trailerPenaltyZeroMonths,
+      activeDistanceMonths
+    ),
+    tyrePenaltyClass: penaltyPointsAverageClass(
+      totals.tyrePenaltyTotal / activeDistanceMonths
+    ),
+    suspensionPenaltyClass: penaltyPointsAverageClass(
+      totals.suspensionPenaltyTotal / activeDistanceMonths
+    ),
+  }
 }
 
 function finalize(draft: {
@@ -1095,6 +1215,7 @@ async function loadYtdWindow(year: number, endMonth: number) {
   }
 
   const penaltyByAssetMonth = new Map<string, number>(tireByAssetMonth)
+  const suspensionByAssetMonth = new Map<string, number>()
 
   for (const row of suspensionRows) {
     const month = calendarMonthFromDate(row.fitmentDate)
@@ -1113,6 +1234,10 @@ async function loadYtdWindow(year: number, endMonth: number) {
 
     const key = assetMonthKey(row.assetId, month)
     penaltyByAssetMonth.set(key, (penaltyByAssetMonth.get(key) ?? 0) + amount)
+    suspensionByAssetMonth.set(
+      key,
+      (suspensionByAssetMonth.get(key) ?? 0) + amount
+    )
 
     const list = detailsByAssetMonth.get(key) ?? []
     list.push({
@@ -1135,6 +1260,8 @@ async function loadYtdWindow(year: number, endMonth: number) {
     manualByTruckMonth,
     pairingsByMonth,
     penaltyByAssetMonth,
+    tireByAssetMonth,
+    suspensionByAssetMonth,
     detailsByAssetMonth,
   }
 }
@@ -1224,6 +1351,13 @@ export async function calculateMotiveUnitYield(
       const monthlyData: MotiveUnitMonthYield[] = []
       let ytdNetScore = 0
       let activeMonths = 0
+      let activeDistanceMonths = 0
+      let distancePointsTotal = 0
+      let safetyActiveMonths = 0
+      let truckPenaltyZeroMonths = 0
+      let trailerPenaltyZeroMonths = 0
+      let tyrePenaltyTotal = 0
+      let suspensionPenaltyTotal = 0
 
       for (let month = 1; month <= window.endMonth; month++) {
         const pairings = monthPairingsForTruck(
@@ -1255,6 +1389,23 @@ export async function calculateMotiveUnitYield(
             total + assetPenalty(window.penaltyByAssetMonth, trailer.id, month),
           0
         )
+        const truckTirePen = assetPenalty(window.tireByAssetMonth, truck.id, month)
+        const truckSuspensionPen = assetPenalty(
+          window.suspensionByAssetMonth,
+          truck.id,
+          month
+        )
+        const trailerTirePen = pairedTrailers.reduce(
+          (total, trailer) =>
+            total + assetPenalty(window.tireByAssetMonth, trailer.id, month),
+          0
+        )
+        const trailerSuspensionPen = pairedTrailers.reduce(
+          (total, trailer) =>
+            total +
+            assetPenalty(window.suspensionByAssetMonth, trailer.id, month),
+          0
+        )
         const penalties = truckPen + trailerPen
         const safeDrivingBonus = safeDrivingBonusFor(penalties)
         const netScore = distancePoints + safeDrivingBonus + penalties
@@ -1280,8 +1431,17 @@ export async function calculateMotiveUnitYield(
 
         monthlyData.push(row)
         ytdNetScore += netScore
+        distancePointsTotal += distancePoints
+        tyrePenaltyTotal += truckTirePen + trailerTirePen
+        suspensionPenaltyTotal += truckSuspensionPen + trailerSuspensionPen
         if (isActiveScoringMonth(effectiveDistance, penalties)) {
           activeMonths += 1
+        }
+        if (isActiveDistanceMonth(effectiveDistance)) {
+          activeDistanceMonths += 1
+          if (safeDrivingBonus > 0) safetyActiveMonths += 1
+          if (truckPen === 0) truckPenaltyZeroMonths += 1
+          if (trailerPen === 0) trailerPenaltyZeroMonths += 1
         }
       }
 
@@ -1289,12 +1449,23 @@ export async function calculateMotiveUnitYield(
         ytdNetScore / (activeMonths || 1)
       )
 
+      const scorecard = gradeScorecard({
+        activeDistanceMonths,
+        distancePointsTotal,
+        safetyActiveMonths,
+        truckPenaltyZeroMonths,
+        trailerPenaltyZeroMonths,
+        tyrePenaltyTotal,
+        suspensionPenaltyTotal,
+      })
+
       return {
         id: truck.id,
         displayName: truck.name,
         ytdNetScore,
         averageMonthlyScore,
         currentClass: matrixClassFor(averageMonthlyScore, activeMonths),
+        ...scorecard,
         monthlyData,
       }
     })
@@ -1316,6 +1487,13 @@ export async function calculateOperatorYield(
       const monthlyData: OperatorMonthYield[] = []
       let ytdNetScore = 0
       let activeMonths = 0
+      let activeDistanceMonths = 0
+      let distancePointsTotal = 0
+      let safetyActiveMonths = 0
+      let truckPenaltyZeroMonths = 0
+      let trailerPenaltyZeroMonths = 0
+      let tyrePenaltyTotal = 0
+      let suspensionPenaltyTotal = 0
 
       for (let month = 1; month <= window.endMonth; month++) {
         const pairings = monthPairingsForDriver(
@@ -1347,17 +1525,39 @@ export async function calculateOperatorYield(
           [...trucks, ...trailers],
           month
         )
-        const penalties =
-          trucks.reduce(
-            (total, truck) =>
-              total + assetPenalty(window.penaltyByAssetMonth, truck.id, month),
-            0
-          ) +
-          trailers.reduce(
-            (total, trailer) =>
-              total + assetPenalty(window.penaltyByAssetMonth, trailer.id, month),
-            0
-          )
+        const truckPenalty = trucks.reduce(
+          (total, truck) =>
+            total + assetPenalty(window.penaltyByAssetMonth, truck.id, month),
+          0
+        )
+        const trailerPenalty = trailers.reduce(
+          (total, trailer) =>
+            total + assetPenalty(window.penaltyByAssetMonth, trailer.id, month),
+          0
+        )
+        const truckTirePenalty = trucks.reduce(
+          (total, truck) =>
+            total + assetPenalty(window.tireByAssetMonth, truck.id, month),
+          0
+        )
+        const trailerTirePenalty = trailers.reduce(
+          (total, trailer) =>
+            total + assetPenalty(window.tireByAssetMonth, trailer.id, month),
+          0
+        )
+        const truckSuspensionPenalty = trucks.reduce(
+          (total, truck) =>
+            total +
+            assetPenalty(window.suspensionByAssetMonth, truck.id, month),
+          0
+        )
+        const trailerSuspensionPenalty = trailers.reduce(
+          (total, trailer) =>
+            total +
+            assetPenalty(window.suspensionByAssetMonth, trailer.id, month),
+          0
+        )
+        const penalties = truckPenalty + trailerPenalty
         const safeDrivingBonus = safeDrivingBonusFor(penalties)
         const netScore = distancePoints + safeDrivingBonus + penalties
 
@@ -1376,8 +1576,17 @@ export async function calculateOperatorYield(
           netScore,
         })
         ytdNetScore += netScore
+        distancePointsTotal += distancePoints
+        tyrePenaltyTotal += truckTirePenalty + trailerTirePenalty
+        suspensionPenaltyTotal += truckSuspensionPenalty + trailerSuspensionPenalty
         if (isActiveScoringMonth(distance, penalties)) {
           activeMonths += 1
+        }
+        if (isActiveDistanceMonth(distance)) {
+          activeDistanceMonths += 1
+          if (safeDrivingBonus > 0) safetyActiveMonths += 1
+          if (truckPenalty === 0) truckPenaltyZeroMonths += 1
+          if (trailerPenalty === 0) trailerPenaltyZeroMonths += 1
         }
       }
 
@@ -1385,12 +1594,23 @@ export async function calculateOperatorYield(
         ytdNetScore / (activeMonths || 1)
       )
 
+      const scorecard = gradeScorecard({
+        activeDistanceMonths,
+        distancePointsTotal,
+        safetyActiveMonths,
+        truckPenaltyZeroMonths,
+        trailerPenaltyZeroMonths,
+        tyrePenaltyTotal,
+        suspensionPenaltyTotal,
+      })
+
       return {
         id: driver.id,
         displayName: driver.name,
         ytdNetScore,
         averageMonthlyScore,
         currentClass: matrixClassFor(averageMonthlyScore, activeMonths),
+        ...scorecard,
         monthlyData,
       }
     })

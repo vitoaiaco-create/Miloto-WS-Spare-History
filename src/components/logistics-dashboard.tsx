@@ -78,6 +78,7 @@ import type {
   MotiveUnitYieldScore,
   OperatorYieldScore,
   PenaltyDetail,
+  ScorecardClass,
 } from "@/lib/logistics-scoring"
 import {
   SUSPENSION_PENALTY_FAULTS,
@@ -309,6 +310,33 @@ function isYieldScore(value: unknown): value is MonthlyYieldScore {
 function ClassBadge({ matrixClass }: { matrixClass: MatrixClass }) {
   return (
     <Badge className={CLASS_BADGE[matrixClass]}>{matrixClass}</Badge>
+  )
+}
+
+// Same green/blue/orange/red letter-grade palette as CLASS_BADGE, extended
+// with a muted "N/A" for the 6-column scorecard (no active-distance months
+// to grade). Used as a full-cell background so the 7-column grid reads as a
+// heat map at a glance.
+const SCORECARD_CLASS_STYLES: Record<ScorecardClass, string> = {
+  "Class A": "bg-green-600 text-white",
+  "Class B": "bg-blue-600 text-white",
+  "Class C": "bg-orange-500 text-white",
+  "Class D": "bg-red-600 text-white",
+  "N/A": "bg-muted text-muted-foreground",
+}
+
+function scorecardLetter(value: ScorecardClass) {
+  return value === "N/A" ? "N/A" : value.slice(-1)
+}
+
+function ScorecardCell({ value }: { value: ScorecardClass }) {
+  return (
+    <TableCell
+      className={`text-center text-xs font-semibold ${SCORECARD_CLASS_STYLES[value]}`}
+      title={value}
+    >
+      {scorecardLetter(value)}
+    </TableCell>
   )
 }
 
@@ -568,6 +596,13 @@ type RankableYield = {
   ytdNetScore: number
   averageMonthlyScore: number
   currentClass: MatrixClass
+  // 6-column scorecard breakdown (see `gradeScorecard` in logistics-scoring.ts).
+  distanceClass: ScorecardClass
+  safetyClass: ScorecardClass
+  truckPenaltyClass: ScorecardClass
+  trailerPenaltyClass: ScorecardClass
+  tyrePenaltyClass: ScorecardClass
+  suspensionPenaltyClass: ScorecardClass
   monthlyData: Array<{ month: number; netScore: number }>
 }
 
@@ -648,12 +683,14 @@ function SortableColumnHead({
   sortConfig,
   onSort,
   align = "left",
+  title,
 }: {
   label: string
   sortKey: SortKey
   sortConfig: SortConfig
   onSort: (key: SortKey) => void
-  align?: "left" | "right"
+  align?: "left" | "right" | "center"
+  title?: string
 }) {
   const active = sortConfig.key === sortKey
   const SortIcon = !active
@@ -664,7 +701,14 @@ function SortableColumnHead({
 
   return (
     <TableHead
-      className={align === "right" ? "text-right" : undefined}
+      className={
+        align === "right"
+          ? "text-right"
+          : align === "center"
+            ? "text-center"
+            : undefined
+      }
+      title={title}
       aria-sort={
         active
           ? sortConfig.direction === "asc"
@@ -673,7 +717,15 @@ function SortableColumnHead({
           : "none"
       }
     >
-      <div className={align === "right" ? "flex justify-end" : undefined}>
+      <div
+        className={
+          align === "right"
+            ? "flex justify-end"
+            : align === "center"
+              ? "flex justify-center"
+              : undefined
+        }
+      >
         <Button
           type="button"
           variant="ghost"
@@ -681,7 +733,9 @@ function SortableColumnHead({
           className={
             align === "right"
               ? "-mr-2 h-8 px-2 font-medium"
-              : "-ml-2 h-8 px-2 font-medium"
+              : align === "center"
+                ? "h-8 px-2 font-medium"
+                : "-ml-2 h-8 px-2 font-medium"
           }
           onClick={() => onSort(sortKey)}
         >
@@ -735,11 +789,31 @@ function RankingsMacroTable<T extends RankableYield>({
             onSort={onSort}
             align="right"
           />
+          <TableHead className="text-center" title="Distance Class">
+            Dist. Class
+          </TableHead>
+          <TableHead className="text-center" title="Safety Class">
+            Safety Class
+          </TableHead>
+          <TableHead className="text-center" title="Truck Penalty Class">
+            Truck Pen.
+          </TableHead>
+          <TableHead className="text-center" title="Trailer Penalty Class">
+            Trailer Pen.
+          </TableHead>
+          <TableHead className="text-center" title="Tyre Penalty Class">
+            Tyre Pen.
+          </TableHead>
+          <TableHead className="text-center" title="Suspension Penalty Class">
+            Susp. Pen.
+          </TableHead>
           <SortableColumnHead
-            label="Class"
+            label="Overall Class"
             sortKey="currentClass"
             sortConfig={sortConfig}
             onSort={onSort}
+            align="center"
+            title="Overall Class"
           />
         </TableRow>
       </TableHeader>
@@ -747,7 +821,7 @@ function RankingsMacroTable<T extends RankableYield>({
         {data.length === 0 ? (
           <TableRow>
             <TableCell
-              colSpan={ytdMonths.length + 3}
+              colSpan={ytdMonths.length + 9}
               className="py-10 text-center text-muted-foreground"
             >
               {emptyMessage}
@@ -777,14 +851,18 @@ function RankingsMacroTable<T extends RankableYield>({
                 <TableCell className="text-right font-medium tabular-nums">
                   {formatAverageScore(row.averageMonthlyScore)}
                 </TableCell>
-                <TableCell>
-                  <ClassBadge matrixClass={row.currentClass} />
-                </TableCell>
+                <ScorecardCell value={row.distanceClass} />
+                <ScorecardCell value={row.safetyClass} />
+                <ScorecardCell value={row.truckPenaltyClass} />
+                <ScorecardCell value={row.trailerPenaltyClass} />
+                <ScorecardCell value={row.tyrePenaltyClass} />
+                <ScorecardCell value={row.suspensionPenaltyClass} />
+                <ScorecardCell value={row.currentClass} />
               </TableRow>
               {expandedRows[row.id] ? (
                 <TableRow>
                   <TableCell
-                    colSpan={ytdMonths.length + 3}
+                    colSpan={ytdMonths.length + 9}
                     className="bg-muted/30"
                   >
                     {renderDetails(row)}
