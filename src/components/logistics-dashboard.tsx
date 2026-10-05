@@ -841,17 +841,19 @@ function SortableColumnHead({
           size="sm"
           className={
             align === "right"
-              ? "-mr-2 h-8 px-2 font-medium"
+              ? "-mr-2 h-8 px-2 font-medium print:block print:h-auto print:p-0"
               : align === "center"
-                ? "h-8 px-2 font-medium"
-                : "-ml-2 h-8 px-2 font-medium"
+                ? "h-8 px-2 font-medium print:block print:h-auto print:p-0"
+                : "-ml-2 h-8 px-2 font-medium print:block print:h-auto print:p-0"
           }
           onClick={() => onSort(sortKey)}
         >
           {label}
           <SortIcon
             data-icon="inline-end"
-            className={active ? undefined : "opacity-40"}
+            className={
+              active ? "print:hidden" : "opacity-40 print:hidden"
+            }
           />
         </Button>
       </div>
@@ -893,7 +895,7 @@ function RankingsMacroTable<T extends RankableYield>({
         <Label htmlFor={monthlyPointsSwitchId}>Monthly points</Label>
       </div>
       <Table
-        containerClassName="relative w-full max-h-[calc(100vh-250px)] overflow-auto print:max-h-none"
+        containerClassName="relative w-full max-h-[calc(100vh-250px)] overflow-auto print:max-h-none print:overflow-visible"
       >
         <TableHeader className="sticky top-0 z-10 bg-background shadow-sm [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
           <TableRow>
