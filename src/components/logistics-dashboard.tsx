@@ -841,10 +841,10 @@ function SortableColumnHead({
           size="sm"
           className={
             align === "right"
-              ? "-mr-2 h-8 px-2 font-medium print:block print:h-auto print:p-0"
+              ? "-mr-2 h-8 px-2 font-medium print:contents"
               : align === "center"
-                ? "h-8 px-2 font-medium print:block print:h-auto print:p-0"
-                : "-ml-2 h-8 px-2 font-medium print:block print:h-auto print:p-0"
+                ? "h-8 px-2 font-medium print:contents"
+                : "-ml-2 h-8 px-2 font-medium print:contents"
           }
           onClick={() => onSort(sortKey)}
         >
