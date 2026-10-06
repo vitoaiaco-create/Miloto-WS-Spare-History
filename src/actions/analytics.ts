@@ -174,7 +174,7 @@ function fleetTypeFilter(fleetType: AnalyticsFleetType) {
   return undefined
 }
 
-async function querySpendByFitmentDate(
+async function querySpendByOutwardDate(
   fleetType: AnalyticsFleetType,
   dateFilter: SQL
 ) {
@@ -182,8 +182,8 @@ async function querySpendByFitmentDate(
 
   return db
     .select({
-      fitmentDate: mechanicalSparesTable.fitmentDate,
-      totalUsd: sum(mechanicalSparesTable.costUsd),
+      outwardDate: mechanicalSparesTable.outwardDate,
+      totalUsd: sum(mechanicalSparesTable.amountUsd),
     })
     .from(mechanicalSparesTable)
     .innerJoin(
@@ -193,7 +193,7 @@ async function querySpendByFitmentDate(
     .where(
       identityFilter ? and(dateFilter, identityFilter) : dateFilter
     )
-    .groupBy(mechanicalSparesTable.fitmentDate)
+    .groupBy(mechanicalSparesTable.outwardDate)
 }
 
 async function querySpendTotal(
@@ -204,7 +204,7 @@ async function querySpendTotal(
 
   const [row] = await db
     .select({
-      totalUsd: sum(mechanicalSparesTable.costUsd),
+      totalUsd: sum(mechanicalSparesTable.amountUsd),
     })
     .from(mechanicalSparesTable)
     .innerJoin(
@@ -273,10 +273,10 @@ export async function getYtdAnalytics(
   const yearStart = `${data.year}-01-01`
   const yearEnd = `${data.year}-12-31`
   const fleetKmYearEnd = `${data.year}-12-01`
-  const monthExpr = sql`extract(month from ${mechanicalSparesTable.fitmentDate})`
+  const monthExpr = sql`extract(month from ${mechanicalSparesTable.outwardDate})`
   const identityFilter = fleetTypeFilter(data.fleetType)
   const spendInYear = between(
-    mechanicalSparesTable.fitmentDate,
+    mechanicalSparesTable.outwardDate,
     yearStart,
     yearEnd
   )
@@ -285,7 +285,7 @@ export async function getYtdAnalytics(
     db
       .select({
         month: monthExpr.mapWith(Number),
-        totalUsd: sum(mechanicalSparesTable.costUsd),
+        totalUsd: sum(mechanicalSparesTable.amountUsd),
       })
       .from(mechanicalSparesTable)
       .innerJoin(
@@ -379,11 +379,11 @@ export type SpendPacing = {
 }
 
 function spendByIsoDate(
-  rows: { fitmentDate: string; totalUsd: string | number | null }[]
+  rows: { outwardDate: string; totalUsd: string | number | null }[]
 ) {
   const totals = new Map<string, number>()
   for (const row of rows) {
-    totals.set(row.fitmentDate, toNumber(row.totalUsd))
+    totals.set(row.outwardDate, toNumber(row.totalUsd))
   }
   return totals
 }
@@ -420,8 +420,8 @@ export async function getSpendPacing(
   const currentMonthStart = toFirstOfMonthIso(year, month)
   const currentMonthEnd = toIsoDate(year, month, daysInCurrentMonth)
   const ytdBeforeCurrentMonth = and(
-    gte(mechanicalSparesTable.fitmentDate, yearStart),
-    lt(mechanicalSparesTable.fitmentDate, currentMonthStart)
+    gte(mechanicalSparesTable.outwardDate, yearStart),
+    lt(mechanicalSparesTable.outwardDate, currentMonthStart)
   )
 
   if (!ytdBeforeCurrentMonth) {
@@ -433,10 +433,10 @@ export async function getSpendPacing(
 
   const [totalYtdSpend, currentRows] = await Promise.all([
     querySpendTotal(data.fleetType, ytdBeforeCurrentMonth),
-    querySpendByFitmentDate(
+    querySpendByOutwardDate(
       data.fleetType,
       between(
-        mechanicalSparesTable.fitmentDate,
+        mechanicalSparesTable.outwardDate,
         currentMonthStart,
         currentMonthEnd
       )
@@ -518,7 +518,7 @@ export async function getActiveAssets(year: number): Promise<ActiveAsset[]> {
       eq(mechanicalSparesTable.assetId, assetsTable.id)
     )
     .where(
-      between(mechanicalSparesTable.fitmentDate, yearStart, yearEnd)
+      between(mechanicalSparesTable.outwardDate, yearStart, yearEnd)
     )
     .orderBy(asc(assetsTable.assetName))
 
@@ -567,14 +567,14 @@ function normalizedSubEquipmentExpr() {
 function spendDateFilter(year: number, month?: number) {
   if (month === undefined) {
     return between(
-      mechanicalSparesTable.fitmentDate,
+      mechanicalSparesTable.outwardDate,
       `${year}-01-01`,
       `${year}-12-31`
     )
   }
 
   return between(
-    mechanicalSparesTable.fitmentDate,
+    mechanicalSparesTable.outwardDate,
     toFirstOfMonthIso(year, month),
     toIsoDate(year, month, daysInCalendarMonth(year, month))
   )
@@ -597,7 +597,7 @@ export async function getAssetSubEquipmentCostings(
   const rows = await db
     .select({
       subEquipment: normalizedSubEquipment.mapWith(String),
-      totalUsd: sum(mechanicalSparesTable.costUsd),
+      totalUsd: sum(mechanicalSparesTable.amountUsd),
     })
     .from(mechanicalSparesTable)
     .where(
@@ -611,7 +611,7 @@ export async function getAssetSubEquipmentCostings(
     )
     .groupBy(normalizedSubEquipment)
     .having(sql`btrim(${normalizedSubEquipment}) <> ''`)
-    .orderBy(desc(sum(mechanicalSparesTable.costUsd)))
+    .orderBy(desc(sum(mechanicalSparesTable.amountUsd)))
 
   const costings = rows.flatMap((row) => {
     const subEquipment = (row.subEquipment ?? "").trim()
@@ -713,7 +713,7 @@ export async function getFleetAssetCostings(
       .select({
         assetName: assetsTable.assetName,
         subEquipment: normalizedSubEquipment.mapWith(String),
-        totalUsd: sum(mechanicalSparesTable.costUsd),
+        totalUsd: sum(mechanicalSparesTable.amountUsd),
       })
       .from(mechanicalSparesTable)
       .innerJoin(

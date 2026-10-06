@@ -106,8 +106,8 @@ type ExportColumn<T> = {
 const SPARES_COLUMNS: ExportColumn<SparesHistoryRow>[] = [
   {
     header: "Outward Date",
-    csv: (spare) => formatDate(spare.fitmentDate),
-    pdf: (spare) => formatDate(spare.fitmentDate),
+    csv: (spare) => formatDate(spare.outwardDate),
+    pdf: (spare) => formatDate(spare.outwardDate),
   },
   {
     header: "Material Name",

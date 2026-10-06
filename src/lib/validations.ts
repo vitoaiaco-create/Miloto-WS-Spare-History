@@ -41,6 +41,12 @@ const MAX_JOB_CARD_NO = 50
 const MAX_TIER = 100
 const MAX_INSTALLATION_POINT = 255
 const MAX_DRIVER_NAME = 255
+// Generous ceiling for the new raw ERP passthrough columns on
+// `mechanicalSparesTable` (`category`, `brandName`, `docketNo`, …), which
+// are `text()` (unbounded) in `src/db/schema.ts`. This just catches a
+// garbled export before it reaches Postgres rather than mirroring a real
+// column width.
+const MAX_RAW_ERP_FIELD = 500
 
 // Workshop staff identify an asset by its fleet number, stored as
 // `assetsTable.assetName`. Spreadsheets don't know the internal numeric
@@ -58,42 +64,79 @@ const fleetNumberSchema = (column: string) =>
     .max(MAX_ASSET_NAME, `${column} must be ${MAX_ASSET_NAME} characters or fewer`)
 
 // A single row of the "Job Cards OutWard Report", mapped onto the columns of
-// `mechanicalSparesTable`. Rows are validated one at a time by
-// `src/actions/ingestion.ts` so that one malformed row (the current report
-// has a line with no "Amount (K)" cell) can be reported and skipped instead
-// of rejecting the whole file.
+// `mechanicalSparesTable` — which, as of `src/db/schema.ts`, mirrors this
+// report's own column layout left-to-right. Rows are validated one at a
+// time by `src/actions/ingestion.ts` so that one malformed row (the current
+// report has a line with no "Amount (K)" cell) can be reported and skipped
+// instead of rejecting the whole file.
 export const sparesRowSchema = z.preprocess((row) => {
   const cells = indexRowByHeader(row)
+  const rawIdentityNo = toTrimmedString(cells.get("identity no"))
+  const rawSubEquipment = toTrimmedString(cells.get("sub equipment"))
+  const rawCategory = toTrimmedString(cells.get("category"))
+  const rawSubCategory = toTrimmedString(cells.get("sub-category"))
 
   return {
-    fleetNumber: toCanonicalFleetNumber(toTrimmedString(cells.get("identity no"))),
-    fitmentDate: parseSpreadsheetDate(cells.get("outward date")),
+    fleetNumber: toCanonicalFleetNumber(rawIdentityNo),
+    outwardDate: parseSpreadsheetDate(cells.get("outward date")),
     partNumber: toTrimmedString(cells.get("part number")),
     materialName: toTrimmedString(cells.get("material name")),
     jobCardNo: toTrimmedString(cells.get("job card no")),
+    // The outward report's own line number — not unique (see the comment
+    // on `mechanical_spares_job_card_part_date_idx` in src/db/schema.ts),
+    // kept only for traceability back to the source file.
+    sNo: toOptionalNumber(cells.get("sno") ?? cells.get("s no")),
     quantity: toNumber(cells.get("quantity")),
-    // "Amount (K)" is the local-currency figure, kept for future reporting.
-    // The Spares History table shows the dollar columns below, which the
-    // report carries in their own right rather than as a conversion the app
-    // has to apply through the day's "Ex. Rate".
-    costKwacha: toNumber(cells.get("amount (k)")),
+    // The report's exchange rate for the day. Informational — the dollar
+    // columns below are carried in their own right rather than as a
+    // conversion the app has to apply.
+    exRate: toOptionalNumber(cells.get("ex. rate") ?? cells.get("ex rate")),
+    // Exact ERP headers: Price (K)/Amount (K) mirror Price ($)/Amount ($).
+    // Older reports only carried Amount (K) (historically stored as
+    // `costKwacha`, now `priceKwacha`). If Price (K) is blank we fall
+    // back to that total so the required column still imports.
+    priceKwacha:
+      toOptionalNumber(cells.get("price (k)")) ??
+      toOptionalNumber(cells.get("amount (k)")) ??
+      Number.NaN,
+    amountKwacha: toOptionalNumber(cells.get("amount (k)")),
     priceUsd: toOptionalNumber(cells.get("price ($)")),
-    costUsd: toOptionalNumber(cells.get("amount ($)")),
+    amountUsd: toOptionalNumber(cells.get("amount ($)")),
+    issuedBy: toTrimmedString(cells.get("issued by")) || null,
+    collectedBy: toTrimmedString(cells.get("collected by")) || null,
+    returnQuantity: toOptionalNumber(
+      cells.get("return qty") ?? cells.get("return quantity")
+    ),
     // "Sub Equipment" is the value the table renders and the filter bar
     // searches, so it is pinned to `tier1`; "Category" and "Sub-Category"
     // are kept verbatim in `tier2`/`tier3` for future reporting. Only
     // `tier1` is case-normalized — `tier2`/`tier3` hold model codes such as
     // "140K,C9, 950H, D6R" that title casing would mangle.
-    tier1: normalizeSubEquipment(toTrimmedString(cells.get("sub equipment"))),
-    tier2: toTrimmedString(cells.get("category")),
-    tier3: toTrimmedString(cells.get("sub-category")),
+    tier1: normalizeSubEquipment(rawSubEquipment),
+    tier2: rawCategory,
+    tier3: rawSubCategory,
+    // Raw ERP columns, stored verbatim alongside the curated tier1/2/3
+    // above rather than instead of them — see the comment on these columns
+    // in src/db/schema.ts.
+    category: rawCategory || null,
+    subCategory: rawSubCategory || null,
+    jobCardType: toTrimmedString(cells.get("job card type")) || null,
+    subEquipment: rawSubEquipment || null,
+    brandName: toTrimmedString(cells.get("brand name")) || null,
+    supplierName: toTrimmedString(cells.get("supplier name")) || null,
+    docketNo: toTrimmedString(cells.get("docket no")) || null,
+    vehicleNo: toTrimmedString(cells.get("vehicle no")) || null,
+    // Raw "Identity No" cell, kept verbatim. `fleetNumber` above is the
+    // canonicalized form actually used to resolve `assetId`.
+    identityNo: rawIdentityNo || null,
+    odometer: toOptionalNumber(cells.get("odometer")),
     // Not a column in the outward report; reserved for future
     // part-lifespan calculations keyed to a fitment location.
     installationPoint: toTrimmedString(cells.get("installation point")) || null,
   }
 }, z.object({
   fleetNumber: fleetNumberSchema("Identity No"),
-  fitmentDate: z.date({ error: "Outward Date must be a valid date (DD-MM-YYYY)" }),
+  outwardDate: z.date({ error: "Outward Date must be a valid date (DD-MM-YYYY)" }),
   partNumber: z
     .string()
     .min(1, "Part Number is required")
@@ -106,20 +149,32 @@ export const sparesRowSchema = z.preprocess((row) => {
     .string()
     .min(1, "Job Card No is required")
     .max(MAX_JOB_CARD_NO, `Job Card No must be ${MAX_JOB_CARD_NO} characters or fewer`),
+  sNo: z.number("SNo must be a number").int().nullable(),
   quantity: z
     .number("Quantity must be a number")
     .positive("Quantity must be greater than 0"),
-  costKwacha: z
-    .number("Amount (K) must be a number")
-    .nonnegative("Amount (K) cannot be negative"),
+  exRate: z.number("Ex. Rate must be a number").nonnegative().nullable(),
+  priceKwacha: z
+    .number("Price (K) must be a number")
+    .nonnegative("Price (K) cannot be negative"),
+  amountKwacha: z.number("Amount (K) must be a number").nonnegative().nullable(),
   priceUsd: z
     .number("Price ($) must be a number")
     .nonnegative("Price ($) cannot be negative")
     .nullable(),
-  costUsd: z
+  amountUsd: z
     .number("Amount ($) must be a number")
     .nonnegative("Amount ($) cannot be negative")
     .nullable(),
+  issuedBy: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Issued By must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  collectedBy: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Collected By must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  returnQuantity: z.number("Return Qty must be a number").nullable(),
   tier1: z
     .string()
     .min(1, "Sub Equipment is required")
@@ -132,6 +187,43 @@ export const sparesRowSchema = z.preprocess((row) => {
     .string()
     .min(1, "Sub-Category is required")
     .max(MAX_TIER, `Sub-Category must be ${MAX_TIER} characters or fewer`),
+  category: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Category must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  subCategory: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Sub-Category must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  jobCardType: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Job Card Type must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  subEquipment: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Sub Equipment must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  brandName: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Brand Name must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  supplierName: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Supplier Name must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  docketNo: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Docket No must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  vehicleNo: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Vehicle No must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  identityNo: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Identity No must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  odometer: z.number("Odometer must be a number").nullable(),
   installationPoint: z
     .string()
     .max(

@@ -612,8 +612,8 @@ export async function calculateMonthlyYield(
       )
       .where(
         and(
-          gte(mechanicalSparesTable.fitmentDate, startOfMonth),
-          lte(mechanicalSparesTable.fitmentDate, endOfMonth),
+          gte(mechanicalSparesTable.outwardDate, startOfMonth),
+          lte(mechanicalSparesTable.outwardDate, endOfMonth),
           // Ingestion title-cases Sub Equipment ("Suspension"); match the
           // category either way.
           sql`upper(${mechanicalSparesTable.tier1}) = 'SUSPENSION'`
@@ -1069,15 +1069,15 @@ async function loadYtdWindow(year: number, endMonth: number) {
       db
         .select({
           assetId: mechanicalSparesTable.assetId,
-          fitmentDate: mechanicalSparesTable.fitmentDate,
+          outwardDate: mechanicalSparesTable.outwardDate,
           jobCardNo: mechanicalSparesTable.jobCardNo,
           materialName: mechanicalSparesTable.materialName,
         })
         .from(mechanicalSparesTable)
         .where(
           and(
-            gte(mechanicalSparesTable.fitmentDate, ytdStart),
-            lte(mechanicalSparesTable.fitmentDate, ytdEnd),
+            gte(mechanicalSparesTable.outwardDate, ytdStart),
+            lte(mechanicalSparesTable.outwardDate, ytdEnd),
             sql`upper(${mechanicalSparesTable.tier1}) = 'SUSPENSION'`
           )
         ),
@@ -1218,7 +1218,7 @@ async function loadYtdWindow(year: number, endMonth: number) {
   const suspensionByAssetMonth = new Map<string, number>()
 
   for (const row of suspensionRows) {
-    const month = calendarMonthFromDate(row.fitmentDate)
+    const month = calendarMonthFromDate(row.outwardDate)
     if (month < 1 || month > endMonth) continue
 
     const asset = assetsById.get(row.assetId)
@@ -1241,7 +1241,7 @@ async function loadYtdWindow(year: number, endMonth: number) {
 
     const list = detailsByAssetMonth.get(key) ?? []
     list.push({
-      date: toIsoDate(row.fitmentDate),
+      date: toIsoDate(row.outwardDate),
       reason: `${row.materialName} - ${row.jobCardNo}`,
       amount,
     })

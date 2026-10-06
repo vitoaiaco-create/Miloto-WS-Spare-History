@@ -148,7 +148,7 @@ export function SparesTable({
         ) : (
           spares.map((spare) => (
             <TableRow key={spare.id}>
-              <TableCell>{formatDate(spare.fitmentDate)}</TableCell>
+              <TableCell>{formatDate(spare.outwardDate)}</TableCell>
               <TableCell>{spare.materialName}</TableCell>
               <TableCell>{spare.identityNo}</TableCell>
               <TableCell>{spare.partNumber}</TableCell>
@@ -262,7 +262,7 @@ export function SparesStatementTable({
             <TableBody>
               {group.rows.map((spare) => (
                 <TableRow key={statementRowKey(spare)}>
-                  <TableCell>{formatStatementDate(spare.fitmentDate)}</TableCell>
+                  <TableCell>{formatStatementDate(spare.outwardDate)}</TableCell>
                   <TableCell className="whitespace-normal">
                     {isManualStatementRow(spare) ? (
                       <div>

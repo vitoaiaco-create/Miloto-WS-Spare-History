@@ -43,7 +43,7 @@ export type StatementRowKind = "spare" | "manual" | "alignment" | "check"
 export type StatementSpareRow = {
   id: number
   kind?: StatementRowKind
-  fitmentDate: string
+  outwardDate: string
   materialName: string
   identityNo: string
   partNumber: string
@@ -398,7 +398,7 @@ export function groupSparesByAsset(rows: StatementSpareRow[]): StatementGroup[] 
       const groupRows = [...(byAsset.get(name) ?? [])].sort((left, right) => {
         // Newest intervention first so physical parts and injected
         // manual events interleave by date in the statement and exports.
-        const dateCmp = right.fitmentDate.localeCompare(left.fitmentDate)
+        const dateCmp = right.outwardDate.localeCompare(left.outwardDate)
         if (dateCmp !== 0) return dateCmp
         const leftKind = left.kind ?? "spare"
         const rightKind = right.kind ?? "spare"

@@ -206,7 +206,7 @@ export function ShareTableButton({
             <tbody>
               {exportRows.map((spare) => (
                 <tr key={spare.id} className="border-b border-zinc-200">
-                  <td className="p-2">{formatDate(spare.fitmentDate)}</td>
+                  <td className="p-2">{formatDate(spare.outwardDate)}</td>
                   <td className="p-2">{spare.materialName}</td>
                   <td className="p-2">{spare.identityNo}</td>
                   <td className="p-2">{spare.partNumber}</td>

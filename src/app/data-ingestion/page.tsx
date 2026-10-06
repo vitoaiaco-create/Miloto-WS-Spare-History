@@ -5,6 +5,7 @@ import { redirect } from "next/navigation"
 
 import { DataUploader } from "@/components/data-uploader"
 import { DictionarySeedButton } from "@/components/dictionary-seed-button"
+import { MasterDictionary } from "@/components/master-dictionary"
 import { MileageUploader } from "@/components/mileage-uploader"
 import { OilUploader } from "@/components/oil-uploader"
 import { TirePenaltyUploader } from "@/components/tire-penalty-uploader"
@@ -74,8 +75,9 @@ export default async function DataIngestionPage() {
             <TabsContent value="tire-penalties">
               <TirePenaltyUploader />
             </TabsContent>
-            <TabsContent value="master-dictionary">
+            <TabsContent value="master-dictionary" className="flex flex-col gap-6">
               <DictionarySeedButton />
+              <MasterDictionary />
             </TabsContent>
             <TabsContent value="triage-inbox">
               <TriageInbox />

@@ -279,7 +279,7 @@ export async function exportStatementPdf(
             }
         >
     > = group.rows.map((row) => [
-      formatStatementDate(row.fitmentDate),
+      formatStatementDate(row.outwardDate),
       isManualStatementRow(row)
         ? row.notes
           ? `${row.materialName} — ${row.notes}`
@@ -403,7 +403,7 @@ export async function exportStatementExcel(
     for (const row of group.rows) {
       aoa.push([
         group.name,
-        formatStatementDate(row.fitmentDate),
+        formatStatementDate(row.outwardDate),
         isManualStatementRow(row)
           ? row.notes
             ? `${row.materialName} — ${row.notes}`

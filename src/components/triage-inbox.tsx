@@ -21,12 +21,12 @@ async function getPendingStagingRows(): Promise<TriageStagingRow[]> {
     .select({
       id: unmappedSparesStagingTable.id,
       assetName: assetsTable.assetName,
-      fitmentDate: unmappedSparesStagingTable.fitmentDate,
+      outwardDate: unmappedSparesStagingTable.outwardDate,
       partNumber: unmappedSparesStagingTable.partNumber,
       materialName: unmappedSparesStagingTable.materialName,
       jobCardNo: unmappedSparesStagingTable.jobCardNo,
       quantity: unmappedSparesStagingTable.quantity,
-      costKwacha: unmappedSparesStagingTable.costKwacha,
+      priceKwacha: unmappedSparesStagingTable.priceKwacha,
       createdAt: unmappedSparesStagingTable.createdAt,
     })
     .from(unmappedSparesStagingTable)

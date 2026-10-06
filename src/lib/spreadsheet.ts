@@ -231,7 +231,7 @@ export function parseSpreadsheetDate(value: unknown): Date | null {
 }
 
 // Formats a validated `Date` as the `YYYY-MM-DD` string expected by the
-// `date`/`fitmentDate` columns, both declared with the default `date()` mode
+// `date`/`outwardDate` columns, both declared with the default `date()` mode
 // in `src/db/schema.ts` (which stores and returns plain date strings).
 export function toIsoDateString(date: Date) {
   return date.toISOString().slice(0, 10)

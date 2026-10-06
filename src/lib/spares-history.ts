@@ -83,7 +83,7 @@ type MileageReading = {
 export type SparesHistoryRow = {
   id: number
   kind?: StatementRowKind
-  fitmentDate: string
+  outwardDate: string
   materialName: string
   identityNo: string
   partNumber: string
@@ -252,7 +252,7 @@ export async function getSparesHistory(
     ),
   ]
 
-  // Outward date is stored on `fitmentDate`. Both ends are required;
+  // Outward date is stored on `outwardDate`. Both ends are required;
   // `between` is inclusive, so `not(between(...))` drops every day in
   // the range, including the first and last.
   const excludeFromDate = toIsoDateParam(filters.excludeFrom)
@@ -282,7 +282,7 @@ export async function getSparesHistory(
       ...(categories.length > 0 ? { tier1: { in: categories } } : {}),
       ...(filters.startDate || filters.endDate
         ? {
-            fitmentDate: {
+            outwardDate: {
               ...(filters.startDate ? { gte: filters.startDate } : {}),
               ...(filters.endDate ? { lte: filters.endDate } : {}),
             },
@@ -297,7 +297,7 @@ export async function getSparesHistory(
               const normalizedMaterialName = sql<string>`upper(trim(both from regexp_replace(${table.materialName}, '\\s+', ' ', 'g')))`
               const clauses = [
                 excludeStart && excludeEnd
-                  ? not(between(table.fitmentDate, excludeStart, excludeEnd))
+                  ? not(between(table.outwardDate, excludeStart, excludeEnd))
                   : undefined,
                 consumableExclusions.partNumbers.length > 0
                   ? not(
@@ -326,7 +326,7 @@ export async function getSparesHistory(
       ...statementAssetFilter(filters),
     },
     with: { asset: true },
-    orderBy: { fitmentDate: "desc" },
+    orderBy: { outwardDate: "desc" },
   })
 
   const assetIds = [...new Set(spares.map((spare) => spare.assetId))]
@@ -335,9 +335,9 @@ export async function getSparesHistory(
     { assetId: number; outwardDate: string }
   >()
   for (const spare of spares) {
-    uniquePairs.set(`${spare.assetId}:${spare.fitmentDate}`, {
+    uniquePairs.set(`${spare.assetId}:${spare.outwardDate}`, {
       assetId: spare.assetId,
-      outwardDate: spare.fitmentDate,
+      outwardDate: spare.outwardDate,
     })
   }
 
@@ -356,20 +356,20 @@ export async function getSparesHistory(
   return spares.map((spare) => {
     const runningKm = runningKmFromReadings(
       latestByAsset.get(spare.assetId),
-      baselineByPair.get(`${spare.assetId}:${spare.fitmentDate}`)
+      baselineByPair.get(`${spare.assetId}:${spare.outwardDate}`)
     )
 
     return {
       id: spare.id,
       kind: "spare" as const,
-      fitmentDate: spare.fitmentDate,
+      outwardDate: spare.outwardDate,
       materialName: spare.materialName,
       identityNo: spare.asset.assetName,
       partNumber: spare.partNumber,
       subEquipment: spare.tier1,
       quantity: Number(spare.quantity),
       priceUsd: toNullableNumber(spare.priceUsd),
-      amountUsd: toNullableNumber(spare.costUsd),
+      amountUsd: toNullableNumber(spare.amountUsd),
       distance: runningKm?.distance ?? null,
       latestDate: runningKm?.latestDate ?? null,
     }
@@ -460,7 +460,7 @@ export async function getStatementManualEvents(
     return {
       id: event.id,
       kind: "manual" as const,
-      fitmentDate: event.date,
+      outwardDate: event.date,
       materialName: MANUAL_EVENT_MATERIAL_NAMES[eventType],
       identityNo: event.asset.assetName,
       partNumber: "",

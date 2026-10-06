@@ -47,6 +47,13 @@ export const mileageLogsTable = pgTable(
 // Workshop spares issued to the fleet (outward stock movements).
 // `assetId` is a foreign key to `assetsTable.id`, giving each asset a
 // one-to-many relationship with its mechanical spares history.
+// Column order below mirrors the ERP's own "Job Cards OutWard Report"
+// layout left-to-right, so the two line up at a glance — with our internal
+// identifiers (`id`, `assetId`) pinned to the front and the curated
+// taxonomy (`tier1`/`tier2`/`tier3`/`assetClass` — not an ERP column at all,
+// but what the app actually classifies and reports by) pinned to the back.
+// See `src/lib/validations.ts` (`sparesRowSchema`) for the CSV header each
+// ERP-shaped column below is read from.
 export const mechanicalSparesTable = pgTable(
   "mechanical_spares",
   {
@@ -54,26 +61,62 @@ export const mechanicalSparesTable = pgTable(
     assetId: integer("asset_id")
       .notNull()
       .references(() => assetsTable.id, { onDelete: "cascade" }),
-    fitmentDate: date("fitment_date").notNull(),
-    partNumber: varchar("part_number", { length: 100 }).notNull(),
+    // The outward report's own "SNo" line number. Not unique across the
+    // report (see the unique index below, which doesn't use it), kept
+    // purely for traceability back to the source file. Null on every row
+    // imported before the ERP report carried this column.
+    sNo: integer("s_no"),
     materialName: varchar("material_name", { length: 255 }).notNull(),
-    jobCardNo: varchar("job_card_no", { length: 50 }).notNull(),
+    partNumber: varchar("part_number", { length: 100 }).notNull(),
+    // Raw ERP columns, stored verbatim alongside — not instead of — the
+    // curated `tier1`/`tier2`/`tier3` taxonomy at the bottom of this table.
+    // `ingestSpares` (src/actions/ingestion.ts) still derives tier1/2/3 from
+    // the dictionary (falling back to these same CSV values only when the
+    // dictionary leaves a tier blank), so these columns are the untouched
+    // source data rather than the canonical classification the app reports
+    // by. Null on historical rows imported before the ERP report carried
+    // these columns.
+    category: text("category"),
+    subCategory: text("sub_category"),
+    jobCardType: text("job_card_type"),
+    subEquipment: text("sub_equipment"),
+    brandName: text("brand_name"),
+    supplierName: text("supplier_name"),
+    docketNo: text("docket_no"),
+    // Raw ERP strings, kept verbatim and unparsed. `assetId` above is the
+    // resolved fleet-asset foreign key the rest of the app actually joins
+    // on; these two are not normalized against it.
+    vehicleNo: text("vehicle_no"),
+    identityNo: text("identity_no"),
+    odometer: integer("odometer"),
     quantity: numeric("quantity", { precision: 10, scale: 2 }).notNull(),
-    costKwacha: numeric("cost_kwacha", { precision: 12, scale: 2 }).notNull(),
+    exRate: numeric("ex_rate", { precision: 12, scale: 4 }),
+    // Renamed from `costKwacha` — the generated migration issues a RENAME
+    // COLUMN (not a drop/add) so the ~14,000 existing rows keep their value.
+    priceKwacha: numeric("price_kwacha", { precision: 12, scale: 2 }).notNull(),
+    amountKwacha: numeric("amount_kwacha", { precision: 12, scale: 2 }),
     // The outward report's "Price ($)" and "Amount ($)" columns. These are
-    // what the Spares History table displays; `costKwacha` is retained as
-    // the local-currency figure for future reporting. Nullable because the
-    // report leaves the dollar cells blank on some lines, and a fitment
-    // record is still worth keeping without them.
+    // what the Spares History table displays. Nullable because the report
+    // leaves the dollar cells blank on some lines, and a fitment record is
+    // still worth keeping without them.
     priceUsd: numeric("price_usd", { precision: 12, scale: 2 }),
-    costUsd: numeric("cost_usd", { precision: 12, scale: 2 }),
-    tier1: varchar("tier_1", { length: 100 }).notNull(),
-    tier2: varchar("tier_2", { length: 100 }).notNull(),
-    tier3: varchar("tier_3", { length: 100 }).notNull(),
+    // Renamed from `costUsd` — the generated migration issues a RENAME
+    // COLUMN (not a drop/add) so existing rows keep their value.
+    amountUsd: numeric("amount_usd", { precision: 12, scale: 2 }),
+    // Renamed from `fitmentDate` — the generated migration issues a RENAME
+    // COLUMN (not a drop/add) so the ~14,000 existing rows keep their value.
+    outwardDate: date("outward_date").notNull(),
+    jobCardNo: varchar("job_card_no", { length: 50 }).notNull(),
+    issuedBy: text("issued_by"),
+    collectedBy: text("collected_by"),
+    returnQuantity: numeric("return_quantity", { precision: 10, scale: 2 }),
     // Physical installation point on the asset (e.g. "Front Left", "Axle 2").
     // Not present in the source CSV; captured for future part-lifespan
     // calculations keyed to a specific fitment location.
     installationPoint: varchar("installation_point", { length: 255 }),
+    tier1: varchar("tier_1", { length: 100 }).notNull(),
+    tier2: varchar("tier_2", { length: 100 }).notNull(),
+    tier3: varchar("tier_3", { length: 100 }).notNull(),
     // Not present in the outward report either — populated by
     // `backfillMechanicalSparesTaxonomy` (src/actions/dictionary-seed.ts)
     // from `masterTaxonomyDictionaryTable.assetClass`, matched on part
@@ -89,7 +132,7 @@ export const mechanicalSparesTable = pgTable(
     uniqueIndex("mechanical_spares_job_card_part_date_idx").on(
       table.jobCardNo,
       table.partNumber,
-      table.fitmentDate
+      table.outwardDate
     ),
   ]
 );
@@ -389,7 +432,8 @@ export const masterTaxonomyDictionaryTable = pgTable(
 // and Asset Class for the part; "Commit & Learn" then upserts that choice
 // into the dictionary, inserts the spare into `mechanicalSparesTable`, and
 // deletes this row (see `commitUnmappedSpare` in src/actions/triage.ts).
-// Columns otherwise mirror `mechanicalSparesTable` minus the taxonomy
+// Columns otherwise mirror `mechanicalSparesTable` (same ERP-layout order,
+// same front/back pinning of internal ids and taxonomy) minus the taxonomy
 // fields, which is exactly what's missing until triage happens. Shared
 // across all staff, like every other table in this file.
 export const unmappedSparesStagingTable = pgTable(
@@ -399,14 +443,36 @@ export const unmappedSparesStagingTable = pgTable(
     assetId: integer("asset_id")
       .notNull()
       .references(() => assetsTable.id, { onDelete: "cascade" }),
-    fitmentDate: date("fitment_date").notNull(),
-    partNumber: varchar("part_number", { length: 100 }).notNull(),
+    sNo: integer("s_no"),
     materialName: varchar("material_name", { length: 255 }).notNull(),
-    jobCardNo: varchar("job_card_no", { length: 50 }).notNull(),
+    partNumber: varchar("part_number", { length: 100 }).notNull(),
+    category: text("category"),
+    subCategory: text("sub_category"),
+    jobCardType: text("job_card_type"),
+    subEquipment: text("sub_equipment"),
+    brandName: text("brand_name"),
+    supplierName: text("supplier_name"),
+    docketNo: text("docket_no"),
+    vehicleNo: text("vehicle_no"),
+    identityNo: text("identity_no"),
+    odometer: integer("odometer"),
     quantity: numeric("quantity", { precision: 10, scale: 2 }).notNull(),
-    costKwacha: numeric("cost_kwacha", { precision: 12, scale: 2 }).notNull(),
+    exRate: numeric("ex_rate", { precision: 12, scale: 4 }),
+    // Renamed from `costKwacha` — the generated migration issues a RENAME
+    // COLUMN (not a drop/add) so existing rows keep their value.
+    priceKwacha: numeric("price_kwacha", { precision: 12, scale: 2 }).notNull(),
+    amountKwacha: numeric("amount_kwacha", { precision: 12, scale: 2 }),
     priceUsd: numeric("price_usd", { precision: 12, scale: 2 }),
-    costUsd: numeric("cost_usd", { precision: 12, scale: 2 }),
+    // Renamed from `costUsd` — the generated migration issues a RENAME
+    // COLUMN (not a drop/add) so existing rows keep their value.
+    amountUsd: numeric("amount_usd", { precision: 12, scale: 2 }),
+    // Renamed from `fitmentDate` — the generated migration issues a RENAME
+    // COLUMN (not a drop/add) so existing rows keep their value.
+    outwardDate: date("outward_date").notNull(),
+    jobCardNo: varchar("job_card_no", { length: 50 }).notNull(),
+    issuedBy: text("issued_by"),
+    collectedBy: text("collected_by"),
+    returnQuantity: numeric("return_quantity", { precision: 10, scale: 2 }),
     installationPoint: varchar("installation_point", { length: 255 }),
     // Only "pending" is written today — a row is deleted outright once
     // Commit & Learn processes it rather than being marked some other
@@ -423,7 +489,7 @@ export const unmappedSparesStagingTable = pgTable(
     uniqueIndex("unmapped_spares_staging_job_card_part_date_idx").on(
       table.jobCardNo,
       table.partNumber,
-      table.fitmentDate
+      table.outwardDate
     ),
   ]
 );

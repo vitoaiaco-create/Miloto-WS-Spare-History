@@ -245,21 +245,37 @@ function toSpareInsertValues(
 ) {
   return {
     assetId: assetIdByFleetNumber.get(row.fleetNumber)!,
-    fitmentDate: toIsoDateString(row.fitmentDate),
-    partNumber: row.partNumber,
+    sNo: row.sNo,
     materialName: row.materialName,
-    jobCardNo: row.jobCardNo,
-    // The cost columns are `numeric()`, which Drizzle represents as strings
-    // by default (see src/db/schema.ts) — the Zod schema validates them as
-    // numbers, so we convert back here.
+    partNumber: row.partNumber,
+    category: row.category,
+    subCategory: row.subCategory,
+    jobCardType: row.jobCardType,
+    subEquipment: row.subEquipment,
+    brandName: row.brandName,
+    supplierName: row.supplierName,
+    docketNo: row.docketNo,
+    vehicleNo: row.vehicleNo,
+    identityNo: row.identityNo,
+    odometer: row.odometer === null ? null : Math.round(row.odometer),
+    // The money/quantity columns are `numeric()`, which Drizzle represents
+    // as strings by default (see src/db/schema.ts) — the Zod schema
+    // validates them as numbers, so we convert back here.
     quantity: row.quantity.toString(),
-    costKwacha: row.costKwacha.toString(),
+    exRate: row.exRate?.toString() ?? null,
+    priceKwacha: row.priceKwacha.toString(),
+    amountKwacha: row.amountKwacha?.toString() ?? null,
     priceUsd: row.priceUsd?.toString() ?? null,
-    costUsd: row.costUsd?.toString() ?? null,
+    amountUsd: row.amountUsd?.toString() ?? null,
+    outwardDate: toIsoDateString(row.outwardDate),
+    jobCardNo: row.jobCardNo,
+    issuedBy: row.issuedBy,
+    collectedBy: row.collectedBy,
+    returnQuantity: row.returnQuantity?.toString() ?? null,
+    installationPoint: row.installationPoint,
     tier1: taxonomy.tier1,
     tier2: taxonomy.tier2,
     tier3: taxonomy.tier3,
-    installationPoint: row.installationPoint,
     assetClass: taxonomy.assetClass,
   }
 }
@@ -276,14 +292,30 @@ function toStagingInsertValues(
 ) {
   return {
     assetId: assetIdByFleetNumber.get(row.fleetNumber)!,
-    fitmentDate: toIsoDateString(row.fitmentDate),
-    partNumber: row.partNumber,
+    sNo: row.sNo,
     materialName: row.materialName,
-    jobCardNo: row.jobCardNo,
+    partNumber: row.partNumber,
+    category: row.category,
+    subCategory: row.subCategory,
+    jobCardType: row.jobCardType,
+    subEquipment: row.subEquipment,
+    brandName: row.brandName,
+    supplierName: row.supplierName,
+    docketNo: row.docketNo,
+    vehicleNo: row.vehicleNo,
+    identityNo: row.identityNo,
+    odometer: row.odometer === null ? null : Math.round(row.odometer),
     quantity: row.quantity.toString(),
-    costKwacha: row.costKwacha.toString(),
+    exRate: row.exRate?.toString() ?? null,
+    priceKwacha: row.priceKwacha.toString(),
+    amountKwacha: row.amountKwacha?.toString() ?? null,
     priceUsd: row.priceUsd?.toString() ?? null,
-    costUsd: row.costUsd?.toString() ?? null,
+    amountUsd: row.amountUsd?.toString() ?? null,
+    outwardDate: toIsoDateString(row.outwardDate),
+    jobCardNo: row.jobCardNo,
+    issuedBy: row.issuedBy,
+    collectedBy: row.collectedBy,
+    returnQuantity: row.returnQuantity?.toString() ?? null,
     installationPoint: row.installationPoint,
   }
 }
@@ -459,12 +491,12 @@ export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
         )
       )
       // Skips lines already on file, per the unique index over job card,
-      // part number and fitment date.
+      // part number and outward date.
       .onConflictDoNothing({
         target: [
           mechanicalSparesTable.jobCardNo,
           mechanicalSparesTable.partNumber,
-          mechanicalSparesTable.fitmentDate,
+          mechanicalSparesTable.outwardDate,
         ],
       })
       .returning({ id: mechanicalSparesTable.id })
@@ -487,7 +519,7 @@ export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
         target: [
           unmappedSparesStagingTable.jobCardNo,
           unmappedSparesStagingTable.partNumber,
-          unmappedSparesStagingTable.fitmentDate,
+          unmappedSparesStagingTable.outwardDate,
         ],
       })
       .returning({ id: unmappedSparesStagingTable.id })

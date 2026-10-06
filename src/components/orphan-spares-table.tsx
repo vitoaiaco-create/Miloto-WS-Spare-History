@@ -4,8 +4,7 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2Icon } from "lucide-react"
 
-import { commitUnmappedSpare } from "@/actions/triage"
-import { Badge } from "@/components/ui/badge"
+import { commitOrphanTaxonomy } from "@/actions/orphan-taxonomy"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -31,20 +30,12 @@ import {
 } from "@/components/ui/table"
 import { toast } from "@/components/ui/toast"
 
-export type TriageStagingRow = {
-  id: number
-  assetName: string
-  outwardDate: string
+export type OrphanSpareRow = {
   partNumber: string
   materialName: string
-  jobCardNo: string
-  // `numeric()` columns come back as strings — see src/db/schema.ts.
-  quantity: string
-  priceKwacha: string
-  createdAt: string
 }
 
-export type TriageDictionaryOptions = {
+export type OrphanDictionaryOptions = {
   tier1: string[]
   tier2: string[]
   tier3: string[]
@@ -72,6 +63,14 @@ const FIELD_LABELS: Record<TaxonomyField, string> = {
   tier2: "Tier 2",
   tier3: "Tier 3",
   assetClass: "Asset Class",
+}
+
+// A Part Number alone isn't a unique key here — the orphan list is distinct
+// on (Part Number, Material Name), and the same Part Number occasionally
+// shows up against more than one historical Material Name spelling — so
+// per-row selection/removal state is keyed on both together.
+function rowKey(row: OrphanSpareRow) {
+  return `${row.partNumber}::${row.materialName}`
 }
 
 function TaxonomySelect({
@@ -111,40 +110,48 @@ function TaxonomySelect({
   )
 }
 
-// Client Component: renders the pending staging rows handed down by the
-// Server Component in src/components/triage-inbox.tsx, tracks each row's
-// in-progress Tier 1/2/3 + Asset Class picks locally, and calls
-// `commitUnmappedSpare` (src/actions/triage.ts) when "Commit & Learn" is
+// Client Component: renders the Historical Orphans List handed down by the
+// Server Component in src/components/master-dictionary.tsx — every distinct
+// Part Number / Material Name combination in `mechanicalSparesTable` that
+// the taxonomy backfill (`backfillMechanicalSparesTaxonomy` in
+// src/actions/dictionary-seed.ts) couldn't resolve. Tracks each row's
+// in-progress Tier 1/2/3 + Asset Class picks locally and calls
+// `commitOrphanTaxonomy` (src/actions/orphan-taxonomy.ts) when "Commit" is
 // pressed.
-export function TriageInboxTable({
+export function OrphanSparesTable({
   rows,
   dictionaryOptions,
 }: {
-  rows: TriageStagingRow[]
-  dictionaryOptions: TriageDictionaryOptions
+  rows: OrphanSpareRow[]
+  dictionaryOptions: OrphanDictionaryOptions
 }) {
   const router = useRouter()
-  const [selections, setSelections] = useState<Record<number, RowSelection>>(
+  const [selections, setSelections] = useState<Record<string, RowSelection>>(
     {}
   )
-  const [committingId, setCommittingId] = useState<number | null>(null)
-  // Rows just committed are hidden immediately rather than waiting on
-  // `router.refresh()` to re-render the Server Component with the row
-  // gone, so the table doesn't flash the just-submitted row back at the
-  // operator for a tick.
-  const [removedIds, setRemovedIds] = useState<Set<number>>(new Set())
+  const [committingKey, setCommittingKey] = useState<string | null>(null)
+  // A commit rewrites every historical row sharing this Part Number, so
+  // every orphan row with that same Part Number — not just the one just
+  // committed — is hidden immediately rather than waiting on
+  // `router.refresh()` to re-render the Server Component with them gone.
+  const [resolvedPartNumbers, setResolvedPartNumbers] = useState<Set<string>>(
+    new Set()
+  )
 
-  const visibleRows = rows.filter((row) => !removedIds.has(row.id))
+  const visibleRows = rows.filter(
+    (row) => !resolvedPartNumbers.has(row.partNumber)
+  )
 
-  function updateSelection(rowId: number, field: TaxonomyField, value: string) {
+  function updateSelection(key: string, field: TaxonomyField, value: string) {
     setSelections((current) => ({
       ...current,
-      [rowId]: { ...(current[rowId] ?? EMPTY_SELECTION), [field]: value },
+      [key]: { ...(current[key] ?? EMPTY_SELECTION), [field]: value },
     }))
   }
 
-  async function handleCommit(row: TriageStagingRow) {
-    const selection = selections[row.id] ?? EMPTY_SELECTION
+  async function handleCommit(row: OrphanSpareRow) {
+    const key = rowKey(row)
+    const selection = selections[key] ?? EMPTY_SELECTION
 
     if (
       !selection.tier1 ||
@@ -161,21 +168,24 @@ export function TriageInboxTable({
       return
     }
 
-    setCommittingId(row.id)
+    setCommittingKey(key)
 
     try {
-      await commitUnmappedSpare({
-        stagingId: row.id,
+      const result = await commitOrphanTaxonomy({
+        partNumber: row.partNumber,
+        materialName: row.materialName,
         tier1: selection.tier1,
         tier2: selection.tier2,
         tier3: selection.tier3,
         assetClass: selection.assetClass,
       })
 
-      setRemovedIds((current) => new Set(current).add(row.id))
+      setResolvedPartNumbers((current) => new Set(current).add(row.partNumber))
       toast.add({
         title: "Committed",
-        description: `${row.partNumber} was taught to the master dictionary and added to spares history.`,
+        description: `${row.partNumber} was taught to the master dictionary and ${result.sparesUpdated.toLocaleString()} historical spare record${
+          result.sparesUpdated === 1 ? "" : "s"
+        } were updated.`,
         type: "success",
       })
       // The dictionary and spares-history reads are both Server Components,
@@ -191,38 +201,36 @@ export function TriageInboxTable({
         type: "error",
       })
     } finally {
-      setCommittingId(null)
+      setCommittingKey(null)
     }
   }
 
   return (
     <Card className="print:hidden">
       <CardHeader>
-        <CardTitle>Triage Inbox</CardTitle>
+        <CardTitle>Historical Orphans</CardTitle>
         <CardDescription>
-          Parts from the daily spares upload whose Part Number didn&apos;t
-          match the master taxonomy dictionary. Pick a Tier 1, Tier 2, Tier 3
-          and Asset Class for each, then Commit &amp; Learn — this teaches
-          the dictionary the classification and writes the spare into
-          spares history in one step.
+          Distinct Part Number / Material Name combinations in the spares
+          history whose Asset Class is still NULL, whose Tier 1 doesn&apos;t
+          follow the standard format, or whose Part Number has no match in
+          the master taxonomy dictionary. Pick a Tier 1, Tier 2, Tier 3 and
+          Asset Class for each, then Commit — this teaches the dictionary the
+          classification and rewrites every historical spare with that Part
+          Number in one step.
         </CardDescription>
       </CardHeader>
       <CardContent>
         {visibleRows.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nothing pending triage.
+            No orphaned parts remaining — the taxonomy backfill has nothing
+            left to clean up.
           </p>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Asset</TableHead>
                 <TableHead>Part Number</TableHead>
                 <TableHead>Material Name</TableHead>
-                <TableHead>Job Card No</TableHead>
-                <TableHead>Outward Date</TableHead>
-                <TableHead>Qty</TableHead>
-                <TableHead>Price (K)</TableHead>
                 <TableHead>Tier 1</TableHead>
                 <TableHead>Tier 2</TableHead>
                 <TableHead>Tier 3</TableHead>
@@ -232,8 +240,9 @@ export function TriageInboxTable({
             </TableHeader>
             <TableBody>
               {visibleRows.map((row) => {
-                const selection = selections[row.id] ?? EMPTY_SELECTION
-                const isCommitting = committingId === row.id
+                const key = rowKey(row)
+                const selection = selections[key] ?? EMPTY_SELECTION
+                const isCommitting = committingKey === key
                 const isReady = Boolean(
                   selection.tier1 &&
                     selection.tier2 &&
@@ -242,18 +251,11 @@ export function TriageInboxTable({
                 )
 
                 return (
-                  <TableRow key={row.id}>
-                    <TableCell>
-                      <Badge variant="outline">{row.assetName}</Badge>
-                    </TableCell>
+                  <TableRow key={key}>
                     <TableCell className="font-medium">
                       {row.partNumber}
                     </TableCell>
                     <TableCell>{row.materialName}</TableCell>
-                    <TableCell>{row.jobCardNo}</TableCell>
-                    <TableCell>{row.outwardDate}</TableCell>
-                    <TableCell>{row.quantity}</TableCell>
-                    <TableCell>{row.priceKwacha}</TableCell>
                     <TableCell>
                       <TaxonomySelect
                         field="tier1"
@@ -261,7 +263,7 @@ export function TriageInboxTable({
                         options={dictionaryOptions.tier1}
                         disabled={isCommitting}
                         onValueChange={(value) =>
-                          updateSelection(row.id, "tier1", value)
+                          updateSelection(key, "tier1", value)
                         }
                       />
                     </TableCell>
@@ -272,7 +274,7 @@ export function TriageInboxTable({
                         options={dictionaryOptions.tier2}
                         disabled={isCommitting}
                         onValueChange={(value) =>
-                          updateSelection(row.id, "tier2", value)
+                          updateSelection(key, "tier2", value)
                         }
                       />
                     </TableCell>
@@ -283,7 +285,7 @@ export function TriageInboxTable({
                         options={dictionaryOptions.tier3}
                         disabled={isCommitting}
                         onValueChange={(value) =>
-                          updateSelection(row.id, "tier3", value)
+                          updateSelection(key, "tier3", value)
                         }
                       />
                     </TableCell>
@@ -294,7 +296,7 @@ export function TriageInboxTable({
                         options={dictionaryOptions.assetClass}
                         disabled={isCommitting}
                         onValueChange={(value) =>
-                          updateSelection(row.id, "assetClass", value)
+                          updateSelection(key, "assetClass", value)
                         }
                       />
                     </TableCell>
@@ -310,7 +312,7 @@ export function TriageInboxTable({
                             className="animate-spin"
                           />
                         ) : null}
-                        {isCommitting ? "Committing…" : "Commit & Learn"}
+                        {isCommitting ? "Committing…" : "Commit"}
                       </Button>
                     </TableCell>
                   </TableRow>
