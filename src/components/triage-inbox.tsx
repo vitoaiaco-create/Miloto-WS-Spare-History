@@ -24,6 +24,8 @@ async function getPendingStagingRows(): Promise<TriageStagingRow[]> {
       outwardDate: unmappedSparesStagingTable.outwardDate,
       partNumber: unmappedSparesStagingTable.partNumber,
       materialName: unmappedSparesStagingTable.materialName,
+      category: unmappedSparesStagingTable.category,
+      subEquipment: unmappedSparesStagingTable.subEquipment,
       jobCardNo: unmappedSparesStagingTable.jobCardNo,
       quantity: unmappedSparesStagingTable.quantity,
       priceKwacha: unmappedSparesStagingTable.priceKwacha,

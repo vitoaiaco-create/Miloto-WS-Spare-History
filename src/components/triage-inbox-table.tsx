@@ -2,13 +2,14 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2Icon } from "lucide-react"
+import { DownloadIcon, Loader2Icon } from "lucide-react"
 
 import { commitUnmappedSpare } from "@/actions/triage"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -30,6 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { toast } from "@/components/ui/toast"
+import { exportDataToCSV } from "@/lib/export-image"
 
 export type TriageStagingRow = {
   id: number
@@ -37,6 +39,10 @@ export type TriageStagingRow = {
   outwardDate: string
   partNumber: string
   materialName: string
+  // Raw ERP cells from the daily upload — exported with the triage CSV,
+  // not shown as table columns (taxonomy is assigned here instead).
+  category: string | null
+  subEquipment: string | null
   jobCardNo: string
   // `numeric()` columns come back as strings — see src/db/schema.ts.
   quantity: string
@@ -73,6 +79,17 @@ const FIELD_LABELS: Record<TaxonomyField, string> = {
   tier3: "Tier 3",
   assetClass: "Asset Class",
 }
+
+// Part Number is a fixed 12rem so Material Name can stick at left-[12rem].
+const STICKY_PART_NUMBER_HEAD =
+  "sticky top-0 left-0 z-30 w-[12rem] min-w-[12rem] max-w-[12rem] bg-background"
+const STICKY_MATERIAL_NAME_HEAD =
+  "sticky top-0 left-[12rem] z-30 w-[16rem] min-w-[16rem] max-w-[16rem] bg-background border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]"
+const STICKY_PART_NUMBER_CELL =
+  "sticky left-0 z-20 w-[12rem] min-w-[12rem] max-w-[12rem] truncate bg-background font-medium group-hover:bg-muted/50"
+const STICKY_MATERIAL_NAME_CELL =
+  "sticky left-[12rem] z-20 w-[16rem] min-w-[16rem] max-w-[16rem] truncate bg-background border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] group-hover:bg-muted/50"
+const STICKY_HEADER_CELL = "sticky top-0 z-20 bg-background"
 
 function TaxonomySelect({
   field,
@@ -111,6 +128,23 @@ function TaxonomySelect({
   )
 }
 
+function exportPendingRows(rows: TriageStagingRow[]) {
+  exportDataToCSV(
+    rows.map((row) => ({
+      "Part Number": row.partNumber,
+      "Material Name": row.materialName,
+      "Sub Equipment": row.subEquipment ?? "",
+      Category: row.category ?? "",
+      Asset: row.assetName,
+      "Job Card No": row.jobCardNo,
+      "Outward Date": row.outwardDate,
+      Qty: row.quantity,
+      "Price (K)": row.priceKwacha,
+    })),
+    "triage-export.csv"
+  )
+}
+
 // Client Component: renders the pending staging rows handed down by the
 // Server Component in src/components/triage-inbox.tsx, tracks each row's
 // in-progress Tier 1/2/3 + Asset Class picks locally, and calls
@@ -141,6 +175,23 @@ export function TriageInboxTable({
       ...current,
       [rowId]: { ...(current[rowId] ?? EMPTY_SELECTION), [field]: value },
     }))
+  }
+
+  function handleExport() {
+    if (visibleRows.length === 0) return
+
+    try {
+      exportPendingRows(visibleRows)
+    } catch (error) {
+      toast.add({
+        title: "Export failed",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not export the pending triage rows.",
+        type: "error",
+      })
+    }
   }
 
   async function handleCommit(row: TriageStagingRow) {
@@ -206,6 +257,17 @@ export function TriageInboxTable({
           the dictionary the classification and writes the spare into
           spares history in one step.
         </CardDescription>
+        <CardAction>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={visibleRows.length === 0}
+            onClick={handleExport}
+          >
+            <DownloadIcon data-icon="inline-start" />
+            Export to CSV
+          </Button>
+        </CardAction>
       </CardHeader>
       <CardContent>
         {visibleRows.length === 0 ? (
@@ -213,21 +275,33 @@ export function TriageInboxTable({
             Nothing pending triage.
           </p>
         ) : (
-          <Table>
-            <TableHeader>
+          <Table containerClassName="relative w-full max-h-[70vh] overflow-auto">
+            <TableHeader className="sticky top-0 z-20 bg-background shadow-[0_2px_5px_-2px_rgba(0,0,0,0.1)]">
               <TableRow>
-                <TableHead>Asset</TableHead>
-                <TableHead>Part Number</TableHead>
-                <TableHead>Material Name</TableHead>
-                <TableHead>Job Card No</TableHead>
-                <TableHead>Outward Date</TableHead>
-                <TableHead>Qty</TableHead>
-                <TableHead>Price (K)</TableHead>
-                <TableHead>Tier 1</TableHead>
-                <TableHead>Tier 2</TableHead>
-                <TableHead>Tier 3</TableHead>
-                <TableHead>Asset Class</TableHead>
-                <TableHead className="sr-only">Commit</TableHead>
+                <TableHead className={STICKY_PART_NUMBER_HEAD}>
+                  Part Number
+                </TableHead>
+                <TableHead className={STICKY_MATERIAL_NAME_HEAD}>
+                  Material Name
+                </TableHead>
+                <TableHead className={STICKY_HEADER_CELL}>Asset</TableHead>
+                <TableHead className={STICKY_HEADER_CELL}>
+                  Job Card No
+                </TableHead>
+                <TableHead className={STICKY_HEADER_CELL}>
+                  Outward Date
+                </TableHead>
+                <TableHead className={STICKY_HEADER_CELL}>Qty</TableHead>
+                <TableHead className={STICKY_HEADER_CELL}>Price (K)</TableHead>
+                <TableHead className={STICKY_HEADER_CELL}>Tier 1</TableHead>
+                <TableHead className={STICKY_HEADER_CELL}>Tier 2</TableHead>
+                <TableHead className={STICKY_HEADER_CELL}>Tier 3</TableHead>
+                <TableHead className={STICKY_HEADER_CELL}>
+                  Asset Class
+                </TableHead>
+                <TableHead className={`${STICKY_HEADER_CELL} sr-only`}>
+                  Commit
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -242,14 +316,22 @@ export function TriageInboxTable({
                 )
 
                 return (
-                  <TableRow key={row.id}>
+                  <TableRow key={row.id} className="group">
+                    <TableCell
+                      className={STICKY_PART_NUMBER_CELL}
+                      title={row.partNumber}
+                    >
+                      {row.partNumber}
+                    </TableCell>
+                    <TableCell
+                      className={STICKY_MATERIAL_NAME_CELL}
+                      title={row.materialName}
+                    >
+                      {row.materialName}
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline">{row.assetName}</Badge>
                     </TableCell>
-                    <TableCell className="font-medium">
-                      {row.partNumber}
-                    </TableCell>
-                    <TableCell>{row.materialName}</TableCell>
                     <TableCell>{row.jobCardNo}</TableCell>
                     <TableCell>{row.outwardDate}</TableCell>
                     <TableCell>{row.quantity}</TableCell>
