@@ -152,7 +152,9 @@ export function SparesTable({
               <TableCell>{spare.materialName}</TableCell>
               <TableCell>{spare.identityNo}</TableCell>
               <TableCell>{spare.partNumber}</TableCell>
-              <TableCell>{spare.subEquipment}</TableCell>
+              <TableCell>
+                {spare.subEquipment.trim() ? spare.subEquipment : "—"}
+              </TableCell>
               <TableCell>{spare.quantity}</TableCell>
               <TableCell>{formatUsd(spare.priceUsd)}</TableCell>
               <TableCell>{formatUsd(spare.amountUsd)}</TableCell>

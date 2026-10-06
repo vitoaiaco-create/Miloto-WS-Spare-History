@@ -1,20 +1,17 @@
 import "server-only"
 
-import { and, between, desc, inArray, not, sql } from "drizzle-orm"
+import { and, between, desc, inArray, isNotNull, not, sql } from "drizzle-orm"
 
 import { db } from "@/db"
 import {
   assetsTable,
+  mechanicalSparesTable,
   mileageLogsTable,
   partDescriptionAliasesTable,
   statementConsumableExclusionsTable,
 } from "@/db/schema"
 import { toIsoDateParam } from "@/lib/iso-date"
-import {
-  normalizeSubEquipment,
-  toCanonicalFleetNumber,
-  toIsoDateString,
-} from "@/lib/spreadsheet"
+import { toCanonicalFleetNumber, toIsoDateString } from "@/lib/spreadsheet"
 import {
   assetTypesForStatement,
   classifyStatementAssetType,
@@ -219,6 +216,30 @@ async function loadStatementConsumableExclusionKeys() {
   }
 }
 
+// Distinct raw ERP `subEquipment` values on file, for the Spares History
+// filter bar. Reads `subEquipment` only — never `tier1` or the dictionary
+// hierarchy — so the dropdown matches what the table displays.
+export async function getDistinctSubEquipmentValues(): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ value: mechanicalSparesTable.subEquipment })
+    .from(mechanicalSparesTable)
+    .where(
+      and(
+        isNotNull(mechanicalSparesTable.subEquipment),
+        sql`btrim(${mechanicalSparesTable.subEquipment}) <> ''`
+      )
+    )
+    .orderBy(mechanicalSparesTable.subEquipment)
+
+  return [
+    ...new Set(
+      rows
+        .map((row) => row.value?.trim() ?? "")
+        .filter((value) => value.length > 0)
+    ),
+  ]
+}
+
 // Reads `mechanicalSparesTable` (joined to `assetsTable` via the `asset`
 // relation from `src/db/relations.ts`) filtered per the Spares History
 // filter bar, and enriches each row with the KM covered since fitment.
@@ -226,13 +247,9 @@ async function loadStatementConsumableExclusionKeys() {
 // baseline log per asset/outward-date), then joined in memory — not once
 // per spare row.
 //
-// Ingestion pins the outward report's "Sub Equipment" column to `tier1`
-// (see `src/lib/validations.ts`), which is also the value the table
-// displays, so the filter matches `tier1` alone. Both sides run through
-// `normalizeSubEquipment` because the source file is upper case
-// ("AIR SYSTEM") while the filter bar offers title case ("Air System").
-// Several categories at once become `tier1 IN (...)`, which Drizzle
-// compiles with `inArray`.
+// Sub Equipment is the raw ERP `subEquipment` column — never `tier1` or
+// the dictionary hierarchy. Several values at once become
+// `subEquipment IN (...)`, which Drizzle compiles with `inArray`.
 //
 // When `excludeStatementConsumables` is set (executive statement only),
 // rows whose part number or material name matches
@@ -247,7 +264,7 @@ export async function getSparesHistory(
   const categories = [
     ...new Set(
       (filters.subEquipment ?? [])
-        .map((category) => normalizeSubEquipment(category))
+        .map((value) => value.trim())
         .filter(Boolean)
     ),
   ]
@@ -279,7 +296,7 @@ export async function getSparesHistory(
       ...(filters.materialName
         ? { materialName: { ilike: `%${filters.materialName}%` } }
         : {}),
-      ...(categories.length > 0 ? { tier1: { in: categories } } : {}),
+      ...(categories.length > 0 ? { subEquipment: { in: categories } } : {}),
       ...(filters.startDate || filters.endDate
         ? {
             outwardDate: {
@@ -366,7 +383,7 @@ export async function getSparesHistory(
       materialName: spare.materialName,
       identityNo: spare.asset.assetName,
       partNumber: spare.partNumber,
-      subEquipment: spare.tier1,
+      subEquipment: spare.subEquipment ?? "",
       quantity: Number(spare.quantity),
       priceUsd: toNullableNumber(spare.priceUsd),
       amountUsd: toNullableNumber(spare.amountUsd),

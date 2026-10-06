@@ -50,8 +50,9 @@ export const mileageLogsTable = pgTable(
 // Column order below mirrors the ERP's own "Job Cards OutWard Report"
 // layout left-to-right, so the two line up at a glance — with our internal
 // identifiers (`id`, `assetId`) pinned to the front and the curated
-// taxonomy (`tier1`/`tier2`/`tier3`/`assetClass` — not an ERP column at all,
-// but what the app actually classifies and reports by) pinned to the back.
+// taxonomy (`tier1`/`tier2`/`tier3`/`assetClass` — not an ERP column at all;
+// owned by the Master Dictionary / Triage Inbox, never by Spares History)
+// pinned to the back.
 // See `src/lib/validations.ts` (`sparesRowSchema`) for the CSV header each
 // ERP-shaped column below is read from.
 export const mechanicalSparesTable = pgTable(
@@ -68,14 +69,15 @@ export const mechanicalSparesTable = pgTable(
     sNo: integer("s_no"),
     materialName: varchar("material_name", { length: 255 }).notNull(),
     partNumber: varchar("part_number", { length: 100 }).notNull(),
-    // Raw ERP columns, stored verbatim alongside — not instead of — the
+    // Raw ERP columns, stored verbatim and never overwritten with the
     // curated `tier1`/`tier2`/`tier3` taxonomy at the bottom of this table.
-    // `ingestSpares` (src/actions/ingestion.ts) still derives tier1/2/3 from
-    // the dictionary (falling back to these same CSV values only when the
-    // dictionary leaves a tier blank), so these columns are the untouched
-    // source data rather than the canonical classification the app reports
-    // by. Null on historical rows imported before the ERP report carried
-    // these columns.
+    // `ingestSpares` (src/actions/ingestion.ts) copies the CSV "Sub
+    // Equipment" cell into `subEquipment` as-is (after trim) and fills
+    // tier1/2/3/assetClass from `masterTaxonomyDictionaryTable` only —
+    // never the other way around. Spares History filters and displays
+    // `subEquipment`; the Master Dictionary, Triage Inbox, and orphan
+    // cleanup own the taxonomy columns. Null on historical rows imported
+    // before the ERP report carried these columns.
     category: text("category"),
     subCategory: text("sub_category"),
     jobCardType: text("job_card_type"),
@@ -114,14 +116,17 @@ export const mechanicalSparesTable = pgTable(
     // Not present in the source CSV; captured for future part-lifespan
     // calculations keyed to a specific fitment location.
     installationPoint: varchar("installation_point", { length: 255 }),
+    // Master Dictionary / Triage Inbox classification. Never filled from
+    // the ERP "Sub Equipment" cell — that lives in `subEquipment` above.
     tier1: varchar("tier_1", { length: 100 }).notNull(),
     tier2: varchar("tier_2", { length: 100 }).notNull(),
     tier3: varchar("tier_3", { length: 100 }).notNull(),
-    // Not present in the outward report either — populated by
-    // `backfillMechanicalSparesTaxonomy` (src/actions/dictionary-seed.ts)
-    // from `masterTaxonomyDictionaryTable.assetClass`, matched on part
-    // number. Nullable because a spare whose part number isn't in the
-    // dictionary yet has no canonical asset class to backfill.
+    // Dictionary-owned classification. Populated by `ingestSpares` (and
+    // `backfillMechanicalSparesTaxonomy` in src/actions/dictionary-seed.ts)
+    // from `masterTaxonomyDictionaryTable`, matched on part number — not
+    // from the ERP "Sub Equipment"/"Category"/"Sub-Category" columns.
+    // Nullable because a spare whose part number isn't in the dictionary
+    // yet has no canonical asset class to backfill.
     assetClass: varchar("asset_class", { length: 100 }),
   },
   (table) => [

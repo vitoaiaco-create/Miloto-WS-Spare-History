@@ -3,7 +3,6 @@ import { z } from "zod"
 import {
   indexRowByHeader,
   inferAssetType,
-  normalizeSubEquipment,
   parseSpreadsheetDate,
   toCanonicalFleetNumber,
   toNumber,
@@ -38,7 +37,6 @@ const MAX_ASSET_NAME = 255
 const MAX_PART_NUMBER = 100
 const MAX_MATERIAL_NAME = 255
 const MAX_JOB_CARD_NO = 50
-const MAX_TIER = 100
 const MAX_INSTALLATION_POINT = 255
 const MAX_DRIVER_NAME = 255
 // Generous ceiling for the new raw ERP passthrough columns on
@@ -107,17 +105,10 @@ export const sparesRowSchema = z.preprocess((row) => {
     returnQuantity: toOptionalNumber(
       cells.get("return qty") ?? cells.get("return quantity")
     ),
-    // "Sub Equipment" is the value the table renders and the filter bar
-    // searches, so it is pinned to `tier1`; "Category" and "Sub-Category"
-    // are kept verbatim in `tier2`/`tier3` for future reporting. Only
-    // `tier1` is case-normalized — `tier2`/`tier3` hold model codes such as
-    // "140K,C9, 950H, D6R" that title casing would mangle.
-    tier1: normalizeSubEquipment(rawSubEquipment),
-    tier2: rawCategory,
-    tier3: rawSubCategory,
-    // Raw ERP columns, stored verbatim alongside the curated tier1/2/3
-    // above rather than instead of them — see the comment on these columns
-    // in src/db/schema.ts.
+    // Raw ERP columns, stored verbatim. "Sub Equipment" is *not* mapped
+    // onto `tier1` — `ingestSpares` writes this cell into
+    // `mechanicalSparesTable.subEquipment` as-is, and fills tier1/2/3 from
+    // the Master Dictionary only (see src/db/schema.ts).
     category: rawCategory || null,
     subCategory: rawSubCategory || null,
     jobCardType: toTrimmedString(cells.get("job card type")) || null,
@@ -175,18 +166,6 @@ export const sparesRowSchema = z.preprocess((row) => {
     .max(MAX_RAW_ERP_FIELD, `Collected By must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
     .nullable(),
   returnQuantity: z.number("Return Qty must be a number").nullable(),
-  tier1: z
-    .string()
-    .min(1, "Sub Equipment is required")
-    .max(MAX_TIER, `Sub Equipment must be ${MAX_TIER} characters or fewer`),
-  tier2: z
-    .string()
-    .min(1, "Category is required")
-    .max(MAX_TIER, `Category must be ${MAX_TIER} characters or fewer`),
-  tier3: z
-    .string()
-    .min(1, "Sub-Category is required")
-    .max(MAX_TIER, `Sub-Category must be ${MAX_TIER} characters or fewer`),
   category: z
     .string()
     .max(MAX_RAW_ERP_FIELD, `Category must be ${MAX_RAW_ERP_FIELD} characters or fewer`)

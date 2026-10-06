@@ -169,10 +169,10 @@ export function inferAssetType(fleetNumber: string) {
   return "Other"
 }
 
-// The outward report writes sub equipment in upper case ("AIR SYSTEM") while
-// the filter dropdown in `src/components/spares-filter-bar.tsx` offers title
-// case ("Air System"). Ingestion and the filter query both normalize through
-// this so the stored value and the filter value compare equal.
+// The outward report writes sub equipment in mixed case ("AIR SYSTEM")
+// while some UIs (analytics, the executive statement) still title-case
+// for display. Those call sites run through this; Spares History stores
+// and filters the raw ERP `subEquipment` value instead.
 export function normalizeSubEquipment(value: string) {
   return value
     .trim()

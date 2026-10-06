@@ -34,26 +34,6 @@ import type { SparesHistoryFilters } from "@/lib/spares-history"
 
 type ExcludeDateRange = { from: Date; to: Date }
 
-const SUB_EQUIPMENT_OPTIONS = [
-  "Air System",
-  "Aircon",
-  "Axles",
-  "Body",
-  "Cabin",
-  "Chassis",
-  "Compressor",
-  "Diffs",
-  "Electrical",
-  "Engine",
-  "Hydraulic System",
-  "Overhauled Diff",
-  "Overhauled Engine",
-  "Overhauled Volvo Engine",
-  "Service",
-  "Suspension",
-  "Transmission",
-]
-
 type Filters = {
   fleetNo: string
   partNumber: string
@@ -106,8 +86,10 @@ function buildQueryString(
 
 export function SparesFilterBar({
   initialFilters,
+  subEquipmentOptions,
 }: {
   initialFilters: SparesHistoryFilters
+  subEquipmentOptions: string[]
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -200,9 +182,9 @@ export function SparesFilterBar({
     categories.length > 0 ||
     excludeDates !== undefined
   const subEquipmentItems = [
-    ...SUB_EQUIPMENT_OPTIONS,
+    ...subEquipmentOptions,
     ...categories.filter(
-      (category) => !SUB_EQUIPMENT_OPTIONS.includes(category)
+      (category) => !subEquipmentOptions.includes(category)
     ),
   ]
 
@@ -212,7 +194,7 @@ export function SparesFilterBar({
         <CardTitle>Filters</CardTitle>
         <CardDescription>
           Narrow the history by asset, part, one or more sub equipment
-          categories, or a date range.
+          values, or a date range.
         </CardDescription>
         <CardAction>
           <Button

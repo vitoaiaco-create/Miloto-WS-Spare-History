@@ -226,11 +226,12 @@ async function resolveAssetIdsByFleetNumber(fleetNumbers: string[]) {
   }
 }
 
-// The taxonomy a matched row is inserted with — either straight from
-// `masterTaxonomyDictionaryTable`, or (for a tier the dictionary left
-// blank) falling back to the CSV's own Sub Equipment/Category/Sub-Category,
-// mirroring the `coalesce()` `backfillMechanicalSparesTaxonomy` applies in
-// src/actions/dictionary-seed.ts.
+// The taxonomy a matched row is inserted with — straight from
+// `masterTaxonomyDictionaryTable`. A tier the dictionary left blank
+// becomes an empty string so the NOT NULL columns on
+// `mechanicalSparesTable` still accept the row; the ERP Sub
+// Equipment/Category/Sub-Category cells are never used as a fallback
+// (those stay on `subEquipment`/`category`/`subCategory`).
 type ResolvedTaxonomy = {
   tier1: string
   tier2: string
@@ -281,11 +282,11 @@ function toSpareInsertValues(
 }
 
 // A row whose Part Number isn't in the dictionary yet carries no taxonomy
-// at all — the CSV's own Sub Equipment/Category/Sub-Category columns are
-// deliberately *not* used as a fallback here (unlike the matched-row case
-// above), since the whole point of staging is to have a human pick the
-// canonical tiers rather than letting ad-hoc report values leak into
-// `mechanicalSparesTable`.
+// at all — the CSV's own Sub Equipment/Category/Sub-Category columns stay
+// as raw ERP fields on the staging row and are never copied into
+// `tier1`/`tier2`/`tier3`. The whole point of staging is to have a human
+// pick the canonical tiers rather than letting ad-hoc report values leak
+// into `mechanicalSparesTable`.
 function toStagingInsertValues(
   row: SparesRow,
   assetIdByFleetNumber: Map<string, number>
@@ -439,10 +440,12 @@ export async function ingestAssets(input: IngestInput): Promise<IngestResult> {
 // Bulk-imports the "Job Cards OutWard Report" into `mechanicalSparesTable`.
 // Every row's Part Number is checked against `masterTaxonomyDictionaryTable`
 // first: a match is inserted straight into `mechanicalSparesTable` with the
-// dictionary's canonical tiers/asset class, and anything that doesn't match
-// is diverted into `unmappedSparesStagingTable` for a human to classify from
-// the Triage Inbox (src/components/triage-inbox.tsx) rather than being
-// written with no — or guessed — taxonomy.
+// dictionary's canonical tiers/asset class (and the CSV "Sub Equipment"
+// cell stored separately on `subEquipment`, never used as a tier
+// fallback). Anything that doesn't match is diverted into
+// `unmappedSparesStagingTable` for a human to classify from the Triage
+// Inbox (src/components/triage-inbox.tsx) rather than being written with
+// no — or guessed — taxonomy.
 export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
   await requireAdmin()
 
@@ -483,9 +486,12 @@ export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
       .values(
         batch.map(({ row, taxonomy }) =>
           toSpareInsertValues(row, assetIdByFleetNumber, {
-            tier1: taxonomy.tier1 ?? row.tier1,
-            tier2: taxonomy.tier2 ?? row.tier2,
-            tier3: taxonomy.tier3 ?? row.tier3,
+            // Dictionary only — never the CSV Sub Equipment/Category
+            // columns. Empty string satisfies the NOT NULL tiers when a
+            // dictionary row left a level blank.
+            tier1: taxonomy.tier1 ?? "",
+            tier2: taxonomy.tier2 ?? "",
+            tier3: taxonomy.tier3 ?? "",
             assetClass: taxonomy.assetClass,
           })
         )

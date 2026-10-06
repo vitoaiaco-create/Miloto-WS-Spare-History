@@ -12,6 +12,7 @@ import { SparesTable } from "@/components/spares-table"
 import { Button } from "@/components/ui/button"
 import { formatIsoDate, toIsoDateParam } from "@/lib/iso-date"
 import {
+  getDistinctSubEquipmentValues,
   getPartDescriptionAliases,
   getSparesHistory,
   getStatementAssets,
@@ -27,7 +28,6 @@ import {
   statementDateRange,
   sparesStatementHref,
 } from "@/lib/spares-statement"
-import { normalizeSubEquipment } from "@/lib/spreadsheet"
 
 type SearchParams = { [key: string]: string | string[] | undefined }
 
@@ -42,9 +42,7 @@ function toFilterList(value: string | string[] | undefined) {
       ? [value]
       : []
 
-  return [
-    ...new Set(raw.map((item) => normalizeSubEquipment(item)).filter(Boolean)),
-  ]
+  return [...new Set(raw.map((item) => item.trim()).filter(Boolean))]
 }
 
 export default async function SparesHistoryPage({
@@ -111,7 +109,7 @@ export default async function SparesHistoryPage({
         excludeTo: hasExcludeRange ? excludeTo : "",
       }
 
-  const [spares, manualEvents, statementAssets, partAliases] =
+  const [spares, manualEvents, statementAssets, partAliases, subEquipmentOptions] =
     await Promise.all([
       getSparesHistory(filters, {
         excludeStatementConsumables: statementEnabled,
@@ -121,6 +119,9 @@ export default async function SparesHistoryPage({
         : Promise.resolve([]),
       statementEnabled ? getStatementAssets() : Promise.resolve([]),
       statementEnabled ? getPartDescriptionAliases() : Promise.resolve({}),
+      statementEnabled
+        ? Promise.resolve([] as string[])
+        : getDistinctSubEquipmentValues(),
     ])
 
   // Manual events (alignment / checks / checks pending) merge in even
@@ -196,7 +197,10 @@ export default async function SparesHistoryPage({
           />
         ) : (
           <>
-            <SparesFilterBar initialFilters={filters} />
+            <SparesFilterBar
+              initialFilters={filters}
+              subEquipmentOptions={subEquipmentOptions}
+            />
 
             <div className="flex items-center justify-end gap-2">
               <ExportTableMenu spares={spares} filters={filters} />
