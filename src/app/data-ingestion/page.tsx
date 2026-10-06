@@ -4,9 +4,11 @@ import Link from "next/link"
 import { redirect } from "next/navigation"
 
 import { DataUploader } from "@/components/data-uploader"
+import { DictionarySeedButton } from "@/components/dictionary-seed-button"
 import { MileageUploader } from "@/components/mileage-uploader"
 import { OilUploader } from "@/components/oil-uploader"
 import { TirePenaltyUploader } from "@/components/tire-penalty-uploader"
+import { TriageInbox } from "@/components/triage-inbox"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -53,6 +55,12 @@ export default async function DataIngestionPage() {
               <TabsTrigger className="px-6 text-base" value="tire-penalties">
                 Tire Penalties
               </TabsTrigger>
+              <TabsTrigger className="px-6 text-base" value="master-dictionary">
+                Master Dictionary
+              </TabsTrigger>
+              <TabsTrigger className="px-6 text-base" value="triage-inbox">
+                Triage Inbox
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="spares">
               <DataUploader />
@@ -65,6 +73,12 @@ export default async function DataIngestionPage() {
             </TabsContent>
             <TabsContent value="tire-penalties">
               <TirePenaltyUploader />
+            </TabsContent>
+            <TabsContent value="master-dictionary">
+              <DictionarySeedButton />
+            </TabsContent>
+            <TabsContent value="triage-inbox">
+              <TriageInbox />
             </TabsContent>
           </Tabs>
         ) : (

@@ -12,16 +12,19 @@ import {
   assetsTable,
   driversTable,
   manualAlignmentEventsTable,
+  masterTaxonomyDictionaryTable,
   mechanicalSparesTable,
   mileageLogsTable,
   monthlyPairingsTable,
   oilConsumptionLogsTable,
   oilSamplesTable,
   tirePenaltiesTable,
+  unmappedSparesStagingTable,
 } from "@/db/schema"
 import {
   indexRowByHeader,
   inferAssetType,
+  isPopulatedCsvRow,
   parseSpreadsheetDate,
   toCanonicalFleetNumber,
   toIsoDateString,
@@ -70,13 +73,22 @@ export type IngestResult = {
   // Rows that failed validation, with the spreadsheet row number.
   skipped: SkippedRow[]
   createdAssets: string[]
+  // Rows whose Part Number did not match `masterTaxonomyDictionaryTable`
+  // and were diverted into `unmappedSparesStagingTable` instead of
+  // `mechanicalSparesTable` — see `ingestSpares` below. Already counted in
+  // `imported` (they were written somewhere); this just breaks out how many
+  // of those now need triage. Optional because only `ingestSpares` can ever
+  // produce this diversion.
+  divertedToTriage?: number
 }
 
 // The data ingestion tools write directly into the fleet's asset, spares,
 // mileage and oil tables, so every action here is gated to admins only — see
 // src/app/data-ingestion/page.tsx for the matching UI-level gate and
-// src/proxy.ts for the route-level gate.
-async function requireAdmin() {
+// src/proxy.ts for the route-level gate. Exported so other admin-only
+// Server Actions (e.g. `seedMasterTaxonomyDictionary` in
+// src/actions/dictionary-seed.ts) can reuse the same check.
+export async function requireAdmin() {
   const { userId, sessionClaims } = await auth()
 
   if (!userId || sessionClaims?.metadata?.role !== "admin") {
@@ -214,9 +226,22 @@ async function resolveAssetIdsByFleetNumber(fleetNumbers: string[]) {
   }
 }
 
+// The taxonomy a matched row is inserted with — either straight from
+// `masterTaxonomyDictionaryTable`, or (for a tier the dictionary left
+// blank) falling back to the CSV's own Sub Equipment/Category/Sub-Category,
+// mirroring the `coalesce()` `backfillMechanicalSparesTaxonomy` applies in
+// src/actions/dictionary-seed.ts.
+type ResolvedTaxonomy = {
+  tier1: string
+  tier2: string
+  tier3: string
+  assetClass: string | null
+}
+
 function toSpareInsertValues(
   row: SparesRow,
-  assetIdByFleetNumber: Map<string, number>
+  assetIdByFleetNumber: Map<string, number>,
+  taxonomy: ResolvedTaxonomy
 ) {
   return {
     assetId: assetIdByFleetNumber.get(row.fleetNumber)!,
@@ -231,11 +256,76 @@ function toSpareInsertValues(
     costKwacha: row.costKwacha.toString(),
     priceUsd: row.priceUsd?.toString() ?? null,
     costUsd: row.costUsd?.toString() ?? null,
-    tier1: row.tier1,
-    tier2: row.tier2,
-    tier3: row.tier3,
+    tier1: taxonomy.tier1,
+    tier2: taxonomy.tier2,
+    tier3: taxonomy.tier3,
+    installationPoint: row.installationPoint,
+    assetClass: taxonomy.assetClass,
+  }
+}
+
+// A row whose Part Number isn't in the dictionary yet carries no taxonomy
+// at all — the CSV's own Sub Equipment/Category/Sub-Category columns are
+// deliberately *not* used as a fallback here (unlike the matched-row case
+// above), since the whole point of staging is to have a human pick the
+// canonical tiers rather than letting ad-hoc report values leak into
+// `mechanicalSparesTable`.
+function toStagingInsertValues(
+  row: SparesRow,
+  assetIdByFleetNumber: Map<string, number>
+) {
+  return {
+    assetId: assetIdByFleetNumber.get(row.fleetNumber)!,
+    fitmentDate: toIsoDateString(row.fitmentDate),
+    partNumber: row.partNumber,
+    materialName: row.materialName,
+    jobCardNo: row.jobCardNo,
+    quantity: row.quantity.toString(),
+    costKwacha: row.costKwacha.toString(),
+    priceUsd: row.priceUsd?.toString() ?? null,
+    costUsd: row.costUsd?.toString() ?? null,
     installationPoint: row.installationPoint,
   }
+}
+
+// Matches `mapDictionaryRow`'s own key in src/actions/dictionary-seed.ts, so
+// a CSV row's Part Number resolves to the same dictionary entry regardless
+// of casing or stray whitespace coming off the ERP export.
+function normalizeDictionaryPartNumber(partNumber: string) {
+  return partNumber.trim().toUpperCase()
+}
+
+type DictionaryTaxonomy = {
+  tier1: string | null
+  tier2: string | null
+  tier3: string | null
+  assetClass: string | null
+}
+
+// Looks up every distinct Part Number in a batch against
+// `masterTaxonomyDictionaryTable` in a single query, keyed by the same
+// normalized form the dictionary itself is seeded with.
+async function lookupDictionaryTaxonomy(partNumbers: string[]) {
+  const uniquePartNumbers = [
+    ...new Set(partNumbers.map(normalizeDictionaryPartNumber)),
+  ]
+
+  if (uniquePartNumbers.length === 0) {
+    return new Map<string, DictionaryTaxonomy>()
+  }
+
+  const entries = await db
+    .select({
+      partNumber: masterTaxonomyDictionaryTable.partNumber,
+      tier1: masterTaxonomyDictionaryTable.tier1,
+      tier2: masterTaxonomyDictionaryTable.tier2,
+      tier3: masterTaxonomyDictionaryTable.tier3,
+      assetClass: masterTaxonomyDictionaryTable.assetClass,
+    })
+    .from(masterTaxonomyDictionaryTable)
+    .where(inArray(masterTaxonomyDictionaryTable.partNumber, uniquePartNumbers))
+
+  return new Map(entries.map((entry) => [entry.partNumber, entry] as const))
 }
 
 // The mileage/telemetry export is a "tall" report: each row is a single
@@ -315,6 +405,12 @@ export async function ingestAssets(input: IngestInput): Promise<IngestResult> {
 }
 
 // Bulk-imports the "Job Cards OutWard Report" into `mechanicalSparesTable`.
+// Every row's Part Number is checked against `masterTaxonomyDictionaryTable`
+// first: a match is inserted straight into `mechanicalSparesTable` with the
+// dictionary's canonical tiers/asset class, and anything that doesn't match
+// is diverted into `unmappedSparesStagingTable` for a human to classify from
+// the Triage Inbox (src/components/triage-inbox.tsx) rather than being
+// written with no — or guessed — taxonomy.
 export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
   await requireAdmin()
 
@@ -328,13 +424,39 @@ export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
   const { assetIdByFleetNumber, createdFleetNumbers } =
     await resolveAssetIdsByFleetNumber(valid.map((row) => row.fleetNumber))
 
-  let imported = 0
+  const dictionaryByPartNumber = await lookupDictionaryTaxonomy(
+    valid.map((row) => row.partNumber)
+  )
 
-  for (const batch of chunk(valid, INSERT_CHUNK_SIZE)) {
+  const matched: { row: SparesRow; taxonomy: DictionaryTaxonomy }[] = []
+  const unmatched: SparesRow[] = []
+
+  for (const row of valid) {
+    const taxonomy = dictionaryByPartNumber.get(
+      normalizeDictionaryPartNumber(row.partNumber)
+    )
+
+    if (taxonomy) {
+      matched.push({ row, taxonomy })
+    } else {
+      unmatched.push(row)
+    }
+  }
+
+  let importedToMechanical = 0
+
+  for (const batch of chunk(matched, INSERT_CHUNK_SIZE)) {
     const inserted = await db
       .insert(mechanicalSparesTable)
       .values(
-        batch.map((row) => toSpareInsertValues(row, assetIdByFleetNumber))
+        batch.map(({ row, taxonomy }) =>
+          toSpareInsertValues(row, assetIdByFleetNumber, {
+            tier1: taxonomy.tier1 ?? row.tier1,
+            tier2: taxonomy.tier2 ?? row.tier2,
+            tier3: taxonomy.tier3 ?? row.tier3,
+            assetClass: taxonomy.assetClass,
+          })
+        )
       )
       // Skips lines already on file, per the unique index over job card,
       // part number and fitment date.
@@ -347,16 +469,41 @@ export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
       })
       .returning({ id: mechanicalSparesTable.id })
 
-    imported += inserted.length
+    importedToMechanical += inserted.length
+  }
+
+  let importedToStaging = 0
+
+  for (const batch of chunk(unmatched, INSERT_CHUNK_SIZE)) {
+    const inserted = await db
+      .insert(unmappedSparesStagingTable)
+      .values(
+        batch.map((row) => toStagingInsertValues(row, assetIdByFleetNumber))
+      )
+      // Mirrors `mechanicalSparesTable`'s own unique index, so re-uploading
+      // the same CSV tops up rather than re-staging a part that's already
+      // awaiting triage.
+      .onConflictDoNothing({
+        target: [
+          unmappedSparesStagingTable.jobCardNo,
+          unmappedSparesStagingTable.partNumber,
+          unmappedSparesStagingTable.fitmentDate,
+        ],
+      })
+      .returning({ id: unmappedSparesStagingTable.id })
+
+    importedToStaging += inserted.length
   }
 
   revalidatePath("/spares-history")
+  revalidatePath("/data-ingestion")
 
   return {
-    imported,
-    duplicates: valid.length - imported,
+    imported: importedToMechanical + importedToStaging,
+    duplicates: valid.length - importedToMechanical - importedToStaging,
     skipped,
     createdAssets: createdFleetNumbers,
+    divertedToTriage: importedToStaging,
   }
 }
 
@@ -667,14 +814,6 @@ const uploadTirePenaltiesSchema = z.object({
 })
 
 export type UploadTirePenaltiesInput = z.infer<typeof uploadTirePenaltiesSchema>
-
-function isPopulatedCsvRow(row: unknown) {
-  return (
-    !!row &&
-    typeof row === "object" &&
-    Object.values(row).some((value) => String(value ?? "").trim() !== "")
-  )
-}
 
 function toTirePenaltyInsertValues(
   row: TirePenaltyRow,

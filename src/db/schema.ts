@@ -74,6 +74,12 @@ export const mechanicalSparesTable = pgTable(
     // Not present in the source CSV; captured for future part-lifespan
     // calculations keyed to a specific fitment location.
     installationPoint: varchar("installation_point", { length: 255 }),
+    // Not present in the outward report either — populated by
+    // `backfillMechanicalSparesTaxonomy` (src/actions/dictionary-seed.ts)
+    // from `masterTaxonomyDictionaryTable.assetClass`, matched on part
+    // number. Nullable because a spare whose part number isn't in the
+    // dictionary yet has no canonical asset class to backfill.
+    assetClass: varchar("asset_class", { length: 100 }),
   },
   (table) => [
     // Identifies one line of the outward report, so re-importing a report
@@ -345,6 +351,83 @@ export const tirePenaltiesTable = pgTable(
 
 // Manual tire-penalty log. `assetId` is the fleet unit the incident is
 // charged against; `driverId` is the driver credited with the penalty.
+// Master taxonomy lookup imported from `Final_Master_Dictionary.csv` (see
+// `seedMasterTaxonomyDictionary` in src/actions/dictionary-seed.ts). Keyed on
+// `partNumber` — normalized to trimmed/upper-case at import time — so the
+// same dictionary file can be re-run at any time to top up or correct
+// classifications without duplicating rows. Shared across all staff; not
+// linked to `mechanicalSparesTable` by a foreign key since the dictionary
+// may list part numbers that haven't been issued yet.
+export const masterTaxonomyDictionaryTable = pgTable(
+  "master_taxonomy_dictionary",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    partNumber: text("part_number").notNull(),
+    materialName: text("material_name"),
+    standardizedMaterialName: text("standardized_material_name"),
+    tier1: text("tier_1"),
+    tier2: text("tier_2"),
+    tier3: text("tier_3"),
+    brandName: text("brand_name"),
+    assetClass: text("asset_class"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // The seed script's `onConflictDoUpdate` match key — one row per Part
+    // Number, so re-seeding updates existing classifications in place.
+    uniqueIndex("master_taxonomy_dictionary_part_number_idx").on(
+      table.partNumber
+    ),
+  ]
+);
+
+// Rows from the daily mechanical spares CSV upload (`ingestSpares` in
+// src/actions/ingestion.ts) whose Part Number did not match
+// `masterTaxonomyDictionaryTable`. Sits in the Triage Inbox
+// (src/components/triage-inbox.tsx) until a staff member picks a Tier 1/2/3
+// and Asset Class for the part; "Commit & Learn" then upserts that choice
+// into the dictionary, inserts the spare into `mechanicalSparesTable`, and
+// deletes this row (see `commitUnmappedSpare` in src/actions/triage.ts).
+// Columns otherwise mirror `mechanicalSparesTable` minus the taxonomy
+// fields, which is exactly what's missing until triage happens. Shared
+// across all staff, like every other table in this file.
+export const unmappedSparesStagingTable = pgTable(
+  "unmapped_spares_staging",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => assetsTable.id, { onDelete: "cascade" }),
+    fitmentDate: date("fitment_date").notNull(),
+    partNumber: varchar("part_number", { length: 100 }).notNull(),
+    materialName: varchar("material_name", { length: 255 }).notNull(),
+    jobCardNo: varchar("job_card_no", { length: 50 }).notNull(),
+    quantity: numeric("quantity", { precision: 10, scale: 2 }).notNull(),
+    costKwacha: numeric("cost_kwacha", { precision: 12, scale: 2 }).notNull(),
+    priceUsd: numeric("price_usd", { precision: 12, scale: 2 }),
+    costUsd: numeric("cost_usd", { precision: 12, scale: 2 }),
+    installationPoint: varchar("installation_point", { length: 255 }),
+    // Only "pending" is written today — a row is deleted outright once
+    // Commit & Learn processes it rather than being marked some other
+    // status. Kept as a column (instead of inferring state from the row's
+    // mere presence) so a future "ignored" workflow has somewhere to land
+    // without another migration.
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // Mirrors `mechanical_spares_job_card_part_date_idx` so re-uploading the
+    // same CSV tops up rather than re-staging a part that's already
+    // awaiting triage.
+    uniqueIndex("unmapped_spares_staging_job_card_part_date_idx").on(
+      table.jobCardNo,
+      table.partNumber,
+      table.fitmentDate
+    ),
+  ]
+);
+
 export const tireIncidentsTable = pgTable("tire_incidents", {
   id: uuid().primaryKey().defaultRandom(),
   assetId: integer("asset_id")

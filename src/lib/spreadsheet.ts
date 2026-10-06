@@ -103,6 +103,18 @@ export function looksLikeOilsExport(rows: unknown[]) {
   )
 }
 
+// Excel and Papa Parse both emit a trailing all-empty row for a file that
+// ends in a blank line; importing it would fail validation on every column.
+// Shared by every CSV-driven importer in `src/actions/ingestion.ts` and
+// `src/actions/dictionary-seed.ts`.
+export function isPopulatedCsvRow(row: unknown) {
+  return (
+    !!row &&
+    typeof row === "object" &&
+    Object.values(row).some((value) => String(value ?? "").trim() !== "")
+  )
+}
+
 export function indexRowByHeader(row: unknown) {
   const cells = new Map<string, unknown>()
 

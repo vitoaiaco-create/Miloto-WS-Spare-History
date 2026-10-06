@@ -102,6 +102,7 @@ export function DataUploader() {
 
     let imported = 0
     let duplicates = 0
+    let divertedToTriage = 0
     const skipped: IngestResult["skipped"] = []
     const createdAssets = new Set<string>()
 
@@ -118,6 +119,7 @@ export function DataUploader() {
 
       imported += result.imported
       duplicates += result.duplicates
+      divertedToTriage += result.divertedToTriage ?? 0
       skipped.push(...result.skipped)
       for (const fleetNumber of result.createdAssets) {
         createdAssets.add(fleetNumber)
@@ -130,6 +132,7 @@ export function DataUploader() {
         duplicates,
         skipped,
         createdAssets: [...createdAssets],
+        divertedToTriage,
       })
     )
 

@@ -1,0 +1,1 @@
+ALTER TABLE "mechanical_spares" ADD COLUMN "asset_class" varchar(100);

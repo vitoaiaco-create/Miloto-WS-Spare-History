@@ -46,6 +46,16 @@ function describeSkippedRows(skipped: SkippedRow[]) {
   }: ${listed}${unlisted > 0 ? `; and ${unlisted} more` : ""}.`
 }
 
+function describeDivertedToTriage(divertedToTriage: number) {
+  if (divertedToTriage <= 0) return ""
+
+  return ` ${divertedToTriage} record${
+    divertedToTriage === 1 ? "" : "s"
+  } did not match the master taxonomy dictionary and ${
+    divertedToTriage === 1 ? "was" : "were"
+  } sent to the Triage Inbox for classification.`
+}
+
 // Turns the aggregated ingest counts into the Success / Error copy shown in
 // the confirmation modal after `ingestSpares` / `ingestMileage` finish.
 export function buildIngestDialogResult(input: {
@@ -53,6 +63,7 @@ export function buildIngestDialogResult(input: {
   duplicates: number
   skipped: SkippedRow[]
   createdAssets: string[]
+  divertedToTriage?: number
 }): IngestDialogResult {
   const description = [
     `Imported ${input.imported} record${input.imported === 1 ? "" : "s"}.`,
@@ -61,6 +72,7 @@ export function buildIngestDialogResult(input: {
           input.duplicates === 1 ? " was" : "s were"
         } already on file and left unchanged.`
       : "",
+    describeDivertedToTriage(input.divertedToTriage ?? 0),
     describeCreatedAssets(input.createdAssets),
     describeSkippedRows(input.skipped),
   ].join("")
