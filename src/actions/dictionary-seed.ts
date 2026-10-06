@@ -10,7 +10,7 @@ import { revalidatePath } from "next/cache"
 import { requireAdmin } from "@/actions/ingestion"
 import { db } from "@/db"
 import { masterTaxonomyDictionaryTable, mechanicalSparesTable } from "@/db/schema"
-import { indexRowByHeader, isPopulatedCsvRow, toTrimmedString } from "@/lib/spreadsheet"
+import { isPopulatedCsvRow, toTrimmedString } from "@/lib/spreadsheet"
 
 // `Final_Master_Dictionary.csv` is a server-side file dropped at the project
 // root (next to package.json) rather than something staff upload — see
@@ -47,31 +47,46 @@ type DictionaryRow = {
   assetClass: string | null
 }
 
-function firstCell(cells: Map<string, unknown>, ...keys: string[]) {
-  for (const key of keys) {
-    const value = cells.get(key)
-    if (value !== undefined) return value
-  }
-  return undefined
-}
-
 function toOptionalTrimmedString(value: unknown) {
   const trimmed = toTrimmedString(value)
   return trimmed === "" ? null : trimmed
 }
 
-// Maps one CSV row (keyed by whatever header casing/spacing the dictionary
-// export happens to use) onto `masterTaxonomyDictionaryTable`'s columns.
+// `Final_Master_Dictionary.csv`'s header row (exact casing/spacing, after
+// `transformHeader` below only trims whitespace/BOM — it does not lowercase
+// or otherwise normalize). This is an explicit, exact-string map from CSV
+// header to `masterTaxonomyDictionaryTable` column rather than the
+// fuzzy/normalized `indexRowByHeader` lookup `ingestion.ts` uses for the
+// ERP exports: those reports vary their header casing/spacing release to
+// release, but this dictionary file's shape is controlled by us, so an
+// exact map is both sufficient and — unlike a normalized "tier 1"/"tier1"
+// lookup, which silently misses this file's actual "Tier_1" header and
+// leaves every taxonomy column NULL — correct.
+const DICTIONARY_CSV_HEADERS = {
+  partNumber: "Part Number",
+  materialName: "Material Name",
+  standardizedMaterialName: "Standardized Material Name",
+  tier1: "Tier_1",
+  tier2: "Tier_2",
+  tier3: "Tier_3",
+  brandName: "Brand Name",
+  assetClass: "Asset Class",
+} as const
+
+// Maps one CSV row — keyed by the exact headers in
+// `DICTIONARY_CSV_HEADERS` — onto `masterTaxonomyDictionaryTable`'s columns.
 // Only Part Number is required — every other column is nullable in the
 // schema, so a dictionary row missing a tier or brand is still worth
 // keeping rather than rejecting outright.
 function mapDictionaryRow(
   row: unknown
 ): { data: DictionaryRow; error: null } | { data: null; error: string } {
-  const cells = indexRowByHeader(row)
-  const rawPartNumber = toTrimmedString(
-    firstCell(cells, "part number", "part no", "partnumber", "part_number")
-  )
+  const cells = (row && typeof row === "object" ? row : {}) as Record<
+    string,
+    unknown
+  >
+
+  const rawPartNumber = toTrimmedString(cells[DICTIONARY_CSV_HEADERS.partNumber])
 
   if (!rawPartNumber) {
     return { data: null, error: "Part Number is required" }
@@ -85,24 +100,15 @@ function mapDictionaryRow(
   return {
     data: {
       partNumber,
-      materialName: toOptionalTrimmedString(
-        firstCell(cells, "material name", "material_name")
-      ),
+      materialName: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.materialName]),
       standardizedMaterialName: toOptionalTrimmedString(
-        firstCell(
-          cells,
-          "standardized material name",
-          "standardised material name",
-          "standard material name"
-        )
+        cells[DICTIONARY_CSV_HEADERS.standardizedMaterialName]
       ),
-      tier1: toOptionalTrimmedString(firstCell(cells, "tier 1", "tier1")),
-      tier2: toOptionalTrimmedString(firstCell(cells, "tier 2", "tier2")),
-      tier3: toOptionalTrimmedString(firstCell(cells, "tier 3", "tier3")),
-      brandName: toOptionalTrimmedString(firstCell(cells, "brand name", "brand")),
-      assetClass: toOptionalTrimmedString(
-        firstCell(cells, "asset class", "asset_class")
-      ),
+      tier1: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.tier1]),
+      tier2: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.tier2]),
+      tier3: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.tier3]),
+      brandName: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.brandName]),
+      assetClass: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.assetClass]),
     },
     error: null,
   }
