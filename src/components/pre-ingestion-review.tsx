@@ -32,6 +32,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  getTier2Options,
+  getTier3Options,
+  isCompleteTaxonomyPath,
+  sanitizeTaxonomyTiers,
+  TIER_1_OPTIONS,
+} from "@/lib/taxonomy"
 
 export type ReviewedSpareMapping = {
   partNumber: string
@@ -76,28 +83,32 @@ function TaxonomySelect({
   value,
   options,
   disabled,
+  allowCustomValue = false,
   onValueChange,
 }: {
   field: TaxonomyField
   value: string
   options: string[]
   disabled: boolean
+  allowCustomValue?: boolean
   onValueChange: (value: string) => void
 }) {
   const label = FIELD_LABELS[field]
-  const mergedOptions = options.includes(value) || value === ""
-    ? options
-    : [value, ...options]
+  const mergedOptions =
+    allowCustomValue && value !== "" && !options.includes(value)
+      ? [value, ...options]
+      : options
+  const selectValue = mergedOptions.includes(value) ? value : ""
 
   return (
     <Select
-      value={value || undefined}
+      value={selectValue || undefined}
       onValueChange={(next) => {
         if (typeof next === "string" && next) onValueChange(next)
       }}
       disabled={disabled}
     >
-      <SelectTrigger className="w-40" aria-label={label}>
+      <SelectTrigger className="w-56" aria-label={label}>
         <SelectValue placeholder={label} />
       </SelectTrigger>
       <SelectContent>
@@ -113,15 +124,16 @@ function TaxonomySelect({
 
 function initialSelections(parts: PreviewSparePart[]) {
   return Object.fromEntries(
-    parts.map((part) => [
-      part.partNumberKey,
-      {
-        tier1: part.tier1,
-        tier2: part.tier2,
-        tier3: part.tier3,
-        assetClass: part.assetClass,
-      } satisfies RowSelection,
-    ])
+    parts.map((part) => {
+      const tiers = sanitizeTaxonomyTiers(part)
+      return [
+        part.partNumberKey,
+        {
+          ...tiers,
+          assetClass: part.assetClass,
+        } satisfies RowSelection,
+      ]
+    })
   )
 }
 
@@ -155,23 +167,63 @@ export function PreIngestionReview({
     [parts]
   )
 
+  const incompleteCount = useMemo(
+    () =>
+      parts.filter((part) => {
+        const selection = selections[part.partNumberKey]
+        return !isCompleteTaxonomyPath(
+          selection?.tier1 ?? "",
+          selection?.tier2 ?? "",
+          selection?.tier3 ?? ""
+        )
+      }).length,
+    [parts, selections]
+  )
+
   function updateSelection(
     partNumberKey: string,
     field: TaxonomyField,
     value: string
   ) {
-    setSelections((current) => ({
-      ...current,
-      [partNumberKey]: {
-        ...(current[partNumberKey] ?? {
-          tier1: "",
-          tier2: "",
-          tier3: "",
-          assetClass: "",
-        }),
-        [field]: value,
-      },
-    }))
+    setSelections((current) => {
+      const previous = current[partNumberKey] ?? {
+        tier1: "",
+        tier2: "",
+        tier3: "",
+        assetClass: "",
+      }
+
+      if (field === "tier1") {
+        return {
+          ...current,
+          [partNumberKey]: {
+            ...previous,
+            tier1: value,
+            tier2: "",
+            tier3: "",
+          },
+        }
+      }
+
+      if (field === "tier2") {
+        return {
+          ...current,
+          [partNumberKey]: {
+            ...previous,
+            tier2: value,
+            tier3: "",
+          },
+        }
+      }
+
+      return {
+        ...current,
+        [partNumberKey]: {
+          ...previous,
+          [field]: value,
+        },
+      }
+    })
   }
 
   function handleApprove() {
@@ -202,6 +254,9 @@ export function PreIngestionReview({
           {orphanCount > 0
             ? ` — ${orphanCount} orphan${orphanCount === 1 ? "" : "s"} still need a mapping`
             : ""}
+          {incompleteCount > 0
+            ? ` — ${incompleteCount} part${incompleteCount === 1 ? "" : "s"} still need a complete Tier 1 / 2 / 3 path`
+            : ""}
           {skippedCount > 0
             ? `. ${skippedCount} source row${skippedCount === 1 ? "" : "s"} failed validation and will be skipped.`
             : "."}{" "}
@@ -219,7 +274,9 @@ export function PreIngestionReview({
           </Button>
           <Button
             type="button"
-            disabled={isCommitting || parts.length === 0}
+            disabled={
+              isCommitting || parts.length === 0 || incompleteCount > 0
+            }
             onClick={handleApprove}
           >
             {isCommitting ? (
@@ -261,11 +318,19 @@ export function PreIngestionReview({
               {parts.map((part) => {
                 const selection =
                   selections[part.partNumberKey] ?? {
-                    tier1: part.tier1,
-                    tier2: part.tier2,
-                    tier3: part.tier3,
+                    ...sanitizeTaxonomyTiers(part),
                     assetClass: part.assetClass,
                   }
+                const tier2Options = getTier2Options(selection.tier1)
+                const tier3Options = getTier3Options(
+                  selection.tier1,
+                  selection.tier2
+                )
+                const isMapped = isCompleteTaxonomyPath(
+                  selection.tier1,
+                  selection.tier2,
+                  selection.tier3
+                )
 
                 return (
                   <TableRow key={part.partNumberKey} className="group">
@@ -282,10 +347,12 @@ export function PreIngestionReview({
                       {part.materialName}
                     </TableCell>
                     <TableCell>
-                      {part.isOrphan ? (
-                        <Badge variant="destructive">Orphan</Badge>
-                      ) : (
+                      {isMapped ? (
                         <Badge variant="outline">Mapped</Badge>
+                      ) : (
+                        <Badge variant="destructive">
+                          {part.isOrphan ? "Orphan" : "Needs mapping"}
+                        </Badge>
                       )}
                     </TableCell>
                     <TableCell>{part.occurrenceCount}</TableCell>
@@ -293,7 +360,7 @@ export function PreIngestionReview({
                       <TaxonomySelect
                         field="tier1"
                         value={selection.tier1}
-                        options={dictionaryOptions.tier1}
+                        options={TIER_1_OPTIONS}
                         disabled={isCommitting}
                         onValueChange={(value) =>
                           updateSelection(part.partNumberKey, "tier1", value)
@@ -304,8 +371,8 @@ export function PreIngestionReview({
                       <TaxonomySelect
                         field="tier2"
                         value={selection.tier2}
-                        options={dictionaryOptions.tier2}
-                        disabled={isCommitting}
+                        options={tier2Options}
+                        disabled={isCommitting || !selection.tier1}
                         onValueChange={(value) =>
                           updateSelection(part.partNumberKey, "tier2", value)
                         }
@@ -315,8 +382,8 @@ export function PreIngestionReview({
                       <TaxonomySelect
                         field="tier3"
                         value={selection.tier3}
-                        options={dictionaryOptions.tier3}
-                        disabled={isCommitting}
+                        options={tier3Options}
+                        disabled={isCommitting || !selection.tier2}
                         onValueChange={(value) =>
                           updateSelection(part.partNumberKey, "tier3", value)
                         }
@@ -327,6 +394,7 @@ export function PreIngestionReview({
                         field="assetClass"
                         value={selection.assetClass}
                         options={dictionaryOptions.assetClass}
+                        allowCustomValue
                         disabled={isCommitting}
                         onValueChange={(value) =>
                           updateSelection(

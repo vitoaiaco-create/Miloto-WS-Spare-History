@@ -32,6 +32,11 @@ import {
   toTrimmedString,
 } from "@/lib/spreadsheet"
 import {
+  isCompleteTaxonomyPath,
+  sanitizeTaxonomyTiers,
+  TIER_1_OPTIONS,
+} from "@/lib/taxonomy"
+import {
   alignmentRowSchema,
   assetRowSchema,
   oilConsumptionRowSchema,
@@ -378,34 +383,20 @@ function sortUniqueTaxonomyValues(rows: { value: string | null }[]) {
   ].sort((a, b) => a.localeCompare(b))
 }
 
-// Dropdown vocabulary for the Pre-Ingestion Review table — the same
-// distinct Tier 1/2/3 + Asset Class values the Triage Inbox draws from
-// `masterTaxonomyDictionaryTable`, so an inline edit can't invent a
-// classification the dictionary doesn't already know.
+// Dropdown vocabulary for the Pre-Ingestion Review table. Tier 1/2/3
+// come from the canonical `FLEET_TAXONOMY` tree (T2/T3 are cascaded per
+// row in the client, so they are not flattened here). Asset Class is
+// still the distinct values already on file in the dictionary.
 async function getDictionaryTaxonomyOptions(): Promise<TaxonomyDictionaryOptions> {
-  const [tier1Rows, tier2Rows, tier3Rows, assetClassRows] = await Promise.all([
-    db
-      .selectDistinct({ value: masterTaxonomyDictionaryTable.tier1 })
-      .from(masterTaxonomyDictionaryTable)
-      .where(isNotNull(masterTaxonomyDictionaryTable.tier1)),
-    db
-      .selectDistinct({ value: masterTaxonomyDictionaryTable.tier2 })
-      .from(masterTaxonomyDictionaryTable)
-      .where(isNotNull(masterTaxonomyDictionaryTable.tier2)),
-    db
-      .selectDistinct({ value: masterTaxonomyDictionaryTable.tier3 })
-      .from(masterTaxonomyDictionaryTable)
-      .where(isNotNull(masterTaxonomyDictionaryTable.tier3)),
-    db
-      .selectDistinct({ value: masterTaxonomyDictionaryTable.assetClass })
-      .from(masterTaxonomyDictionaryTable)
-      .where(isNotNull(masterTaxonomyDictionaryTable.assetClass)),
-  ])
+  const assetClassRows = await db
+    .selectDistinct({ value: masterTaxonomyDictionaryTable.assetClass })
+    .from(masterTaxonomyDictionaryTable)
+    .where(isNotNull(masterTaxonomyDictionaryTable.assetClass))
 
   return {
-    tier1: sortUniqueTaxonomyValues(tier1Rows),
-    tier2: sortUniqueTaxonomyValues(tier2Rows),
-    tier3: sortUniqueTaxonomyValues(tier3Rows),
+    tier1: [...TIER_1_OPTIONS],
+    tier2: [],
+    tier3: [],
     assetClass: sortUniqueTaxonomyValues(assetClassRows),
   }
 }
@@ -422,9 +413,10 @@ export type PreviewSparePart = {
   // review table's stable row id.
   partNumberKey: string
   materialName: string
-  // Proposed mapping from `masterTaxonomyDictionaryTable`. Blank when the
-  // part is an orphan (no dictionary row) or the dictionary left that
-  // level empty.
+  // Proposed mapping from `masterTaxonomyDictionaryTable` after
+  // `sanitizeTaxonomyTiers`: blank when the part is an orphan, the
+  // dictionary left that level empty, or the stored Tier 2/3 is not a
+  // child of its parent in `FLEET_TAXONOMY`.
   tier1: string
   tier2: string
   tier3: string
@@ -444,13 +436,19 @@ function toPreviewSparePart(
   row: SparesRow,
   taxonomy: DictionaryTaxonomy | undefined
 ): PreviewSparePart {
+  const tiers = sanitizeTaxonomyTiers({
+    tier1: taxonomy?.tier1,
+    tier2: taxonomy?.tier2,
+    tier3: taxonomy?.tier3,
+  })
+
   return {
     partNumber: row.partNumber.trim(),
     partNumberKey: normalizeDictionaryPartNumber(row.partNumber),
     materialName: row.materialName,
-    tier1: taxonomy?.tier1 ?? "",
-    tier2: taxonomy?.tier2 ?? "",
-    tier3: taxonomy?.tier3 ?? "",
+    tier1: tiers.tier1,
+    tier2: tiers.tier2,
+    tier3: tiers.tier3,
     assetClass: taxonomy?.assetClass ?? "",
     isOrphan: taxonomy === undefined,
     occurrenceCount: 1,
@@ -516,22 +514,35 @@ const MAX_TAXONOMY = 100
 const MAX_PART_NUMBER_LENGTH = 100
 const MAX_MATERIAL_NAME_LENGTH = 255
 
-const reviewedMappingSchema = z.object({
-  partNumber: z
-    .string()
-    .trim()
-    .min(1, "Part Number is required")
-    .max(MAX_PART_NUMBER_LENGTH, `Part Number must be ${MAX_PART_NUMBER_LENGTH} characters or fewer`),
-  materialName: z
-    .string()
-    .trim()
-    .min(1, "Material Name is required")
-    .max(MAX_MATERIAL_NAME_LENGTH, `Material Name must be ${MAX_MATERIAL_NAME_LENGTH} characters or fewer`),
-  tier1: z.string().trim().max(MAX_TAXONOMY),
-  tier2: z.string().trim().max(MAX_TAXONOMY),
-  tier3: z.string().trim().max(MAX_TAXONOMY),
-  assetClass: z.string().trim().max(MAX_TAXONOMY),
-})
+const reviewedMappingSchema = z
+  .object({
+    partNumber: z
+      .string()
+      .trim()
+      .min(1, "Part Number is required")
+      .max(MAX_PART_NUMBER_LENGTH, `Part Number must be ${MAX_PART_NUMBER_LENGTH} characters or fewer`),
+    materialName: z
+      .string()
+      .trim()
+      .min(1, "Material Name is required")
+      .max(MAX_MATERIAL_NAME_LENGTH, `Material Name must be ${MAX_MATERIAL_NAME_LENGTH} characters or fewer`),
+    tier1: z.string().trim().max(MAX_TAXONOMY),
+    tier2: z.string().trim().max(MAX_TAXONOMY),
+    tier3: z.string().trim().max(MAX_TAXONOMY),
+    assetClass: z.string().trim().max(MAX_TAXONOMY),
+  })
+  .superRefine((mapping, ctx) => {
+    if (
+      !isCompleteTaxonomyPath(mapping.tier1, mapping.tier2, mapping.tier3)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["tier3"],
+        message:
+          "Tier 1, Tier 2 and Tier 3 must form a valid fleet taxonomy path",
+      })
+    }
+  })
 
 const commitSparesIngestionSchema = z.object({
   mappings: z.array(reviewedMappingSchema),

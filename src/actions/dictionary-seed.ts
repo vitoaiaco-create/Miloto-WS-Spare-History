@@ -11,6 +11,7 @@ import { requireAdmin } from "@/actions/ingestion"
 import { db } from "@/db"
 import { masterTaxonomyDictionaryTable, mechanicalSparesTable } from "@/db/schema"
 import { isPopulatedCsvRow, toTrimmedString } from "@/lib/spreadsheet"
+import { sanitizeTaxonomyTiers } from "@/lib/taxonomy"
 
 // `Final_Master_Dictionary.csv` is a server-side file dropped at the project
 // root (next to package.json) rather than something staff upload — see
@@ -97,6 +98,12 @@ function mapDictionaryRow(
   // export happened to case it.
   const partNumber = rawPartNumber.trim().toUpperCase()
 
+  const tiers = sanitizeTaxonomyTiers({
+    tier1: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.tier1]),
+    tier2: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.tier2]),
+    tier3: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.tier3]),
+  })
+
   return {
     data: {
       partNumber,
@@ -104,9 +111,9 @@ function mapDictionaryRow(
       standardizedMaterialName: toOptionalTrimmedString(
         cells[DICTIONARY_CSV_HEADERS.standardizedMaterialName]
       ),
-      tier1: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.tier1]),
-      tier2: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.tier2]),
-      tier3: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.tier3]),
+      tier1: tiers.tier1 || null,
+      tier2: tiers.tier2 || null,
+      tier3: tiers.tier3 || null,
       brandName: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.brandName]),
       assetClass: toOptionalTrimmedString(cells[DICTIONARY_CSV_HEADERS.assetClass]),
     },
