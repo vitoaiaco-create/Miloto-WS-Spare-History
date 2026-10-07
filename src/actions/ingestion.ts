@@ -2,7 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server"
 import { format } from "date-fns"
-import { and, desc, eq, inArray, lte, sql } from "drizzle-orm"
+import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import Papa from "papaparse"
 import { z } from "zod"
@@ -361,6 +361,192 @@ async function lookupDictionaryTaxonomy(partNumbers: string[]) {
   return new Map(entries.map((entry) => [entry.partNumber, entry] as const))
 }
 
+export type TaxonomyDictionaryOptions = {
+  tier1: string[]
+  tier2: string[]
+  tier3: string[]
+  assetClass: string[]
+}
+
+function sortUniqueTaxonomyValues(rows: { value: string | null }[]) {
+  return [
+    ...new Set(
+      rows
+        .map((row) => row.value)
+        .filter((value): value is string => value !== null && value !== "")
+    ),
+  ].sort((a, b) => a.localeCompare(b))
+}
+
+// Dropdown vocabulary for the Pre-Ingestion Review table — the same
+// distinct Tier 1/2/3 + Asset Class values the Triage Inbox draws from
+// `masterTaxonomyDictionaryTable`, so an inline edit can't invent a
+// classification the dictionary doesn't already know.
+async function getDictionaryTaxonomyOptions(): Promise<TaxonomyDictionaryOptions> {
+  const [tier1Rows, tier2Rows, tier3Rows, assetClassRows] = await Promise.all([
+    db
+      .selectDistinct({ value: masterTaxonomyDictionaryTable.tier1 })
+      .from(masterTaxonomyDictionaryTable)
+      .where(isNotNull(masterTaxonomyDictionaryTable.tier1)),
+    db
+      .selectDistinct({ value: masterTaxonomyDictionaryTable.tier2 })
+      .from(masterTaxonomyDictionaryTable)
+      .where(isNotNull(masterTaxonomyDictionaryTable.tier2)),
+    db
+      .selectDistinct({ value: masterTaxonomyDictionaryTable.tier3 })
+      .from(masterTaxonomyDictionaryTable)
+      .where(isNotNull(masterTaxonomyDictionaryTable.tier3)),
+    db
+      .selectDistinct({ value: masterTaxonomyDictionaryTable.assetClass })
+      .from(masterTaxonomyDictionaryTable)
+      .where(isNotNull(masterTaxonomyDictionaryTable.assetClass)),
+  ])
+
+  return {
+    tier1: sortUniqueTaxonomyValues(tier1Rows),
+    tier2: sortUniqueTaxonomyValues(tier2Rows),
+    tier3: sortUniqueTaxonomyValues(tier3Rows),
+    assetClass: sortUniqueTaxonomyValues(assetClassRows),
+  }
+}
+
+function emptyToNull(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? ""
+  return trimmed === "" ? null : trimmed
+}
+
+export type PreviewSparePart = {
+  // Original Part Number from the first valid row that carried this key.
+  partNumber: string
+  // Trimmed/upper-case form used as the dictionary match key and the
+  // review table's stable row id.
+  partNumberKey: string
+  materialName: string
+  // Proposed mapping from `masterTaxonomyDictionaryTable`. Blank when the
+  // part is an orphan (no dictionary row) or the dictionary left that
+  // level empty.
+  tier1: string
+  tier2: string
+  tier3: string
+  assetClass: string
+  isOrphan: boolean
+  occurrenceCount: number
+}
+
+export type ParseAndPreviewSparesResult = {
+  uniqueParts: PreviewSparePart[]
+  skipped: SkippedRow[]
+  dictionaryOptions: TaxonomyDictionaryOptions
+  validRowCount: number
+}
+
+function toPreviewSparePart(
+  row: SparesRow,
+  taxonomy: DictionaryTaxonomy | undefined
+): PreviewSparePart {
+  return {
+    partNumber: row.partNumber.trim(),
+    partNumberKey: normalizeDictionaryPartNumber(row.partNumber),
+    materialName: row.materialName,
+    tier1: taxonomy?.tier1 ?? "",
+    tier2: taxonomy?.tier2 ?? "",
+    tier3: taxonomy?.tier3 ?? "",
+    assetClass: taxonomy?.assetClass ?? "",
+    isOrphan: taxonomy === undefined,
+    occurrenceCount: 1,
+  }
+}
+
+// Parses one batch of the Job Cards Outward Report and returns the unique
+// Part Numbers with their proposed Master Dictionary mappings. Does not
+// write to `mechanicalSparesTable` or `unmappedSparesStagingTable` — the
+// client holds the raw rows and only commits after staff review
+// (`commitSparesIngestion`).
+export async function parseAndPreviewSpares(
+  input: IngestInput
+): Promise<ParseAndPreviewSparesResult> {
+  await requireAdmin()
+
+  const { rows, firstRowNumber } = ingestInputSchema.parse(input)
+  const { valid, skipped } = partitionRows(rows, sparesRowSchema, firstRowNumber)
+
+  if (valid.length === 0) {
+    return {
+      uniqueParts: [],
+      skipped,
+      dictionaryOptions: await getDictionaryTaxonomyOptions(),
+      validRowCount: 0,
+    }
+  }
+
+  const [dictionaryByPartNumber, dictionaryOptions] = await Promise.all([
+    lookupDictionaryTaxonomy(valid.map((row) => row.partNumber)),
+    getDictionaryTaxonomyOptions(),
+  ])
+
+  const uniqueParts = new Map<string, PreviewSparePart>()
+
+  for (const row of valid) {
+    const key = normalizeDictionaryPartNumber(row.partNumber)
+    const existing = uniqueParts.get(key)
+
+    if (existing) {
+      existing.occurrenceCount += 1
+      continue
+    }
+
+    uniqueParts.set(
+      key,
+      toPreviewSparePart(row, dictionaryByPartNumber.get(key))
+    )
+  }
+
+  return {
+    uniqueParts: [...uniqueParts.values()].sort((a, b) => {
+      if (a.isOrphan !== b.isOrphan) return a.isOrphan ? -1 : 1
+      return a.partNumber.localeCompare(b.partNumber)
+    }),
+    skipped,
+    dictionaryOptions,
+    validRowCount: valid.length,
+  }
+}
+
+const MAX_TAXONOMY = 100
+const MAX_PART_NUMBER_LENGTH = 100
+const MAX_MATERIAL_NAME_LENGTH = 255
+
+const reviewedMappingSchema = z.object({
+  partNumber: z
+    .string()
+    .trim()
+    .min(1, "Part Number is required")
+    .max(MAX_PART_NUMBER_LENGTH, `Part Number must be ${MAX_PART_NUMBER_LENGTH} characters or fewer`),
+  materialName: z
+    .string()
+    .trim()
+    .min(1, "Material Name is required")
+    .max(MAX_MATERIAL_NAME_LENGTH, `Material Name must be ${MAX_MATERIAL_NAME_LENGTH} characters or fewer`),
+  tier1: z.string().trim().max(MAX_TAXONOMY),
+  tier2: z.string().trim().max(MAX_TAXONOMY),
+  tier3: z.string().trim().max(MAX_TAXONOMY),
+  assetClass: z.string().trim().max(MAX_TAXONOMY),
+})
+
+const commitSparesIngestionSchema = z.object({
+  mappings: z.array(reviewedMappingSchema),
+  rows: z.array(z.unknown()),
+  firstRowNumber: z.number().int().positive(),
+})
+
+export type CommitSparesIngestionInput = z.infer<
+  typeof commitSparesIngestionSchema
+>
+
+export type CommitSparesIngestionResult = IngestResult & {
+  dictionaryUpserted: number
+}
+
 // The mileage/telemetry export is a "tall" report: each row is a single
 // metric reading for one asset on one date ("Miloto_No", "Date", "Metric",
 // "Value") rather than one row per odometer reading, and carries metrics
@@ -437,15 +623,14 @@ export async function ingestAssets(input: IngestInput): Promise<IngestResult> {
   }
 }
 
-// Bulk-imports the "Job Cards OutWard Report" into `mechanicalSparesTable`.
-// Every row's Part Number is checked against `masterTaxonomyDictionaryTable`
-// first: a match is inserted straight into `mechanicalSparesTable` with the
-// dictionary's canonical tiers/asset class (and the CSV "Sub Equipment"
-// cell stored separately on `subEquipment`, never used as a tier
-// fallback). Anything that doesn't match is diverted into
-// `unmappedSparesStagingTable` for a human to classify from the Triage
-// Inbox (src/components/triage-inbox.tsx) rather than being written with
-// no — or guessed — taxonomy.
+// One-step import of the "Job Cards OutWard Report". The Data Ingestion
+// UI no longer calls this for daily uploads — those go through
+// `parseAndPreviewSpares` + `commitSparesIngestion` so staff can review
+// mappings first. Kept as the programmatic path: a dictionary match is
+// inserted into `mechanicalSparesTable` with the dictionary's canonical
+// tiers/asset class (CSV "Sub Equipment" stays on `subEquipment`), and
+// anything unmatched is diverted into `unmappedSparesStagingTable` for
+// the Triage Inbox (src/components/triage-inbox.tsx).
 export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
   await requireAdmin()
 
@@ -542,6 +727,153 @@ export async function ingestSpares(input: IngestInput): Promise<IngestResult> {
     skipped,
     createdAssets: createdFleetNumbers,
     divertedToTriage: importedToStaging,
+  }
+}
+
+async function upsertReviewedDictionaryMappings(
+  mappings: z.infer<typeof reviewedMappingSchema>[]
+) {
+  if (mappings.length === 0) return 0
+
+  const now = new Date()
+  const byPartNumber = new Map<
+    string,
+    {
+      partNumber: string
+      materialName: string
+      tier1: string | null
+      tier2: string | null
+      tier3: string | null
+      assetClass: string | null
+      updatedAt: Date
+    }
+  >()
+
+  for (const mapping of mappings) {
+    const partNumber = normalizeDictionaryPartNumber(mapping.partNumber)
+    byPartNumber.set(partNumber, {
+      partNumber,
+      materialName: mapping.materialName,
+      tier1: emptyToNull(mapping.tier1),
+      tier2: emptyToNull(mapping.tier2),
+      tier3: emptyToNull(mapping.tier3),
+      assetClass: emptyToNull(mapping.assetClass),
+      updatedAt: now,
+    })
+  }
+
+  const deduped = [...byPartNumber.values()]
+  let upserted = 0
+
+  for (const batch of chunk(deduped, INSERT_CHUNK_SIZE)) {
+    const written = await db
+      .insert(masterTaxonomyDictionaryTable)
+      .values(batch)
+      .onConflictDoUpdate({
+        target: masterTaxonomyDictionaryTable.partNumber,
+        set: {
+          materialName: sql`excluded.material_name`,
+          tier1: sql`excluded.tier_1`,
+          tier2: sql`excluded.tier_2`,
+          tier3: sql`excluded.tier_3`,
+          assetClass: sql`excluded.asset_class`,
+          updatedAt: now,
+        },
+      })
+      .returning({ id: masterTaxonomyDictionaryTable.id })
+
+    upserted += written.length
+  }
+
+  return upserted
+}
+
+// Commits a reviewed Job Cards Outward Report: first upserts the staff
+// member's taxonomy choices into `masterTaxonomyDictionaryTable` (so
+// corrections and newly classified orphans are learned), then maps those
+// finalized categories onto the raw transaction rows and inserts them
+// into `mechanicalSparesTable`. Duplicate job-card/part/date lines are
+// skipped via `onConflictDoNothing`, matching `ingestSpares`.
+export async function commitSparesIngestion(
+  input: CommitSparesIngestionInput
+): Promise<CommitSparesIngestionResult> {
+  await requireAdmin()
+
+  const data = commitSparesIngestionSchema.parse(input)
+  const { valid, skipped } = partitionRows(
+    data.rows,
+    sparesRowSchema,
+    data.firstRowNumber
+  )
+
+  const dictionaryUpserted = await upsertReviewedDictionaryMappings(
+    data.mappings
+  )
+
+  if (valid.length === 0) {
+    return {
+      imported: 0,
+      duplicates: 0,
+      skipped,
+      createdAssets: [],
+      dictionaryUpserted,
+    }
+  }
+
+  const { assetIdByFleetNumber, createdFleetNumbers } =
+    await resolveAssetIdsByFleetNumber(valid.map((row) => row.fleetNumber))
+
+  const taxonomyByPartNumber = new Map<string, ResolvedTaxonomy>()
+
+  for (const mapping of data.mappings) {
+    taxonomyByPartNumber.set(normalizeDictionaryPartNumber(mapping.partNumber), {
+      tier1: mapping.tier1,
+      tier2: mapping.tier2,
+      tier3: mapping.tier3,
+      assetClass: emptyToNull(mapping.assetClass),
+    })
+  }
+
+  let imported = 0
+
+  for (const batch of chunk(valid, INSERT_CHUNK_SIZE)) {
+    const inserted = await db
+      .insert(mechanicalSparesTable)
+      .values(
+        batch.map((row) => {
+          const taxonomy = taxonomyByPartNumber.get(
+            normalizeDictionaryPartNumber(row.partNumber)
+          ) ?? {
+            tier1: "",
+            tier2: "",
+            tier3: "",
+            assetClass: null,
+          }
+
+          return toSpareInsertValues(row, assetIdByFleetNumber, taxonomy)
+        })
+      )
+      .onConflictDoNothing({
+        target: [
+          mechanicalSparesTable.jobCardNo,
+          mechanicalSparesTable.partNumber,
+          mechanicalSparesTable.outwardDate,
+        ],
+      })
+      .returning({ id: mechanicalSparesTable.id })
+
+    imported += inserted.length
+  }
+
+  revalidatePath("/spares-history")
+  revalidatePath("/data-ingestion")
+
+  return {
+    imported,
+    duplicates: valid.length - imported,
+    skipped,
+    createdAssets: createdFleetNumbers,
+    dictionaryUpserted,
   }
 }
 
