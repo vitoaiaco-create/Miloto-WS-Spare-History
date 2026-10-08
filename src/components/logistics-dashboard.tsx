@@ -73,12 +73,14 @@ import {
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
+import { DirectorSummaryMatrix } from "@/components/director-summary-matrix"
 import { TireDamagesCharts } from "@/components/tire-damages-charts"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import type { DirectorSummaryMatrixPayload } from "@/lib/director-summary-matrix"
 import type {
   LogisticsEntityType,
   MatrixClass,
@@ -1674,6 +1676,7 @@ export function LogisticsDashboard({
   motiveData,
   operatorData,
   tireDamages,
+  directorSummary,
   year,
   month,
 }: {
@@ -1681,6 +1684,7 @@ export function LogisticsDashboard({
   motiveData: MotiveUnitYieldScore[]
   operatorData: OperatorYieldScore[]
   tireDamages: TireDamagesByFleetType
+  directorSummary: DirectorSummaryMatrixPayload
   year: number
   /** Latest completed calendar month (1-12); also the YTD end month. */
   month: number
@@ -1694,12 +1698,15 @@ export function LogisticsDashboard({
 
   return (
     <Tabs defaultValue="matrix" className="gap-6">
-      <TabsList className="h-9 w-full max-w-3xl justify-start overflow-x-auto print:hidden group-data-horizontal/tabs:h-9">
+      <TabsList className="h-9 w-full max-w-4xl justify-start overflow-x-auto print:hidden group-data-horizontal/tabs:h-9">
         <TabsTrigger className="px-3" value="matrix">
           Yield Matrix (Chart)
         </TabsTrigger>
         <TabsTrigger className="px-3" value="rankings">
           Asset Rankings (Table)
+        </TabsTrigger>
+        <TabsTrigger className="px-3" value="director-summary">
+          Director&apos;s Summary
         </TabsTrigger>
         <TabsTrigger className="px-3" value="tyre-damages">
           Tyre Damages
@@ -1719,6 +1726,9 @@ export function LogisticsDashboard({
           ytdMonths={ytdMonths}
           ytdPeriodLabel={ytdPeriodLabel}
         />
+      </TabsContent>
+      <TabsContent value="director-summary">
+        <DirectorSummaryMatrix data={directorSummary} />
       </TabsContent>
       <TabsContent value="tyre-damages">
         <TireDamagesCharts

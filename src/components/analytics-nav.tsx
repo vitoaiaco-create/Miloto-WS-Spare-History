@@ -92,7 +92,7 @@ export function AnalyticsNav({ className }: { className?: string }) {
             render={<Link href="/analytics/operations" />}
             aria-current={section === "operations" ? "page" : undefined}
           >
-            Operational Health (Coming Soon)
+            Operational Health
           </DropdownMenuItem>
           <DropdownMenuItem
             nativeButton={false}

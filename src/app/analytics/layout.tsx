@@ -26,11 +26,11 @@ export default async function AnalyticsLayout({
 
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
-      <section className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-16 sm:px-10 lg:px-16">
+      <section className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-16 print:max-w-none print:px-4 print:py-0 sm:px-10 lg:px-16">
         <Button
           variant="ghost"
           size="sm"
-          className="self-start"
+          className="self-start print:hidden"
           nativeButton={false}
           render={<Link href="/" />}
         >
@@ -38,11 +38,11 @@ export default async function AnalyticsLayout({
           Central Hub
         </Button>
 
-        <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
+        <h1 className="text-3xl font-semibold tracking-tight text-black print:hidden sm:text-4xl dark:text-zinc-50">
           Workshop Analytics
         </h1>
 
-        <AnalyticsNav />
+        <AnalyticsNav className="print:hidden" />
 
         {children}
       </section>
