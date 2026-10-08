@@ -1,7 +1,11 @@
 import { format } from "date-fns"
 
 import { parseIsoDate, toIsoDateParam } from "@/lib/iso-date"
-import type { ManualStatementEventType } from "@/lib/spares-statement"
+import {
+  STATEMENT_COMPONENT_GROUPS,
+  type ManualStatementEventType,
+} from "@/lib/spares-statement"
+import { normalizeSubEquipment } from "@/lib/spreadsheet"
 
 export const DIRECTOR_SUMMARY_EVENT_TYPES = [
   "Intervention",
@@ -12,30 +16,40 @@ export const DIRECTOR_SUMMARY_EVENT_TYPES = [
 export type DirectorSummaryEventType =
   (typeof DIRECTOR_SUMMARY_EVENT_TYPES)[number]
 
-// Director-facing sub-equipment columns. Master Dictionary tier 1/2 paths
-// collapse into this shorter list so Engine stays split from Transmission
-// and Brakes stay split from Air System on the printed matrix.
+// Same ERP Sub Equipment labels the executive statement uses
+// (`STATEMENT_COMPONENT_GROUPS` / `mechanicalSparesTable.subEquipment`),
+// plus General for blank rows and routine checks. Print order puts the
+// high-traffic mechanical groups first.
 export const DIRECTOR_SUMMARY_SYSTEMS = [
   "General",
   "Engine",
   "Transmission",
-  "Axles & Suspension",
-  "Brakes",
+  "Axles",
+  "Suspension",
+  "Diffs",
   "Air System",
   "Electrical",
-  "Hydraulics",
-  "Cabin & Body",
+  "Hydraulic System",
+  "Cabin",
+  "Body",
   "Chassis",
+  "Compressor",
+  "Aircon",
   "Service",
-] as const
+  "Overhauled Engine",
+  "Overhauled Volvo Engine",
+  "Overhauled Diff",
+] as const satisfies readonly (
+  | "General"
+  | (typeof STATEMENT_COMPONENT_GROUPS)[number]
+)[]
 
 export type DirectorSummarySystem = (typeof DIRECTOR_SUMMARY_SYSTEMS)[number]
 
 export type DirectorSummarySpareInput = {
   assetName: string
   date: string | Date
-  tier1: string | null
-  tier2: string | null
+  subEquipment: string | null
 }
 
 export type DirectorSummaryManualEventInput = {
@@ -66,46 +80,11 @@ export type DirectorSummaryMatrixPayload = DirectorSummaryMatrixResult & {
   periodLabel: string
 }
 
-const TIER2_SYSTEM_MAP: Record<string, DirectorSummarySystem> = {
-  "Engine Mechanicals": "Engine",
-  "Fuel & Air Induction": "Engine",
-  "Cooling System": "Engine",
-  "Drivetrain & Transmission": "Transmission",
-  "Cabin Components & HVAC": "Cabin & Body",
-  "Body, Glass & Mirrors": "Cabin & Body",
-  "Structural Chassis & Towing": "Chassis",
-  "Axles & Hubs": "Axles & Suspension",
-  "Steering Components": "Axles & Suspension",
-  "Suspension Systems": "Axles & Suspension",
-  "Foundation Brakes": "Brakes",
-  "Brake Actuation & Control": "Brakes",
-  "Air Lines & Fittings": "Air System",
-  "Hydraulic Pumps & Motors": "Hydraulics",
-  "Cylinders & Rams": "Hydraulics",
-  "Hydraulic Lines & Fittings": "Hydraulics",
-  "Service Parts": "Service",
-  "Fasteners & Hardware": "General",
-  "Workshop & General": "General",
-  "Starting & Charging": "Electrical",
-  "Lighting & Signage": "Electrical",
-  "Sensors & Wiring": "Electrical",
-}
-
-const TIER1_SYSTEM_MAP: Record<string, DirectorSummarySystem> = {
-  "1. ENGINE & POWERTRAIN": "Engine",
-  "2. CABIN, BODY & CHASSIS": "Cabin & Body",
-  "3. SUSPENSION, STEERING & AXLES": "Axles & Suspension",
-  "4. BRAKES & PNEUMATICS": "Brakes",
-  "5. HYDRAULICS": "Hydraulics",
-  "6. CONSUMABLES, SERVICE & WEAR": "General",
-  "7. ELECTRICAL & INSTRUMENTATION": "Electrical",
-}
-
 const MANUAL_EVENT_SYSTEM: Record<
   Extract<ManualStatementEventType, "WHEEL_ALIGNMENT" | "CHECKS_OK">,
   DirectorSummarySystem
 > = {
-  WHEEL_ALIGNMENT: "Axles & Suspension",
+  WHEEL_ALIGNMENT: "Axles",
   CHECKS_OK: "General",
 }
 
@@ -158,24 +137,14 @@ export function formatDirectorSummaryDate(
   return label
 }
 
-// Collapses a Master Dictionary path onto one printed system column.
-// Tier 2 wins when it is a known child of `FLEET_TAXONOMY`; otherwise the
-// Tier 1 group is used. Unknown paths land in General.
-export function mapTaxonomyToSystem(
-  tier1: string | null | undefined,
-  tier2: string | null | undefined
+// Title-cases the raw ERP cell the same way the executive statement does.
+// Known groups keep their own column; blank or unrecognised values land
+// in General.
+export function systemFromSubEquipment(
+  subEquipment: string | null | undefined
 ): DirectorSummarySystem {
-  const trimmedTier1 = tier1?.trim() ?? ""
-  const trimmedTier2 = tier2?.trim() ?? ""
-
-  if (trimmedTier2 && TIER2_SYSTEM_MAP[trimmedTier2]) {
-    return TIER2_SYSTEM_MAP[trimmedTier2]
-  }
-
-  if (trimmedTier1 && TIER1_SYSTEM_MAP[trimmedTier1]) {
-    return TIER1_SYSTEM_MAP[trimmedTier1]
-  }
-
+  const name = normalizeSubEquipment(subEquipment ?? "")
+  if (name && isDirectorSummarySystem(name)) return name
   return "General"
 }
 
@@ -262,7 +231,7 @@ export function aggregateDirectorSummaryMatrix(
     addOccurrence(
       groups,
       spare.assetName,
-      mapTaxonomyToSystem(spare.tier1, spare.tier2),
+      systemFromSubEquipment(spare.subEquipment),
       "Intervention",
       date
     )

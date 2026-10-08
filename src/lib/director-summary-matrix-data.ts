@@ -36,8 +36,7 @@ export async function getDirectorSummaryMatrix(
       .select({
         assetName: assetsTable.assetName,
         date: mechanicalSparesTable.outwardDate,
-        tier1: mechanicalSparesTable.tier1,
-        tier2: mechanicalSparesTable.tier2,
+        subEquipment: mechanicalSparesTable.subEquipment,
       })
       .from(mechanicalSparesTable)
       .innerJoin(
