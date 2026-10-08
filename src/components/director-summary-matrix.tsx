@@ -2,12 +2,11 @@
 
 import { CheckCircle2, Crosshair, Printer, Wrench } from "lucide-react"
 import { usePathname, useRouter } from "next/navigation"
-import type { ComponentType } from "react"
+import { useEffect, useState, type ComponentType } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -81,8 +80,8 @@ function MatrixEventLine({ event }: { event: DirectorSummaryCellEvent }) {
   const { Icon, className, label } = EVENT_ICON[event.eventType]
 
   return (
-    <span
-      className="inline-flex items-center gap-1 text-[11px] leading-tight print:text-[9px]"
+    <div
+      className="flex items-center gap-1.5 whitespace-nowrap text-[11px] leading-tight print:text-[9px]"
       title={`${label} ${event.formattedDate}`}
     >
       <Icon
@@ -93,7 +92,7 @@ function MatrixEventLine({ event }: { event: DirectorSummaryCellEvent }) {
         )}
       />
       <span className="tabular-nums">{event.formattedDate}</span>
-    </span>
+    </div>
   )
 }
 
@@ -134,11 +133,19 @@ function PeriodSelect({ period }: { period: AnalyticsPeriod }) {
 
 function DirectorSummaryAssetTable({
   title,
+  printLabel,
+  printSection,
+  onPrint,
+  hiddenOnPrint,
   rows,
   systems,
   periodLabel,
 }: {
   title: string
+  printLabel: string
+  printSection: "trucks" | "trailers"
+  onPrint: () => void
+  hiddenOnPrint: boolean
   rows: DirectorSummaryRow[]
   systems: readonly DirectorSummarySystem[]
   periodLabel: string
@@ -146,20 +153,37 @@ function DirectorSummaryAssetTable({
   const columnCount = systems.length + 1
 
   return (
-    <div className="flex flex-col gap-2 print:gap-1">
-      <h2 className="text-lg font-semibold tracking-tight print:block print:pt-2 print:text-sm print:text-black">
-        {title}
-      </h2>
+    <div
+      data-print-section={printSection}
+      className={cn(
+        "flex flex-col gap-2 print:gap-1",
+        hiddenOnPrint && "print:hidden"
+      )}
+    >
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-lg font-semibold tracking-tight print:block print:pt-2 print:text-sm print:text-black">
+          {title}
+        </h3>
+        <Button
+          type="button"
+          variant="outline"
+          className="print:hidden"
+          onClick={onPrint}
+        >
+          <Printer data-icon="inline-start" />
+          {printLabel}
+        </Button>
+      </div>
       <Table className="print:text-xs" containerClassName={TABLE_CONTAINER_CLASS}>
         <TableHeader className="sticky top-0 z-20 bg-background shadow-sm print:static print:shadow-none [&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-background print:[&_th]:static">
           <TableRow className="hover:bg-transparent">
-            <TableHead className="sticky left-0 z-30 min-w-[7rem] bg-background print:static">
+            <TableHead className="sticky left-0 z-30 min-w-[7rem] border-r border-border bg-background print:static">
               Asset
             </TableHead>
             {systems.map((system) => (
               <TableHead
                 key={system}
-                className="min-w-[6.5rem] whitespace-normal text-center leading-tight print:min-w-0 print:px-1 print:text-[9px]"
+                className="min-w-[6.5rem] whitespace-normal border-r border-border text-center leading-tight print:min-w-0 print:px-1 print:text-[9px]"
               >
                 {system}
               </TableHead>
@@ -171,7 +195,7 @@ function DirectorSummaryAssetTable({
             <TableRow>
               <TableCell
                 colSpan={columnCount}
-                className="py-10 text-center text-muted-foreground"
+                className="border-r border-border py-10 text-center text-muted-foreground"
               >
                 No interventions, alignments, or checks for {periodLabel}.
               </TableCell>
@@ -179,7 +203,7 @@ function DirectorSummaryAssetTable({
           ) : (
             rows.map((row) => (
               <TableRow key={row.assetName} className="print:h-auto">
-                <TableCell className="sticky left-0 z-10 bg-background font-medium print:static print:bg-transparent print:px-1 print:text-[9px]">
+                <TableCell className="sticky left-0 z-10 border-r border-border bg-background font-medium print:static print:bg-transparent print:px-1 print:text-[9px]">
                   {row.assetName}
                 </TableCell>
                 {systems.map((system) => {
@@ -187,7 +211,7 @@ function DirectorSummaryAssetTable({
                   return (
                     <TableCell
                       key={system}
-                      className="align-top whitespace-normal px-1.5 py-1 print:px-1 print:py-0.5"
+                      className="align-top whitespace-normal border-r border-border px-1.5 py-1 print:px-1 print:py-0.5"
                     >
                       {events.length > 0 ? (
                         <div className="flex flex-col gap-1 print:gap-0.5">
@@ -223,10 +247,25 @@ export function DirectorSummaryMatrix({
   const trailerRows = data.rows.filter((row) =>
     isDirectorSummaryTrailer(row.assetName)
   )
+  const [printTarget, setPrintTarget] = useState<
+    "both" | "trucks" | "trailers"
+  >("both")
+
+  useEffect(() => {
+    const onAfterPrint = () => setPrintTarget("both")
+    window.addEventListener("afterprint", onAfterPrint)
+    return () => window.removeEventListener("afterprint", onAfterPrint)
+  }, [])
+
+  const handlePrint = (target: "trucks" | "trailers") => {
+    setPrintTarget(target)
+    setTimeout(() => window.print(), 100)
+  }
 
   return (
     <Card
       id="director-summary-matrix"
+      data-print-target={printTarget}
       className="overflow-visible print:overflow-visible print:ring-0"
     >
       <style>{`
@@ -247,6 +286,13 @@ export function DirectorSummaryMatrix({
             box-shadow: none;
             background: white;
           }
+          #director-summary-matrix[data-print-target="trucks"] [data-print-section="trailers"],
+          #director-summary-matrix[data-print-target="trucks"] [data-print-section="trailers"] *,
+          #director-summary-matrix[data-print-target="trailers"] [data-print-section="trucks"],
+          #director-summary-matrix[data-print-target="trailers"] [data-print-section="trucks"] * {
+            display: none !important;
+            visibility: hidden !important;
+          }
         }
       `}</style>
       <CardHeader>
@@ -255,16 +301,6 @@ export function DirectorSummaryMatrix({
           Recency map of mechanical interventions, wheel alignments, and
           routine checks for {data.periodLabel}. Print on A1 or A0 landscape.
         </CardDescription>
-        <CardAction className="flex items-center gap-2 print:hidden">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => window.print()}
-          >
-            <Printer data-icon="inline-start" />
-            Print
-          </Button>
-        </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-6 print:gap-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -277,7 +313,7 @@ export function DirectorSummaryMatrix({
                   <Icon
                     aria-hidden="true"
                     className={cn(
-                      "size-3.5 print:size-2.5 [print-color-adjust:exact] [-webkit-print-color-adjust:exact]",
+                      "size-3.5 shrink-0 print:size-2.5 [print-color-adjust:exact] [-webkit-print-color-adjust:exact]",
                       className
                     )}
                   />
@@ -290,12 +326,20 @@ export function DirectorSummaryMatrix({
 
         <DirectorSummaryAssetTable
           title="Prime Movers (MTL)"
+          printLabel="Print Trucks"
+          printSection="trucks"
+          onPrint={() => handlePrint("trucks")}
+          hiddenOnPrint={printTarget === "trailers"}
           rows={truckRows}
           systems={DIRECTOR_SUMMARY_SYSTEMS}
           periodLabel={data.periodLabel}
         />
         <DirectorSummaryAssetTable
           title="Trailers (MT)"
+          printLabel="Print Trailers"
+          printSection="trailers"
+          onPrint={() => handlePrint("trailers")}
+          hiddenOnPrint={printTarget === "trucks"}
           rows={trailerRows}
           systems={DIRECTOR_SUMMARY_TRAILER_SYSTEMS}
           periodLabel={data.periodLabel}
