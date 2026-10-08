@@ -39,6 +39,7 @@ import {
 import {
   alignmentRowSchema,
   assetRowSchema,
+  dateNotInFuture,
   oilConsumptionRowSchema,
   pairingRowSchema,
   sparesRowSchema,
@@ -586,7 +587,7 @@ const mileageSchema = z.preprocess((row) => {
     .min(1, "Miloto_No is required")
     // Mirrors the `asset_name` varchar width in `src/db/schema.ts`.
     .max(255, "Miloto_No must be 255 characters or fewer"),
-  date: z.date({ error: "Date must be a valid date (DD/MM/YYYY)" }),
+  date: dateNotInFuture("Date must be a valid date (DD/MM/YYYY)"),
   metric: z.string().min(1, "Metric is required"),
   value: z.number("Value must be a number"),
 }))

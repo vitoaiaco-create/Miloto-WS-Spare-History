@@ -230,6 +230,7 @@ export function AddManualEventDialog({
               id="manual-event-date"
               type="date"
               value={date}
+              max={defaultDate}
               onChange={(event) => setDate(event.target.value)}
               required
             />

@@ -1,13 +1,21 @@
 import { auth } from "@clerk/nextjs/server"
+import Link from "next/link"
 import { redirect } from "next/navigation"
 
-import { DirectorSummaryMatrix } from "@/components/director-summary-matrix"
-import { parseAnalyticsPeriod } from "@/lib/analytics-period"
-import { getDirectorSummaryMatrix } from "@/lib/director-summary-matrix-data"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  formatAnalyticsPeriod,
+  parseAnalyticsPeriod,
+} from "@/lib/analytics-period"
 
 type SearchParams = { [key: string]: string | string[] | undefined }
-
-export const dynamic = "force-dynamic"
 
 export default async function AnalyticsOperationsPage({
   searchParams,
@@ -31,7 +39,21 @@ export default async function AnalyticsOperationsPage({
 
   const resolvedSearchParams = await searchParams
   const period = parseAnalyticsPeriod(resolvedSearchParams.period)
-  const matrix = await getDirectorSummaryMatrix(period.year, period.month)
+  const directorSummaryHref = `/spares-history?period=${formatAnalyticsPeriod(period)}`
 
-  return <DirectorSummaryMatrix data={matrix} />
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Operational Health</CardTitle>
+        <CardDescription>
+          The Director&apos;s Summary Matrix now lives under Spares History.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button nativeButton={false} render={<Link href={directorSummaryHref} />}>
+          Open Director&apos;s Summary
+        </Button>
+      </CardContent>
+    </Card>
+  )
 }

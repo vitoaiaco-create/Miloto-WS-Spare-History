@@ -12,7 +12,7 @@ import {
   partDescriptionAliasesTable,
   statementConsumableExclusionsTable,
 } from "@/db/schema"
-import { toIsoDateParam } from "@/lib/iso-date"
+import { formatIsoDate, toIsoDateParam } from "@/lib/iso-date"
 import { toCanonicalFleetNumber } from "@/lib/spreadsheet"
 import {
   MANUAL_STATEMENT_EVENT_TYPES,
@@ -157,7 +157,14 @@ const createManualEventSchema = z.object({
     .trim()
     .refine((value) => Boolean(toIsoDateParam(value)), {
       message: "Enter a valid date",
-    }),
+    })
+    .refine(
+      (value) => {
+        const iso = toIsoDateParam(value)
+        return iso !== "" && iso <= formatIsoDate(new Date())
+      },
+      { message: "Date cannot be in the future" }
+    ),
   eventType: z.enum(MANUAL_STATEMENT_EVENT_TYPES),
   notes: z.string().trim().max(2000).optional(),
 })

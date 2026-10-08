@@ -4,13 +4,22 @@ import Link from "next/link"
 import { redirect } from "next/navigation"
 
 import { AlignmentsUploadButton } from "@/components/alignments-upload-button"
+import { DirectorSummaryMatrix } from "@/components/director-summary-matrix"
 import { ExportTableMenu } from "@/components/export-table-menu"
 import { ShareTableButton } from "@/components/share-table-button"
 import { SparesFilterBar } from "@/components/spares-filter-bar"
+import { SparesHistoryTabs } from "@/components/spares-history-tabs"
 import { SparesStatementView } from "@/components/spares-statement-view"
 import { SparesTable } from "@/components/spares-table"
 import { Button } from "@/components/ui/button"
+import {
+  formatAnalyticsPeriod,
+  isAnalyticsPeriodParam,
+  parseAnalyticsPeriod,
+} from "@/lib/analytics-period"
+import { getDirectorSummaryMatrix } from "@/lib/director-summary-matrix-data"
 import { formatIsoDate, toIsoDateParam } from "@/lib/iso-date"
+import { cn } from "@/lib/utils"
 import {
   getDistinctSubEquipmentValues,
   getPartDescriptionAliases,
@@ -72,6 +81,10 @@ export default async function SparesHistoryPage({
   const statementEnabled = isStatementMode(
     toFilterString(resolvedSearchParams.statement)
   )
+  const directorSummaryEnabled =
+    !statementEnabled && isAnalyticsPeriodParam(resolvedSearchParams.period)
+  const directorSummaryPeriod = parseAnalyticsPeriod(resolvedSearchParams.period)
+  const directorSummaryHref = `/spares-history?period=${formatAnalyticsPeriod(directorSummaryPeriod)}`
   const statementPeriod = parseStatementPeriod(
     toFilterString(resolvedSearchParams.period)
   )
@@ -109,19 +122,27 @@ export default async function SparesHistoryPage({
         excludeTo: hasExcludeRange ? excludeTo : "",
       }
 
-  const [spares, manualEvents, statementAssets, partAliases, subEquipmentOptions] =
+  const [spares, manualEvents, statementAssets, partAliases, subEquipmentOptions, directorSummary] =
     await Promise.all([
-      getSparesHistory(filters, {
-        excludeStatementConsumables: statementEnabled,
-      }),
+      directorSummaryEnabled
+        ? Promise.resolve([])
+        : getSparesHistory(filters, {
+            excludeStatementConsumables: statementEnabled,
+          }),
       statementEnabled
         ? getStatementManualEvents(filters)
         : Promise.resolve([]),
       statementEnabled ? getStatementAssets() : Promise.resolve([]),
       statementEnabled ? getPartDescriptionAliases() : Promise.resolve({}),
-      statementEnabled
+      statementEnabled || directorSummaryEnabled
         ? Promise.resolve([] as string[])
         : getDistinctSubEquipmentValues(),
+      directorSummaryEnabled
+        ? getDirectorSummaryMatrix(
+            directorSummaryPeriod.year,
+            directorSummaryPeriod.month
+          )
+        : Promise.resolve(null),
     ])
 
   // Manual events (alignment / checks / checks pending) merge in even
@@ -133,8 +154,13 @@ export default async function SparesHistoryPage({
 
   return (
     <main className="flex-1 bg-zinc-50 dark:bg-black">
-      <section className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-16 sm:px-10 lg:px-16">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <section
+        className={cn(
+          "mx-auto flex w-full flex-col gap-6 px-6 py-16 print:max-w-none print:px-4 print:py-0 sm:px-10 lg:px-16",
+          directorSummaryEnabled ? "max-w-[1600px]" : "max-w-7xl"
+        )}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
           <Button
             variant="ghost"
             size="sm"
@@ -178,9 +204,20 @@ export default async function SparesHistoryPage({
           </div>
         </div>
 
-        <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
-          {statementEnabled ? "Executive Spare Statement" : "Spares History"}
+        <h1 className="text-3xl font-semibold tracking-tight text-black print:hidden sm:text-4xl dark:text-zinc-50">
+          {statementEnabled
+            ? "Executive Spare Statement"
+            : directorSummaryEnabled
+              ? "Director's Summary"
+              : "Spares History"}
         </h1>
+
+        {statementEnabled ? null : (
+          <SparesHistoryTabs
+            active={directorSummaryEnabled ? "director-summary" : "history"}
+            directorSummaryHref={directorSummaryHref}
+          />
+        )}
 
         {statementEnabled ? (
           <SparesStatementView
@@ -195,6 +232,8 @@ export default async function SparesHistoryPage({
             aliases={partAliases}
             today={today}
           />
+        ) : directorSummaryEnabled && directorSummary ? (
+          <DirectorSummaryMatrix data={directorSummary} />
         ) : (
           <>
             <SparesFilterBar

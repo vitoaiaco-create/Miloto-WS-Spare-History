@@ -1,6 +1,6 @@
 import { format } from "date-fns"
 
-import { parseIsoDate, toIsoDateParam } from "@/lib/iso-date"
+import { formatIsoDate, parseIsoDate, toIsoDateParam } from "@/lib/iso-date"
 import {
   STATEMENT_COMPONENT_GROUPS,
   type ManualStatementEventType,
@@ -45,6 +45,33 @@ export const DIRECTOR_SUMMARY_SYSTEMS = [
 )[]
 
 export type DirectorSummarySystem = (typeof DIRECTOR_SUMMARY_SYSTEMS)[number]
+
+const TRAILER_EXCLUDED_SYSTEMS = new Set<DirectorSummarySystem>([
+  "Engine",
+  "Transmission",
+  "Diffs",
+  "Hydraulic System",
+  "Cabin",
+  "Body",
+  "Compressor",
+  "Aircon",
+  "Overhauled Engine",
+  "Overhauled Volvo Engine",
+  "Overhauled Diff",
+])
+
+export const DIRECTOR_SUMMARY_TRAILER_SYSTEMS = DIRECTOR_SUMMARY_SYSTEMS.filter(
+  (system) => !TRAILER_EXCLUDED_SYSTEMS.has(system)
+)
+
+export function isDirectorSummaryPrimeMover(assetName: string) {
+  return assetName.trim().toUpperCase().startsWith("MTL")
+}
+
+export function isDirectorSummaryTrailer(assetName: string) {
+  const name = assetName.trim().toUpperCase()
+  return name.startsWith("MT") && !name.startsWith("MTL")
+}
 
 export type DirectorSummarySpareInput = {
   assetName: string
@@ -106,6 +133,10 @@ function isIsoDateInMonth(isoDate: string, year: number, month: number) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate)
   if (!match) return false
   return Number(match[1]) === year && Number(match[2]) === month
+}
+
+function isFutureCalendarDate(isoDate: string, now = new Date()) {
+  return isoDate > formatIsoDate(now)
 }
 
 // Drizzle `date` columns are YYYY-MM-DD; some drivers serialize them as
@@ -227,7 +258,9 @@ export function aggregateDirectorSummaryMatrix(
 
   for (const spare of spares) {
     const date = toCalendarDate(spare.date)
-    if (!date || !isIsoDateInMonth(date, year, month)) continue
+    if (!date || isFutureCalendarDate(date) || !isIsoDateInMonth(date, year, month)) {
+      continue
+    }
     addOccurrence(
       groups,
       spare.assetName,
@@ -239,7 +272,9 @@ export function aggregateDirectorSummaryMatrix(
 
   for (const event of manualEvents) {
     const date = toCalendarDate(event.date)
-    if (!date || !isIsoDateInMonth(date, year, month)) continue
+    if (!date || isFutureCalendarDate(date) || !isIsoDateInMonth(date, year, month)) {
+      continue
+    }
     const mapped = mapManualEvent(event.eventType)
     if (!mapped) continue
     addOccurrence(

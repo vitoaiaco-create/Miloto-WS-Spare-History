@@ -1,14 +1,25 @@
 import { z } from "zod"
 
+import { formatIsoDate } from "@/lib/iso-date"
 import {
   indexRowByHeader,
   inferAssetType,
   parseSpreadsheetDate,
   toCanonicalFleetNumber,
+  toIsoDateString,
   toNumber,
   toOptionalNumber,
   toTrimmedString,
 } from "@/lib/spreadsheet"
+
+const FUTURE_DATE_MESSAGE = "Date cannot be in the future"
+
+export function dateNotInFuture(invalidError: string) {
+  return z.date({ error: invalidError }).refine(
+    (date) => toIsoDateString(date) <= formatIsoDate(new Date()),
+    { message: FUTURE_DATE_MESSAGE }
+  )
+}
 
 // Zod schemas that validate bulk spreadsheet imports (CSV/XLSX rows parsed
 // by `src/components/data-uploader.tsx`) before they're written to the
@@ -127,7 +138,7 @@ export const sparesRowSchema = z.preprocess((row) => {
   }
 }, z.object({
   fleetNumber: fleetNumberSchema("Identity No"),
-  outwardDate: z.date({ error: "Outward Date must be a valid date (DD-MM-YYYY)" }),
+  outwardDate: dateNotInFuture("Outward Date must be a valid date (DD-MM-YYYY)"),
   partNumber: z
     .string()
     .min(1, "Part Number is required")
@@ -279,7 +290,7 @@ export const oilConsumptionRowSchema = z.preprocess((row) => {
   }
 }, z.object({
   fleetNumber: fleetNumberSchema("Identity No"),
-  recordDate: z.date({ error: "Outward Date must be a valid date (DD-MM-YYYY)" }),
+  recordDate: dateNotInFuture("Outward Date must be a valid date (DD-MM-YYYY)"),
   quantity: z
     .number("Quantity must be a number")
     .positive("Quantity must be greater than 0"),
@@ -347,7 +358,7 @@ export const tirePenaltyRowSchema = z.preprocess((row) => {
     .string()
     .min(1, "Visual Id is required")
     .max(MAX_VISUAL_ID, `Visual Id must be ${MAX_VISUAL_ID} characters or fewer`),
-  scrapDate: z.date({ error: "Scrap Date must be a valid date (DD/MM/YYYY)" }),
+  scrapDate: dateNotInFuture("Scrap Date must be a valid date (DD/MM/YYYY)"),
   reason: z
     .string()
     .min(1, "Scrap Reason is required")
@@ -379,7 +390,7 @@ export const alignmentRowSchema = z.preprocess((row) => {
   }
 }, z.object({
   fleetNumber: fleetNumberSchema("Identity No"),
-  date: z.date({ error: "DATE must be a valid date (YYYY-MM-DD)" }),
+  date: dateNotInFuture("DATE must be a valid date (YYYY-MM-DD)"),
 }))
 
 export type AlignmentRow = z.infer<typeof alignmentRowSchema>

@@ -23,7 +23,14 @@ const MONTH_NAMES = [
   "December",
 ] as const
 
-const PERIOD_PARAM = /^(\d{4})-(\d{2})$/
+const PERIOD_PARAM = /^(\d{4})-(0[1-9]|1[0-2])$/
+
+export function isAnalyticsPeriodParam(
+  value: string | string[] | undefined
+): boolean {
+  const raw = typeof value === "string" ? value : undefined
+  return Boolean(raw && PERIOD_PARAM.test(raw))
+}
 
 export function currentAnalyticsPeriod(referenceDate: Date = new Date()): AnalyticsPeriod {
   return {
