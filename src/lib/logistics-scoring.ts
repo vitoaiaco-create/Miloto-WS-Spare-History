@@ -614,9 +614,9 @@ export async function calculateMonthlyYield(
         and(
           gte(mechanicalSparesTable.outwardDate, startOfMonth),
           lte(mechanicalSparesTable.outwardDate, endOfMonth),
-          // Ingestion title-cases Sub Equipment ("Suspension"); match the
-          // category either way.
-          sql`upper(${mechanicalSparesTable.tier1}) = 'SUSPENSION'`
+          // Raw ERP Sub Equipment may title-case or nest the label
+          // ("Suspension", "Rear Suspension"); match either way.
+          sql`upper(${mechanicalSparesTable.subEquipment}) LIKE '%SUSPENSION%'`
         )
       ),
     db
@@ -1078,7 +1078,7 @@ async function loadYtdWindow(year: number, endMonth: number) {
           and(
             gte(mechanicalSparesTable.outwardDate, ytdStart),
             lte(mechanicalSparesTable.outwardDate, ytdEnd),
-            sql`upper(${mechanicalSparesTable.tier1}) = 'SUSPENSION'`
+            sql`upper(${mechanicalSparesTable.subEquipment}) LIKE '%SUSPENSION%'`
           )
         ),
       db

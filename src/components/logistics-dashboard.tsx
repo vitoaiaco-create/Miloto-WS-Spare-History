@@ -897,7 +897,7 @@ function RankingsMacroTable<T extends RankableYield>({
       <Table
         containerClassName="relative w-full max-h-[calc(100vh-250px)] overflow-auto print:max-h-none print:overflow-visible"
       >
-        <TableHeader className="sticky top-0 z-10 bg-background shadow-sm [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
+        <TableHeader className="sticky top-0 z-10 bg-background shadow-sm [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background print:static print:transform-none print:translate-y-0 [&_th]:print:static [&_th]:print:transform-none [&_th]:print:translate-y-0">
           <TableRow>
             <SortableColumnHead
               label="Entity Name"
