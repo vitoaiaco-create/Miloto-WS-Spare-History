@@ -18,13 +18,15 @@ export type DirectorSummaryEventType =
 
 // Same ERP Sub Equipment labels the executive statement uses
 // (`STATEMENT_COMPONENT_GROUPS` / `mechanicalSparesTable.subEquipment`),
-// plus General for blank rows and routine checks. Print order puts the
-// high-traffic mechanical groups first.
+// plus General for blank rows and routine checks, and Alignment for
+// WHEEL_ALIGNMENT manual events. Print order puts the high-traffic
+// mechanical groups first.
 export const DIRECTOR_SUMMARY_SYSTEMS = [
   "General",
   "Engine",
   "Transmission",
   "Axles",
+  "Alignment",
   "Suspension",
   "Diffs",
   "Air System",
@@ -41,6 +43,7 @@ export const DIRECTOR_SUMMARY_SYSTEMS = [
   "Overhauled Diff",
 ] as const satisfies readonly (
   | "General"
+  | "Alignment"
   | (typeof STATEMENT_COMPONENT_GROUPS)[number]
 )[]
 
@@ -111,7 +114,7 @@ const MANUAL_EVENT_SYSTEM: Record<
   Extract<ManualStatementEventType, "WHEEL_ALIGNMENT" | "CHECKS_OK">,
   DirectorSummarySystem
 > = {
-  WHEEL_ALIGNMENT: "Axles",
+  WHEEL_ALIGNMENT: "Alignment",
   CHECKS_OK: "General",
 }
 
