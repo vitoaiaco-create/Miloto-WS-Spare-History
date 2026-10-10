@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { AlertTriangle, Loader2Icon, Pencil, Trash2 } from "lucide-react"
 
+import { EditAlignmentDialog } from "@/components/edit-alignment-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -30,7 +31,9 @@ import {
 } from "@/components/ui/tooltip"
 import type { SparesHistoryRow } from "@/lib/spares-history"
 import {
+  classifyStatementAssetType,
   displayMaterialName,
+  formatOutOfSquareSummary,
   formatStatementDate,
   formatStatementLineAmount,
   formatStatementLineQty,
@@ -38,10 +41,12 @@ import {
   formatStatementUsd,
   groupSparesByAsset,
   isManualStatementRow,
+  isWheelAlignmentRow,
   statementRowKey,
   statementTotals,
   type PartAliasMap,
   type StatementAssetOption,
+  type StatementSpareRow,
 } from "@/lib/spares-statement"
 
 const STALE_ODOMETER_DAYS = 14
@@ -267,14 +272,7 @@ export function SparesStatementTable({
                   <TableCell>{formatStatementDate(spare.outwardDate)}</TableCell>
                   <TableCell className="whitespace-normal">
                     {isManualStatementRow(spare) ? (
-                      <div>
-                        <span>{spare.materialName}</span>
-                        {spare.notes ? (
-                          <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                            {spare.notes}
-                          </span>
-                        ) : null}
-                      </div>
+                      <ManualEventNameCell row={spare} />
                     ) : (
                       <PartAliasCell
                         originalName={spare.materialName}
@@ -297,24 +295,41 @@ export function SparesStatementTable({
                   </TableCell>
                   <TableCell className="print:hidden">
                     {isManualStatementRow(spare) ? (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-xs"
-                              aria-label={`Permanently delete ${spare.materialName}`}
-                              onClick={() => onDeleteManualEvent(spare.id)}
-                            />
-                          }
-                        >
-                          <Trash2 />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          Permanently delete this event
-                        </TooltipContent>
-                      </Tooltip>
+                      <div className="flex items-center justify-end gap-0.5">
+                        {isWheelAlignmentRow(spare) ? (
+                          <EditAlignmentDialog
+                            eventId={spare.id}
+                            assetName={spare.identityNo}
+                            assetType={
+                              assetTypeByName.get(spare.identityNo) ??
+                              classifyStatementAssetType("", spare.identityNo) ??
+                              "Trailer"
+                            }
+                            date={spare.outwardDate}
+                            outOfSquareAxle1={spare.outOfSquareAxle1}
+                            outOfSquareAxle2={spare.outOfSquareAxle2}
+                            outOfSquareAxle3={spare.outOfSquareAxle3}
+                          />
+                        ) : null}
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                aria-label={`Permanently delete ${spare.materialName}`}
+                                onClick={() => onDeleteManualEvent(spare.id)}
+                              />
+                            }
+                          >
+                            <Trash2 />
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Permanently delete this event
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                     ) : (
                       <Tooltip>
                         <TooltipTrigger
@@ -366,6 +381,32 @@ export function SparesStatementTable({
           {formatStatementUsd(totals.amount)}
         </span>
       </div>
+    </div>
+  )
+}
+
+function ManualEventNameCell({
+  row,
+}: {
+  row: StatementSpareRow
+}) {
+  const outOfSquareSummary = isWheelAlignmentRow(row)
+    ? formatOutOfSquareSummary(row)
+    : null
+
+  return (
+    <div>
+      <span>{row.materialName}</span>
+      {outOfSquareSummary ? (
+        <span className="mt-0.5 block text-[11px] text-muted-foreground">
+          {outOfSquareSummary}
+        </span>
+      ) : null}
+      {row.notes ? (
+        <span className="mt-0.5 block text-[11px] text-muted-foreground">
+          {row.notes}
+        </span>
+      ) : null}
     </div>
   )
 }

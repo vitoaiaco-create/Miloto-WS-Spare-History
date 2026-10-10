@@ -7,6 +7,7 @@ import {
   formatStatementLineAmount,
   formatStatementLineQty,
   formatStatementQty,
+  formatManualEventExportName,
   formatStatementUsd,
   groupSparesByAsset,
   isManualStatementRow,
@@ -281,9 +282,7 @@ export async function exportStatementPdf(
     > = group.rows.map((row) => [
       formatStatementDate(row.outwardDate),
       isManualStatementRow(row)
-        ? row.notes
-          ? `${row.materialName} — ${row.notes}`
-          : row.materialName
+        ? formatManualEventExportName(row)
         : displayMaterialName(row.materialName, meta.aliases),
       isManualStatementRow(row) ? "-" : row.partNumber,
       formatStatementLineQty(row),
@@ -405,9 +404,7 @@ export async function exportStatementExcel(
         group.name,
         formatStatementDate(row.outwardDate),
         isManualStatementRow(row)
-          ? row.notes
-            ? `${row.materialName} — ${row.notes}`
-            : row.materialName
+          ? formatManualEventExportName(row)
           : displayMaterialName(row.materialName, meta.aliases),
         isManualStatementRow(row) ? "-" : row.partNumber,
         isManualStatementRow(row) ? "-" : (row.quantity ?? ""),

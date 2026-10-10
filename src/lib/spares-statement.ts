@@ -40,6 +40,17 @@ export type StatementRowKind = "spare" | "manual" | "alignment" | "check"
 
 // The fields the statement layout and exports actually use. Compatible
 // with `SparesHistoryRow` without importing the server-only history module.
+export type OutOfSquareAxleKey =
+  | "outOfSquareAxle1"
+  | "outOfSquareAxle2"
+  | "outOfSquareAxle3"
+
+export type OutOfSquareMetrics = {
+  outOfSquareAxle1?: number | null
+  outOfSquareAxle2?: number | null
+  outOfSquareAxle3?: number | null
+}
+
 export type StatementSpareRow = {
   id: number
   kind?: StatementRowKind
@@ -51,10 +62,126 @@ export type StatementSpareRow = {
   quantity: number | null
   amountUsd: number | null
   notes?: string | null
-}
+} & OutOfSquareMetrics
 
 export function isManualStatementRow(row: Pick<StatementSpareRow, "kind">) {
   return row.kind === "manual" || row.kind === "alignment" || row.kind === "check"
+}
+
+export function isWheelAlignmentRow(
+  row: Pick<StatementSpareRow, "kind" | "materialName">
+) {
+  return (
+    isManualStatementRow(row) &&
+    row.materialName === WHEEL_ALIGNMENT_MATERIAL_NAME
+  )
+}
+
+export function outOfSquareAxleFields(assetType: StatementAssetType): {
+  key: OutOfSquareAxleKey
+  axle: 1 | 2 | 3
+  label: string
+  shortLabel: string
+}[] {
+  if (assetType === "Truck") {
+    return [
+      {
+        key: "outOfSquareAxle2",
+        axle: 2,
+        label: "1st Rear Axle (Axle 2)",
+        shortLabel: "Axle 2",
+      },
+      {
+        key: "outOfSquareAxle3",
+        axle: 3,
+        label: "2nd Rear Axle (Axle 3)",
+        shortLabel: "Axle 3",
+      },
+    ]
+  }
+
+  return [
+    {
+      key: "outOfSquareAxle1",
+      axle: 1,
+      label: "1st Axle",
+      shortLabel: "Axle 1",
+    },
+    {
+      key: "outOfSquareAxle2",
+      axle: 2,
+      label: "2nd Axle",
+      shortLabel: "Axle 2",
+    },
+    {
+      key: "outOfSquareAxle3",
+      axle: 3,
+      label: "3rd Axle",
+      shortLabel: "Axle 3",
+    },
+  ]
+}
+
+export function formatOutOfSquareValue(value: number) {
+  return `${Number(value.toFixed(2))} mm/m`
+}
+
+export function formatOutOfSquareSummary(row: OutOfSquareMetrics) {
+  const parts = (
+    [
+      [1, row.outOfSquareAxle1],
+      [2, row.outOfSquareAxle2],
+      [3, row.outOfSquareAxle3],
+    ] as const
+  )
+    .filter((entry): entry is [1 | 2 | 3, number] => entry[1] != null)
+    .map(([axle, value]) => `Axle ${axle}: ${formatOutOfSquareValue(value)}`)
+
+  if (parts.length === 0) return null
+  return `Out of Square - ${parts.join(" · ")}`
+}
+
+export function parseOptionalOutOfSquare(
+  value: string
+): { ok: true; value: number | null } | { ok: false } {
+  const trimmed = value.trim()
+  if (!trimmed) return { ok: true, value: null }
+
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed)) return { ok: false }
+  return { ok: true, value: parsed }
+}
+
+export function collectOutOfSquareMetrics(
+  assetType: StatementAssetType,
+  values: Record<OutOfSquareAxleKey, string>
+): { ok: true; data: OutOfSquareMetrics } | { ok: false; message: string } {
+  const data: OutOfSquareMetrics = {
+    outOfSquareAxle1: null,
+    outOfSquareAxle2: null,
+    outOfSquareAxle3: null,
+  }
+
+  for (const field of outOfSquareAxleFields(assetType)) {
+    const parsed = parseOptionalOutOfSquare(values[field.key])
+    if (!parsed.ok) {
+      return { ok: false, message: `${field.label} must be a number.` }
+    }
+    data[field.key] = parsed.value
+  }
+
+  return { ok: true, data }
+}
+
+export function formatManualEventExportName(row: StatementSpareRow) {
+  const extras = [
+    isWheelAlignmentRow(row) ? formatOutOfSquareSummary(row) : null,
+    row.notes?.trim() || null,
+  ].filter((value): value is string => Boolean(value))
+
+  return extras.length > 0
+    ? `${row.materialName} — ${extras.join(" — ")}`
+    : row.materialName
 }
 
 export const isAlignmentStatementRow = isManualStatementRow

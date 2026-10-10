@@ -150,6 +150,8 @@ export async function excludeConsumableFromStatement(
   }
 }
 
+const optionalOutOfSquare = z.number().finite().nullable().optional()
+
 const createManualEventSchema = z.object({
   assetName: z.string().trim().min(1).max(255),
   date: z
@@ -167,6 +169,9 @@ const createManualEventSchema = z.object({
     ),
   eventType: z.enum(MANUAL_STATEMENT_EVENT_TYPES),
   notes: z.string().trim().max(2000).optional(),
+  outOfSquareAxle1: optionalOutOfSquare,
+  outOfSquareAxle2: optionalOutOfSquare,
+  outOfSquareAxle3: optionalOutOfSquare,
 })
 
 type CreateManualEventInput = z.infer<typeof createManualEventSchema>
@@ -198,11 +203,16 @@ export async function createManualStatementEvent(
     throw new Error("Asset not found")
   }
 
+  const isWheelAlignment = data.eventType === "WHEEL_ALIGNMENT"
+
   await db.insert(manualAlignmentEventsTable).values({
     assetId: asset.id,
     date,
     eventType: data.eventType,
     notes: data.notes || null,
+    outOfSquareAxle1: isWheelAlignment ? (data.outOfSquareAxle1 ?? null) : null,
+    outOfSquareAxle2: isWheelAlignment ? (data.outOfSquareAxle2 ?? null) : null,
+    outOfSquareAxle3: isWheelAlignment ? (data.outOfSquareAxle3 ?? null) : null,
   })
 
   revalidatePath("/spares-history")
@@ -222,6 +232,78 @@ export async function createManualAlignmentEvent(
     ...input,
     eventType: input.eventType ?? "WHEEL_ALIGNMENT",
   })
+}
+
+const updateAlignmentDetailsSchema = z.object({
+  eventId: z.number().int().positive(),
+  data: z.object({
+    outOfSquareAxle1: optionalOutOfSquare,
+    outOfSquareAxle2: optionalOutOfSquare,
+    outOfSquareAxle3: optionalOutOfSquare,
+  }),
+})
+
+export type UpdateAlignmentDetailsInput = z.infer<
+  typeof updateAlignmentDetailsSchema
+>["data"]
+
+export type UpdateAlignmentDetailsResult = {
+  eventId: number
+  outOfSquareAxle1: number | null
+  outOfSquareAxle2: number | null
+  outOfSquareAxle3: number | null
+}
+
+export async function updateAlignmentDetails(
+  eventId: number,
+  data: UpdateAlignmentDetailsInput
+): Promise<UpdateAlignmentDetailsResult> {
+  await requireSparesHistoryAccess()
+  const parsed = updateAlignmentDetailsSchema.parse({ eventId, data })
+
+  const [existing] = await db
+    .select({
+      id: manualAlignmentEventsTable.id,
+      eventType: manualAlignmentEventsTable.eventType,
+    })
+    .from(manualAlignmentEventsTable)
+    .where(eq(manualAlignmentEventsTable.id, parsed.eventId))
+    .limit(1)
+
+  if (!existing) {
+    throw new Error("Event not found")
+  }
+
+  if (existing.eventType !== "WHEEL_ALIGNMENT") {
+    throw new Error("Only wheel alignment events store out-of-square values")
+  }
+
+  const [updated] = await db
+    .update(manualAlignmentEventsTable)
+    .set({
+      outOfSquareAxle1: parsed.data.outOfSquareAxle1 ?? null,
+      outOfSquareAxle2: parsed.data.outOfSquareAxle2 ?? null,
+      outOfSquareAxle3: parsed.data.outOfSquareAxle3 ?? null,
+    })
+    .where(eq(manualAlignmentEventsTable.id, parsed.eventId))
+    .returning({
+      id: manualAlignmentEventsTable.id,
+      outOfSquareAxle1: manualAlignmentEventsTable.outOfSquareAxle1,
+      outOfSquareAxle2: manualAlignmentEventsTable.outOfSquareAxle2,
+      outOfSquareAxle3: manualAlignmentEventsTable.outOfSquareAxle3,
+    })
+
+  if (!updated) {
+    throw new Error("Event not found")
+  }
+
+  revalidatePath("/spares-history")
+  return {
+    eventId: updated.id,
+    outOfSquareAxle1: updated.outOfSquareAxle1,
+    outOfSquareAxle2: updated.outOfSquareAxle2,
+    outOfSquareAxle3: updated.outOfSquareAxle3,
+  }
 }
 
 const deleteManualEventSchema = z.number().int().positive()

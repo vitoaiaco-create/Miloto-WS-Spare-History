@@ -187,6 +187,13 @@ export const manualAlignmentEventsTable = pgTable(
       .notNull()
       .default("WHEEL_ALIGNMENT"),
     notes: text("notes"),
+    // Wheel-alignment out-of-square readings in mm/m. Null on
+    // CHECKS_OK / CHECKS_PENDING rows and on alignments logged
+    // before these metrics were captured. Trucks / prime movers
+    // typically use axle 2 and 3 (rear axles); trailers use 1–3.
+    outOfSquareAxle1: real("out_of_square_axle_1"),
+    outOfSquareAxle2: real("out_of_square_axle_2"),
+    outOfSquareAxle3: real("out_of_square_axle_3"),
   },
   (table) => [
     // Lets the "Upload Alignments CSV" bulk import in `ingestAlignments`

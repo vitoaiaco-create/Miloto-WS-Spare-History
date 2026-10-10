@@ -91,6 +91,9 @@ export type SparesHistoryRow = {
   distance: number | null
   latestDate: string | null
   notes?: string | null
+  outOfSquareAxle1?: number | null
+  outOfSquareAxle2?: number | null
+  outOfSquareAxle3?: number | null
 }
 
 function runningKmFromReadings(
@@ -488,6 +491,9 @@ export async function getStatementManualEvents(
       distance: null,
       latestDate: null,
       notes: event.notes,
+      outOfSquareAxle1: event.outOfSquareAxle1,
+      outOfSquareAxle2: event.outOfSquareAxle2,
+      outOfSquareAxle3: event.outOfSquareAxle3,
     }
   })
 }

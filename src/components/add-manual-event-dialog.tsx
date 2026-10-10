@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation"
 import { Loader2Icon, PlusIcon } from "lucide-react"
 
 import { createManualStatementEvent } from "@/actions/spares-statement"
+import {
+  EMPTY_OUT_OF_SQUARE_VALUES,
+  OutOfSquareFields,
+  type OutOfSquareFieldValues,
+} from "@/components/out-of-square-fields"
 import { Button } from "@/components/ui/button"
 import {
   Combobox,
@@ -38,11 +43,13 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import {
+  collectOutOfSquareMetrics,
   formatStatementDate,
   MANUAL_EVENT_LABELS,
   MANUAL_EVENT_MATERIAL_NAMES,
   MANUAL_STATEMENT_EVENT_TYPES,
   type ManualStatementEventType,
+  type OutOfSquareAxleKey,
   type StatementAssetOption,
 } from "@/lib/spares-statement"
 
@@ -62,7 +69,17 @@ export function AddManualEventDialog({
   const [eventType, setEventType] =
     useState<ManualStatementEventType>("WHEEL_ALIGNMENT")
   const [notes, setNotes] = useState("")
+  const [outOfSquare, setOutOfSquare] = useState<OutOfSquareFieldValues>(
+    EMPTY_OUT_OF_SQUARE_VALUES
+  )
   const [isSaving, setIsSaving] = useState(false)
+
+  const selectedAssetType = useMemo(
+    () => assets.find((asset) => asset.assetName === assetName)?.assetType,
+    [assetName, assets]
+  )
+  const showOutOfSquare =
+    eventType === "WHEEL_ALIGNMENT" && Boolean(selectedAssetType)
 
   const assetGroups = useMemo(() => {
     const trucks: string[] = []
@@ -86,6 +103,7 @@ export function AddManualEventDialog({
     setDate(defaultDate)
     setEventType("WHEEL_ALIGNMENT")
     setNotes("")
+    setOutOfSquare(EMPTY_OUT_OF_SQUARE_VALUES)
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -99,6 +117,29 @@ export function AddManualEventDialog({
       return
     }
 
+    let alignmentMetrics = {}
+    if (eventType === "WHEEL_ALIGNMENT") {
+      if (!selectedAssetType) {
+        toast.add({
+          title: "Choose an asset",
+          description: "Select a fleet unit before saving a wheel alignment.",
+          type: "error",
+        })
+        return
+      }
+
+      const parsed = collectOutOfSquareMetrics(selectedAssetType, outOfSquare)
+      if (!parsed.ok) {
+        toast.add({
+          title: "Check out-of-square values",
+          description: parsed.message,
+          type: "error",
+        })
+        return
+      }
+      alignmentMetrics = parsed.data
+    }
+
     setIsSaving(true)
     try {
       const result = await createManualStatementEvent({
@@ -106,6 +147,7 @@ export function AddManualEventDialog({
         date,
         eventType,
         notes,
+        ...alignmentMetrics,
       })
       toast.add({
         title: "Manual event added",
@@ -139,6 +181,7 @@ export function AddManualEventDialog({
           setDate(defaultDate)
           setEventType("WHEEL_ALIGNMENT")
           setNotes("")
+          setOutOfSquare(EMPTY_OUT_OF_SQUARE_VALUES)
         }
       }}
     >
@@ -170,7 +213,10 @@ export function AddManualEventDialog({
             <Combobox
               items={assetGroups}
               value={assetName || null}
-              onValueChange={(value) => setAssetName(value ?? "")}
+              onValueChange={(value) => {
+                setAssetName(value ?? "")
+                setOutOfSquare(EMPTY_OUT_OF_SQUARE_VALUES)
+              }}
             >
               <ComboboxInput
                 id="manual-event-asset"
@@ -235,6 +281,16 @@ export function AddManualEventDialog({
               required
             />
           </div>
+          {showOutOfSquare && selectedAssetType ? (
+            <OutOfSquareFields
+              assetType={selectedAssetType}
+              values={outOfSquare}
+              onChange={(key: OutOfSquareAxleKey, value) =>
+                setOutOfSquare((current) => ({ ...current, [key]: value }))
+              }
+              idPrefix="manual-event"
+            />
+          ) : null}
           <div className="grid gap-1.5">
             <Label htmlFor="manual-event-notes">Notes</Label>
             <Textarea
