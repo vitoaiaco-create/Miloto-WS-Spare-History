@@ -86,6 +86,15 @@ export type DirectorSummaryManualEventInput = {
   assetName: string
   date: string | Date
   eventType: string
+  outOfSquareAxle1?: number | null
+  outOfSquareAxle2?: number | null
+  outOfSquareAxle3?: number | null
+}
+
+export type DirectorSummaryAlignmentData = {
+  a1: number | null
+  a2: number | null
+  a3: number | null
 }
 
 export type DirectorSummaryCellEvent = {
@@ -93,6 +102,7 @@ export type DirectorSummaryCellEvent = {
   latestDate: string
   formattedDate: string
   distinctDaysCount: number
+  alignmentData?: DirectorSummaryAlignmentData
 }
 
 export type DirectorSummaryRow = {
@@ -199,6 +209,19 @@ type GroupAccumulator = {
   system: DirectorSummarySystem
   eventType: DirectorSummaryEventType
   dates: Set<string>
+  alignmentData?: DirectorSummaryAlignmentData
+  alignmentDate?: string
+}
+
+function alignmentDataFromEvent(
+  event: DirectorSummaryManualEventInput
+): DirectorSummaryAlignmentData | undefined {
+  if (event.eventType !== "WHEEL_ALIGNMENT") return undefined
+  return {
+    a1: event.outOfSquareAxle1 ?? null,
+    a2: event.outOfSquareAxle2 ?? null,
+    a3: event.outOfSquareAxle3 ?? null,
+  }
 }
 
 function groupKey(
@@ -214,7 +237,8 @@ function addOccurrence(
   assetName: string,
   system: DirectorSummarySystem,
   eventType: DirectorSummaryEventType,
-  date: string
+  date: string,
+  alignmentData?: DirectorSummaryAlignmentData
 ) {
   const name = assetName.trim()
   if (!name || !isDirectorSummarySystem(system)) return
@@ -223,6 +247,13 @@ function addOccurrence(
   const existing = groups.get(key)
   if (existing) {
     existing.dates.add(date)
+    if (
+      alignmentData &&
+      (!existing.alignmentDate || date >= existing.alignmentDate)
+    ) {
+      existing.alignmentData = alignmentData
+      existing.alignmentDate = date
+    }
     return
   }
 
@@ -231,10 +262,16 @@ function addOccurrence(
     system,
     eventType,
     dates: new Set([date]),
+    alignmentData,
+    alignmentDate: alignmentData ? date : undefined,
   })
 }
 
-function toCellEvent(dates: Set<string>, eventType: DirectorSummaryEventType) {
+function toCellEvent(
+  dates: Set<string>,
+  eventType: DirectorSummaryEventType,
+  alignmentData?: DirectorSummaryAlignmentData
+): DirectorSummaryCellEvent {
   const sorted = [...dates].sort()
   const latestDate = sorted[sorted.length - 1] ?? ""
   const distinctDaysCount = sorted.length
@@ -244,6 +281,7 @@ function toCellEvent(dates: Set<string>, eventType: DirectorSummaryEventType) {
     latestDate,
     formattedDate: formatDirectorSummaryDate(latestDate, distinctDaysCount),
     distinctDaysCount,
+    ...(alignmentData ? { alignmentData } : {}),
   }
 }
 
@@ -285,7 +323,8 @@ export function aggregateDirectorSummaryMatrix(
       event.assetName,
       mapped.system,
       mapped.eventType,
-      date
+      date,
+      alignmentDataFromEvent(event)
     )
   }
 
@@ -296,7 +335,9 @@ export function aggregateDirectorSummaryMatrix(
       assetName: group.assetName,
       cells: emptyCells(),
     }
-    row.cells[group.system].push(toCellEvent(group.dates, group.eventType))
+    row.cells[group.system].push(
+      toCellEvent(group.dates, group.eventType, group.alignmentData)
+    )
     rowsByAsset.set(group.assetName, row)
   }
 

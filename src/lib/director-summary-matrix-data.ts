@@ -54,6 +54,9 @@ export async function getDirectorSummaryMatrix(
         assetName: assetsTable.assetName,
         date: manualAlignmentEventsTable.date,
         eventType: manualAlignmentEventsTable.eventType,
+        outOfSquareAxle1: manualAlignmentEventsTable.outOfSquareAxle1,
+        outOfSquareAxle2: manualAlignmentEventsTable.outOfSquareAxle2,
+        outOfSquareAxle3: manualAlignmentEventsTable.outOfSquareAxle3,
       })
       .from(manualAlignmentEventsTable)
       .innerJoin(

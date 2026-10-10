@@ -1,6 +1,6 @@
 "use client"
 
-import { CheckCircle2, Crosshair, Printer, Wrench } from "lucide-react"
+import { CheckCircle2, Crosshair, Printer, TriangleAlert, Wrench } from "lucide-react"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState, type ComponentType } from "react"
 
@@ -40,6 +40,7 @@ import {
   DIRECTOR_SUMMARY_TRAILER_SYSTEMS,
   isDirectorSummaryPrimeMover,
   isDirectorSummaryTrailer,
+  type DirectorSummaryAlignmentData,
   type DirectorSummaryCellEvent,
   type DirectorSummaryEventType,
   type DirectorSummaryMatrixPayload,
@@ -76,13 +77,96 @@ const EVENT_ICON: Record<
 const TABLE_CONTAINER_CLASS =
   "relative w-full max-h-[calc(100vh-250px)] overflow-auto print:max-h-none print:overflow-visible [print-color-adjust:exact] [-webkit-print-color-adjust:exact]"
 
-function MatrixEventLine({ event }: { event: DirectorSummaryCellEvent }) {
-  const { Icon, className, label } = EVENT_ICON[event.eventType]
+const ALIGNMENT_OUT_OF_SPEC = 3.0
+
+type AlignmentTableKind = "trucks" | "trailers"
+type AlignmentAxleKey = keyof DirectorSummaryAlignmentData
+
+const ALIGNMENT_AXLES: Record<
+  AlignmentTableKind,
+  { key: AlignmentAxleKey; label: string }[]
+> = {
+  trucks: [
+    { key: "a2", label: "A2" },
+    { key: "a3", label: "A3" },
+  ],
+  trailers: [
+    { key: "a1", label: "A1" },
+    { key: "a2", label: "A2" },
+    { key: "a3", label: "A3" },
+  ],
+}
+
+function formatSignedAlignment(value: number) {
+  return `${value < 0 ? "-" : "+"}${Math.abs(value).toFixed(1)}`
+}
+
+function alignmentExceptionDisplay(
+  data: DirectorSummaryAlignmentData,
+  tableKind: AlignmentTableKind
+): {
+  Icon: ComponentType<{ className?: string }>
+  className: string
+  suffix: string
+  label: string
+} | null {
+  const logged = ALIGNMENT_AXLES[tableKind]
+    .map((axle) => ({ ...axle, value: data[axle.key] }))
+    .filter(
+      (axle): axle is typeof axle & { value: number } => axle.value != null
+    )
+
+  if (logged.length === 0) return null
+
+  const outOfSpec = logged.filter(
+    (axle) => Math.abs(axle.value) >= ALIGNMENT_OUT_OF_SPEC
+  )
+
+  if (outOfSpec.length > 0) {
+    const detail = outOfSpec
+      .map((axle) => `${axle.label}: ${formatSignedAlignment(axle.value)}`)
+      .join(", ")
+    return {
+      Icon: TriangleAlert,
+      className: "text-red-600 print:text-red-600",
+      suffix: `(${detail})`,
+      label: "Alignment out of spec",
+    }
+  }
+
+  return {
+    Icon: CheckCircle2,
+    className: "text-green-600 print:text-green-600",
+    suffix: "(OK)",
+    label: "Alignment in spec",
+  }
+}
+
+function MatrixEventLine({
+  event,
+  system,
+  tableKind,
+}: {
+  event: DirectorSummaryCellEvent
+  system: DirectorSummarySystem
+  tableKind: AlignmentTableKind
+}) {
+  const alignment =
+    system === "Alignment" && event.alignmentData
+      ? alignmentExceptionDisplay(event.alignmentData, tableKind)
+      : null
+  const fallback = EVENT_ICON[event.eventType]
+  const Icon = alignment?.Icon ?? fallback.Icon
+  const className = alignment?.className ?? fallback.className
+  const label = alignment?.label ?? fallback.label
+  const title = alignment
+    ? `${label} ${event.formattedDate} ${alignment.suffix}`
+    : `${label} ${event.formattedDate}`
 
   return (
     <div
       className="flex items-center gap-1.5 whitespace-nowrap text-[11px] leading-tight print:text-[9px]"
-      title={`${label} ${event.formattedDate}`}
+      title={title}
     >
       <Icon
         aria-hidden="true"
@@ -91,7 +175,15 @@ function MatrixEventLine({ event }: { event: DirectorSummaryCellEvent }) {
           className
         )}
       />
-      <span className="tabular-nums">{event.formattedDate}</span>
+      <span
+        className={cn(
+          "whitespace-nowrap tabular-nums",
+          alignment?.className
+        )}
+      >
+        {event.formattedDate}
+        {alignment ? ` ${alignment.suffix}` : ""}
+      </span>
     </div>
   )
 }
@@ -219,6 +311,8 @@ function DirectorSummaryAssetTable({
                             <MatrixEventLine
                               key={`${row.assetName}-${system}-${event.eventType}`}
                               event={event}
+                              system={system}
+                              tableKind={printSection}
                             />
                           ))}
                         </div>
