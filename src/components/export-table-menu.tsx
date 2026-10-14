@@ -120,6 +120,11 @@ const SPARES_COLUMNS: ExportColumn<SparesHistoryRow>[] = [
     pdf: (spare) => spare.identityNo,
   },
   {
+    header: "Supplier",
+    csv: (spare) => spare.supplierName,
+    pdf: (spare) => (spare.supplierName.trim() ? spare.supplierName : "—"),
+  },
+  {
     header: "Part Number",
     csv: (spare) => spare.partNumber,
     pdf: (spare) => spare.partNumber,

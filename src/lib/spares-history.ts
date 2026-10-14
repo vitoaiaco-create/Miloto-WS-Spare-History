@@ -83,6 +83,7 @@ export type SparesHistoryRow = {
   outwardDate: string
   materialName: string
   identityNo: string
+  supplierName: string
   partNumber: string
   subEquipment: string
   quantity: number | null
@@ -385,6 +386,7 @@ export async function getSparesHistory(
       outwardDate: spare.outwardDate,
       materialName: spare.materialName,
       identityNo: spare.asset.assetName,
+      supplierName: spare.supplierName ?? "",
       partNumber: spare.partNumber,
       subEquipment: spare.subEquipment ?? "",
       quantity: Number(spare.quantity),
@@ -483,6 +485,7 @@ export async function getStatementManualEvents(
       outwardDate: event.date,
       materialName: MANUAL_EVENT_MATERIAL_NAMES[eventType],
       identityNo: event.asset.assetName,
+      supplierName: "",
       partNumber: "",
       subEquipment: "",
       quantity: null,

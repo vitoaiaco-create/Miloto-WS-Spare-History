@@ -195,6 +195,7 @@ export function ShareTableButton({
                 <th className="p-2">Outward Date</th>
                 <th className="p-2">Material Name</th>
                 <th className="p-2">Identity No</th>
+                <th className="p-2">Supplier</th>
                 <th className="p-2">Part Number</th>
                 <th className="p-2">Sub Equipment</th>
                 <th className="p-2">Qty</th>
@@ -209,6 +210,9 @@ export function ShareTableButton({
                   <td className="p-2">{formatDate(spare.outwardDate)}</td>
                   <td className="p-2">{spare.materialName}</td>
                   <td className="p-2">{spare.identityNo}</td>
+                  <td className="p-2">
+                    {spare.supplierName.trim() ? spare.supplierName : "—"}
+                  </td>
                   <td className="p-2">{spare.partNumber}</td>
                   <td className="p-2">{spare.subEquipment}</td>
                   <td className="p-2">{spare.quantity}</td>
