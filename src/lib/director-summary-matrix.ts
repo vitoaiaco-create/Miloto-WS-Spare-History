@@ -18,15 +18,15 @@ export type DirectorSummaryEventType =
 
 // Same ERP Sub Equipment labels the executive statement uses
 // (`STATEMENT_COMPONENT_GROUPS` / `mechanicalSparesTable.subEquipment`),
-// plus General for blank rows and routine checks, and Alignment for
-// WHEEL_ALIGNMENT manual events. Print order puts the high-traffic
-// mechanical groups first.
+// plus General Checks for blank rows and routine checks, and Alignment for
+// WHEEL_ALIGNMENT manual events. Print order puts General Checks and
+// Alignment first, then the high-traffic mechanical groups.
 export const DIRECTOR_SUMMARY_SYSTEMS = [
-  "General",
+  "General Checks",
+  "Alignment",
   "Engine",
   "Transmission",
   "Axles",
-  "Alignment",
   "Suspension",
   "Diffs",
   "Air System",
@@ -42,7 +42,7 @@ export const DIRECTOR_SUMMARY_SYSTEMS = [
   "Overhauled Volvo Engine",
   "Overhauled Diff",
 ] as const satisfies readonly (
-  | "General"
+  | "General Checks"
   | "Alignment"
   | (typeof STATEMENT_COMPONENT_GROUPS)[number]
 )[]
@@ -125,7 +125,7 @@ const MANUAL_EVENT_SYSTEM: Record<
   DirectorSummarySystem
 > = {
   WHEEL_ALIGNMENT: "Alignment",
-  CHECKS_OK: "General",
+  CHECKS_OK: "General Checks",
 }
 
 function emptyCells(): Record<DirectorSummarySystem, DirectorSummaryCellEvent[]> {
@@ -183,13 +183,13 @@ export function formatDirectorSummaryDate(
 
 // Title-cases the raw ERP cell the same way the executive statement does.
 // Known groups keep their own column; blank or unrecognised values land
-// in General.
+// in General Checks.
 export function systemFromSubEquipment(
   subEquipment: string | null | undefined
 ): DirectorSummarySystem {
   const name = normalizeSubEquipment(subEquipment ?? "")
   if (name && isDirectorSummarySystem(name)) return name
-  return "General"
+  return "General Checks"
 }
 
 function mapManualEvent(
