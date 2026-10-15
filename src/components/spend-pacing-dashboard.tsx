@@ -1,6 +1,6 @@
 "use client"
 
-import { useId, useRef } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import {
   Area,
   AreaChart,
@@ -30,6 +30,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
+import { Slider } from "@/components/ui/slider"
 import { analyticsPeriodLabel, type AnalyticsPeriod } from "@/lib/analytics-period"
 
 function buildChartConfig(periodLabel: string) {
@@ -52,8 +53,21 @@ const usdCompact = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 })
 
+const usdFull = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+})
+
 function formatUsdAxis(value: number) {
   return usdCompact.format(value)
+}
+
+function formatDailyDate(period: AnalyticsPeriod, day: number) {
+  return new Date(period.year, period.month - 1, day).toLocaleDateString(
+    "en-US",
+    { month: "short", day: "numeric", year: "numeric" }
+  )
 }
 
 export function SpendPacingDashboard({
@@ -68,6 +82,15 @@ export function SpendPacingDashboard({
   const weeklyChartRef = useRef<HTMLDivElement>(null)
   const periodLabel = analyticsPeriodLabel(period)
   const chartConfig = buildChartConfig(periodLabel)
+  const [activeIndex, setActiveIndex] = useState<number | null>(
+    dailyPacing.length > 0 ? dailyPacing.length - 1 : null
+  )
+  const activeData =
+    activeIndex !== null ? (dailyPacing[activeIndex] ?? null) : null
+
+  useEffect(() => {
+    setActiveIndex(dailyPacing.length > 0 ? dailyPacing.length - 1 : null)
+  }, [dailyPacing.length, period.year, period.month])
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -92,15 +115,39 @@ export function SpendPacingDashboard({
                   No daily spend data to chart yet.
                 </p>
               ) : (
-                <ChartContainer
-                  config={chartConfig}
-                  className="aspect-auto h-[280px] w-full"
-                >
-                  <AreaChart
-                    accessibilityLayer
-                    data={dailyPacing}
-                    margin={{ top: 18, right: 12, left: 4 }}
+                <>
+                  <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                    <p className="text-lg font-bold tracking-tight">
+                      Date:{" "}
+                      <span className="tabular-nums">
+                        {activeData
+                          ? formatDailyDate(period, activeData.day)
+                          : "—"}
+                      </span>
+                    </p>
+                    <p className="text-lg font-bold tabular-nums">
+                      Spend:{" "}
+                      {activeData ? usdFull.format(activeData.actual) : "—"}
+                    </p>
+                  </div>
+                  <ChartContainer
+                    config={chartConfig}
+                    className="aspect-auto h-[280px] w-full [&_.recharts-tooltip-wrapper]:hidden sm:[&_.recharts-tooltip-wrapper]:block"
                   >
+                    <AreaChart
+                      accessibilityLayer
+                      data={dailyPacing}
+                      margin={{ top: 18, right: 12, left: 4 }}
+                      onMouseMove={(event) => {
+                        const index = event.activeTooltipIndex
+                        if (index === undefined) return
+                        const next =
+                          typeof index === "number" ? index : Number(index)
+                        if (Number.isInteger(next)) {
+                          setActiveIndex(next)
+                        }
+                      }}
+                    >
                     <defs>
                       <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
                         <stop
@@ -131,8 +178,10 @@ export function SpendPacingDashboard({
                       tickFormatter={(value) => formatUsdAxis(Number(value))}
                     />
                     <ChartTooltip
+                      wrapperClassName="hidden sm:block"
                       content={
                         <ChartTooltipContent
+                          className="hidden sm:block"
                           labelFormatter={(_value, payload) => {
                             const day = payload?.[0]?.payload?.day
                             return day != null ? `Day ${day}` : "Day"
@@ -163,10 +212,26 @@ export function SpendPacingDashboard({
                       stroke="var(--color-actual)"
                       strokeWidth={2}
                     />
-                  </AreaChart>
-                </ChartContainer>
+                    </AreaChart>
+                  </ChartContainer>
+                </>
               )}
             </div>
+            {dailyPacing.length > 1 ? (
+              <div className="mt-4 block sm:hidden">
+                <Slider
+                  min={0}
+                  max={dailyPacing.length - 1}
+                  step={1}
+                  value={[activeIndex ?? 0]}
+                  aria-label="Scrub daily spend"
+                  onValueChange={(vals) => {
+                    const next = Array.isArray(vals) ? vals[0] : vals
+                    setActiveIndex(next)
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         </CardContent>
       </Card>
