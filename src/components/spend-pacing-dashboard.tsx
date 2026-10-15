@@ -8,6 +8,7 @@ import {
   Label as RechartsLabel,
   Line,
   LineChart,
+  ReferenceDot,
   ReferenceLine,
   XAxis,
   YAxis,
@@ -177,6 +178,25 @@ export function SpendPacingDashboard({
                       domain={[0, "auto"]}
                       tickFormatter={(value) => formatUsdAxis(Number(value))}
                     />
+                    {activeIndex !== null && dailyPacing[activeIndex] && (
+                      <>
+                        <ReferenceLine
+                          className="sm:hidden"
+                          stroke="var(--color-actual)"
+                          strokeDasharray="4 4"
+                          x={dailyPacing[activeIndex].day}
+                        />
+                        <ReferenceDot
+                          className="sm:hidden pointer-events-none"
+                          fill="var(--color-actual)"
+                          r={5}
+                          stroke="var(--background)"
+                          strokeWidth={2}
+                          x={dailyPacing[activeIndex].day}
+                          y={dailyPacing[activeIndex].actual}
+                        />
+                      </>
+                    )}
                     <ChartTooltip
                       wrapperClassName="hidden sm:block"
                       content={
