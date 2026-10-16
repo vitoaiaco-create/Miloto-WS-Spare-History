@@ -124,6 +124,7 @@ export const sparesRowSchema = z.preprocess((row) => {
     subCategory: rawSubCategory || null,
     jobCardType: toTrimmedString(cells.get("job card type")) || null,
     subEquipment: rawSubEquipment || null,
+    location: toTrimmedString(cells.get("location")) || null,
     brandName: toTrimmedString(cells.get("brand name")) || null,
     supplierName: toTrimmedString(cells.get("supplier name")) || null,
     docketNo: toTrimmedString(cells.get("docket no")) || null,
@@ -192,6 +193,10 @@ export const sparesRowSchema = z.preprocess((row) => {
   subEquipment: z
     .string()
     .max(MAX_RAW_ERP_FIELD, `Sub Equipment must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
+    .nullable(),
+  location: z
+    .string()
+    .max(MAX_RAW_ERP_FIELD, `Location must be ${MAX_RAW_ERP_FIELD} characters or fewer`)
     .nullable(),
   brandName: z
     .string()

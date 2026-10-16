@@ -198,6 +198,7 @@ export function ShareTableButton({
                 <th className="p-2">Supplier</th>
                 <th className="p-2">Part Number</th>
                 <th className="p-2">Sub Equipment</th>
+                <th className="p-2">Location</th>
                 <th className="p-2">Qty</th>
                 <th className="p-2">Price ($)</th>
                 <th className="p-2">Amount ($)</th>
@@ -215,6 +216,9 @@ export function ShareTableButton({
                   </td>
                   <td className="p-2">{spare.partNumber}</td>
                   <td className="p-2">{spare.subEquipment}</td>
+                  <td className="p-2">
+                    {spare.location?.trim() ? spare.location : "—"}
+                  </td>
                   <td className="p-2">{spare.quantity}</td>
                   <td className="p-2">{formatUsd(spare.priceUsd)}</td>
                   <td className="p-2">{formatUsd(spare.amountUsd)}</td>

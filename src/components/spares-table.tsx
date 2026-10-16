@@ -133,6 +133,7 @@ export function SparesTable({
           <TableHead>Supplier</TableHead>
           <TableHead>Part Number</TableHead>
           <TableHead>Sub Equipment</TableHead>
+          <TableHead>Location</TableHead>
           <TableHead>Quantity</TableHead>
           <TableHead>Price ($)</TableHead>
           <TableHead>Amount ($)</TableHead>
@@ -143,7 +144,7 @@ export function SparesTable({
         {spares.length === 0 ? (
           <TableRow>
             <TableCell
-              colSpan={10}
+              colSpan={11}
               className="text-center text-muted-foreground"
             >
               {isFiltered
@@ -164,6 +165,9 @@ export function SparesTable({
               <TableCell>
                 {spare.subEquipment.trim() ? spare.subEquipment : "—"}
               </TableCell>
+              <TableCell>
+                {spare.location?.trim() ? spare.location : "—"}
+              </TableCell>
               <TableCell>{spare.quantity}</TableCell>
               <TableCell>{formatUsd(spare.priceUsd)}</TableCell>
               <TableCell>{formatUsd(spare.amountUsd)}</TableCell>
@@ -180,7 +184,7 @@ export function SparesTable({
       {spares.length > 0 ? (
         <TableFooter>
           <TableRow className="border-t-2 bg-muted/50 font-bold hover:bg-muted/50">
-            <TableCell colSpan={7}>Total</TableCell>
+            <TableCell colSpan={8}>Total</TableCell>
             <TableCell>{formatUsdTotal(totalPrice)}</TableCell>
             <TableCell>{formatUsdTotal(totalAmount)}</TableCell>
             <TableCell />

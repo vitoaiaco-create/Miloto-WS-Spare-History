@@ -82,6 +82,10 @@ export const mechanicalSparesTable = pgTable(
     subCategory: text("sub_category"),
     jobCardType: text("job_card_type"),
     subEquipment: text("sub_equipment"),
+    // Warehouse / store from the ERP outward report's "Location" column.
+    // Stored verbatim. Null on historical rows imported before the report
+    // carried this column, and on blank cells.
+    location: text("location"),
     brandName: text("brand_name"),
     supplierName: text("supplier_name"),
     docketNo: text("docket_no"),
@@ -462,6 +466,10 @@ export const unmappedSparesStagingTable = pgTable(
     subCategory: text("sub_category"),
     jobCardType: text("job_card_type"),
     subEquipment: text("sub_equipment"),
+    // Warehouse / store from the ERP outward report's "Location" column.
+    // Stored verbatim. Null on historical rows imported before the report
+    // carried this column, and on blank cells.
+    location: text("location"),
     brandName: text("brand_name"),
     supplierName: text("supplier_name"),
     docketNo: text("docket_no"),

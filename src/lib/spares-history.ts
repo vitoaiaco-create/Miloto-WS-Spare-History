@@ -86,6 +86,7 @@ export type SparesHistoryRow = {
   supplierName: string
   partNumber: string
   subEquipment: string
+  location: string | null
   quantity: number | null
   priceUsd: number | null
   amountUsd: number | null
@@ -389,6 +390,7 @@ export async function getSparesHistory(
       supplierName: spare.supplierName ?? "",
       partNumber: spare.partNumber,
       subEquipment: spare.subEquipment ?? "",
+      location: spare.location ?? null,
       quantity: Number(spare.quantity),
       priceUsd: toNullableNumber(spare.priceUsd),
       amountUsd: toNullableNumber(spare.amountUsd),
@@ -488,6 +490,7 @@ export async function getStatementManualEvents(
       supplierName: "",
       partNumber: "",
       subEquipment: "",
+      location: null,
       quantity: null,
       priceUsd: null,
       amountUsd: null,

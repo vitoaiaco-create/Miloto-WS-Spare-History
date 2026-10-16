@@ -135,6 +135,11 @@ const SPARES_COLUMNS: ExportColumn<SparesHistoryRow>[] = [
     pdf: (spare) => spare.subEquipment,
   },
   {
+    header: "Location",
+    csv: (spare) => spare.location,
+    pdf: (spare) => (spare.location?.trim() ? spare.location : "—"),
+  },
+  {
     header: "Quantity",
     csv: (spare) => spare.quantity,
     pdf: (spare) => String(spare.quantity),

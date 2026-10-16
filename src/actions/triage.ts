@@ -132,6 +132,7 @@ export async function commitUnmappedSpare(
         subCategory: staging.subCategory,
         jobCardType: staging.jobCardType,
         subEquipment: staging.subEquipment,
+        location: staging.location,
         brandName: staging.brandName,
         supplierName: staging.supplierName,
         docketNo: staging.docketNo,
