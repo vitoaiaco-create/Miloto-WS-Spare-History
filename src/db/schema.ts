@@ -170,13 +170,16 @@ export const partDescriptionAliasesTable = pgTable(
 );
 
 // Manual interventions injected into the executive statement (wheel
-// alignments, routine checks, checks pending). Shared across all staff.
+// alignments, routine checks, checks pending, air system tests). Shared
+// across all staff.
 // Not a stock movement — these sit alongside physical spare replacements,
 // sorted by date. Existing rows default to wheel alignment.
 export const MANUAL_STATEMENT_EVENT_TYPES = [
   "WHEEL_ALIGNMENT",
   "CHECKS_OK",
   "CHECKS_PENDING",
+  "AIR_SYSTEM_OK",
+  "AIR_SYSTEM_FAIL",
 ] as const;
 
 export const manualStatementEventTypeEnum = pgEnum(
@@ -197,9 +200,10 @@ export const manualAlignmentEventsTable = pgTable(
       .default("WHEEL_ALIGNMENT"),
     notes: text("notes"),
     // Wheel-alignment out-of-square readings in mm/m. Null on
-    // CHECKS_OK / CHECKS_PENDING rows and on alignments logged
-    // before these metrics were captured. Trucks / prime movers
-    // typically use axle 2 and 3 (rear axles); trailers use 1–3.
+    // CHECKS_OK / CHECKS_PENDING / AIR_SYSTEM_OK / AIR_SYSTEM_FAIL
+    // rows and on alignments logged before these metrics were
+    // captured. Trucks / prime movers typically use axle 2 and 3
+    // (rear axles); trailers use 1–3.
     outOfSquareAxle1: real("out_of_square_axle_1"),
     outOfSquareAxle2: real("out_of_square_axle_2"),
     outOfSquareAxle3: real("out_of_square_axle_3"),

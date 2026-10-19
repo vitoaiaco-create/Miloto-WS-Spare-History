@@ -11,19 +11,29 @@ export const DIRECTOR_SUMMARY_EVENT_TYPES = [
   "Intervention",
   "Alignment",
   "Check",
+  "Fail",
 ] as const
 
 export type DirectorSummaryEventType =
   (typeof DIRECTOR_SUMMARY_EVENT_TYPES)[number]
 
+export const DIRECTOR_SUMMARY_LEGEND_EVENT_TYPES = [
+  "Intervention",
+  "Alignment",
+  "Check",
+] as const satisfies readonly DirectorSummaryEventType[]
+
 // Same ERP Sub Equipment labels the executive statement uses
 // (`STATEMENT_COMPONENT_GROUPS` / `mechanicalSparesTable.subEquipment`),
-// plus General Checks for blank rows and routine checks, and Alignment for
-// WHEEL_ALIGNMENT manual events. Print order puts General Checks and
-// Alignment first, then the high-traffic mechanical groups.
+// plus General Checks for blank rows and routine checks, Alignment for
+// WHEEL_ALIGNMENT, and Air System Check for AIR_SYSTEM_OK / AIR_SYSTEM_FAIL.
+// Print order puts General Checks, Alignment, and Air System Check first,
+// then the high-traffic mechanical groups. "Air System" remains the spare-
+// replacement column; "Air System Check" is the preventative-test column.
 export const DIRECTOR_SUMMARY_SYSTEMS = [
   "General Checks",
   "Alignment",
+  "Air System Check",
   "Engine",
   "Transmission",
   "Axles",
@@ -44,6 +54,7 @@ export const DIRECTOR_SUMMARY_SYSTEMS = [
 ] as const satisfies readonly (
   | "General Checks"
   | "Alignment"
+  | "Air System Check"
   | (typeof STATEMENT_COMPONENT_GROUPS)[number]
 )[]
 
@@ -121,11 +132,16 @@ export type DirectorSummaryMatrixPayload = DirectorSummaryMatrixResult & {
 }
 
 const MANUAL_EVENT_SYSTEM: Record<
-  Extract<ManualStatementEventType, "WHEEL_ALIGNMENT" | "CHECKS_OK">,
+  Extract<
+    ManualStatementEventType,
+    "WHEEL_ALIGNMENT" | "CHECKS_OK" | "AIR_SYSTEM_OK" | "AIR_SYSTEM_FAIL"
+  >,
   DirectorSummarySystem
 > = {
   WHEEL_ALIGNMENT: "Alignment",
   CHECKS_OK: "General Checks",
+  AIR_SYSTEM_OK: "Air System Check",
+  AIR_SYSTEM_FAIL: "Air System Check",
 }
 
 function emptyCells(): Record<DirectorSummarySystem, DirectorSummaryCellEvent[]> {
@@ -200,6 +216,12 @@ function mapManualEvent(
   }
   if (eventType === "CHECKS_OK") {
     return { eventType: "Check", system: MANUAL_EVENT_SYSTEM.CHECKS_OK }
+  }
+  if (eventType === "AIR_SYSTEM_OK") {
+    return { eventType: "Check", system: MANUAL_EVENT_SYSTEM.AIR_SYSTEM_OK }
+  }
+  if (eventType === "AIR_SYSTEM_FAIL") {
+    return { eventType: "Fail", system: MANUAL_EVENT_SYSTEM.AIR_SYSTEM_FAIL }
   }
   return null
 }

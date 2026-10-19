@@ -10,6 +10,8 @@ export const MANUAL_STATEMENT_EVENT_TYPES = [
   "WHEEL_ALIGNMENT",
   "CHECKS_OK",
   "CHECKS_PENDING",
+  "AIR_SYSTEM_OK",
+  "AIR_SYSTEM_FAIL",
 ] as const
 export type ManualStatementEventType =
   (typeof MANUAL_STATEMENT_EVENT_TYPES)[number]
@@ -18,6 +20,8 @@ export const MANUAL_EVENT_LABELS: Record<ManualStatementEventType, string> = {
   WHEEL_ALIGNMENT: "Wheel Alignment",
   CHECKS_OK: "Checks Performed - OK",
   CHECKS_PENDING: "Checks Pending",
+  AIR_SYSTEM_OK: "Air System Test OK",
+  AIR_SYSTEM_FAIL: "Air System Test Failed",
 }
 
 export const MANUAL_EVENT_MATERIAL_NAMES: Record<
@@ -27,6 +31,8 @@ export const MANUAL_EVENT_MATERIAL_NAMES: Record<
   WHEEL_ALIGNMENT: "WHEEL ALIGNMENT",
   CHECKS_OK: "CHECKS PERFORMED - OK",
   CHECKS_PENDING: "CHECKS PENDING",
+  AIR_SYSTEM_OK: "PREVENTATIVE MAINT - AIR SYSTEM TEST OK",
+  AIR_SYSTEM_FAIL: "PREVENTATIVE MAINT - AIR SYSTEM TEST FAILED",
 }
 
 export const WHEEL_ALIGNMENT_MATERIAL_NAME =
@@ -34,6 +40,17 @@ export const WHEEL_ALIGNMENT_MATERIAL_NAME =
 export const CHECKS_OK_MATERIAL_NAME = MANUAL_EVENT_MATERIAL_NAMES.CHECKS_OK
 export const CHECKS_PENDING_MATERIAL_NAME =
   MANUAL_EVENT_MATERIAL_NAMES.CHECKS_PENDING
+export const AIR_SYSTEM_OK_MATERIAL_NAME =
+  MANUAL_EVENT_MATERIAL_NAMES.AIR_SYSTEM_OK
+export const AIR_SYSTEM_FAIL_MATERIAL_NAME =
+  MANUAL_EVENT_MATERIAL_NAMES.AIR_SYSTEM_FAIL
+
+export function isAirSystemManualEvent(
+  eventType: ManualStatementEventType
+): eventType is "AIR_SYSTEM_OK" | "AIR_SYSTEM_FAIL" {
+  return eventType === "AIR_SYSTEM_OK" || eventType === "AIR_SYSTEM_FAIL"
+}
+
 export const STATEMENT_BLANK_VALUE = "-"
 
 export type StatementRowKind = "spare" | "manual" | "alignment" | "check"

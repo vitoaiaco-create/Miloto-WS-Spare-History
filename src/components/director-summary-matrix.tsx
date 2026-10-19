@@ -35,7 +35,7 @@ import {
   type AnalyticsPeriod,
 } from "@/lib/analytics-period"
 import {
-  DIRECTOR_SUMMARY_EVENT_TYPES,
+  DIRECTOR_SUMMARY_LEGEND_EVENT_TYPES,
   DIRECTOR_SUMMARY_SYSTEMS,
   DIRECTOR_SUMMARY_TRAILER_SYSTEMS,
   isDirectorSummaryPrimeMover,
@@ -71,6 +71,11 @@ const EVENT_ICON: Record<
     Icon: CheckCircle2,
     className: "text-green-600 print:text-green-600",
     label: "Check OK",
+  },
+  Fail: {
+    Icon: TriangleAlert,
+    className: "text-destructive print:text-destructive",
+    label: "Air System Fail",
   },
 }
 
@@ -140,6 +145,36 @@ function alignmentExceptionDisplay(
     suffix: "(OK)",
     label: "Alignment in spec",
   }
+}
+
+function AirSystemCheckCell({
+  events,
+}: {
+  events: DirectorSummaryCellEvent[]
+}) {
+  const hasFail = events.some((event) => event.eventType === "Fail")
+  const hasOk = events.some((event) => event.eventType === "Check")
+
+  if (!hasFail && !hasOk) return null
+
+  const Icon = hasFail ? TriangleAlert : CheckCircle2
+  const className = hasFail
+    ? "text-destructive print:text-destructive"
+    : "text-green-500 print:text-green-500"
+  const label = hasFail ? "Air system test failed" : "Air system test OK"
+
+  return (
+    <div className="flex items-center justify-center">
+      <Icon
+        aria-label={label}
+        className={cn(
+          "h-5 w-5 shrink-0 print:size-4 [print-color-adjust:exact] [-webkit-print-color-adjust:exact]",
+          className
+        )}
+        strokeWidth={2.5}
+      />
+    </div>
+  )
 }
 
 function MatrixEventLine({
@@ -305,7 +340,9 @@ function DirectorSummaryAssetTable({
                       key={system}
                       className="align-top whitespace-normal border-r border-border px-1.5 py-1 print:px-1 print:py-0.5"
                     >
-                      {events.length > 0 ? (
+                      {system === "Air System Check" ? (
+                        <AirSystemCheckCell events={events} />
+                      ) : events.length > 0 ? (
                         <div className="flex flex-col gap-1 print:gap-0.5">
                           {events.map((event) => (
                             <MatrixEventLine
@@ -400,7 +437,7 @@ export function DirectorSummaryMatrix({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <PeriodSelect period={period} />
           <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs print:text-[9px]">
-            {DIRECTOR_SUMMARY_EVENT_TYPES.map((eventType) => {
+            {DIRECTOR_SUMMARY_LEGEND_EVENT_TYPES.map((eventType) => {
               const { Icon, className, label } = EVENT_ICON[eventType]
               return (
                 <li key={eventType} className="inline-flex items-center gap-1.5">
@@ -415,6 +452,22 @@ export function DirectorSummaryMatrix({
                 </li>
               )
             })}
+            <li className="inline-flex items-center gap-1.5">
+              <CheckCircle2
+                aria-hidden="true"
+                className="h-3.5 w-3.5 shrink-0 text-green-500 print:size-2.5 print:text-green-500 [print-color-adjust:exact] [-webkit-print-color-adjust:exact]"
+                strokeWidth={2.5}
+              />
+              Air System OK
+            </li>
+            <li className="inline-flex items-center gap-1.5">
+              <TriangleAlert
+                aria-hidden="true"
+                className="h-3.5 w-3.5 shrink-0 text-destructive print:size-2.5 print:text-destructive [print-color-adjust:exact] [-webkit-print-color-adjust:exact]"
+                strokeWidth={2.5}
+              />
+              Air System Fail
+            </li>
           </ul>
         </div>
 

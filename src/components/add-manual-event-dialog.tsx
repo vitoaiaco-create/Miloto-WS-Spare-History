@@ -201,10 +201,10 @@ export function AddManualEventDialog({
         <DialogHeader>
           <DialogTitle>Add Manual Event</DialogTitle>
           <DialogDescription>
-            Inject a wheel alignment, a completed routine check, or a
-            checks-pending note into the executive statement. It sorts by
-            date alongside physical spare replacements, including on assets
-            with no spare issues.
+            Inject a wheel alignment, a completed routine check, a
+            checks-pending note, or an air system test into the executive
+            statement. It sorts by date alongside physical spare
+            replacements, including on assets with no spare issues.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">

@@ -15,6 +15,7 @@ import { toCanonicalFleetNumber, toIsoDateString } from "@/lib/spreadsheet"
 import {
   assetTypesForStatement,
   classifyStatementAssetType,
+  isAirSystemManualEvent,
   MANUAL_EVENT_MATERIAL_NAMES,
   type ManualStatementEventType,
   type PartAliasMap,
@@ -496,6 +497,7 @@ export async function getStatementManualEvents(
     const eventType = isManualStatementEventType(event.eventType)
       ? event.eventType
       : "WHEEL_ALIGNMENT"
+    const isAirSystem = isAirSystemManualEvent(eventType)
 
     return {
       id: event.id,
@@ -505,13 +507,15 @@ export async function getStatementManualEvents(
       identityNo: event.asset.assetName,
       supplierName: "",
       partNumber: "",
-      subEquipment: "",
+      // Air system tests group with the Air System component on the
+      // executive statement. Other manual events stay ungrouped.
+      subEquipment: isAirSystem ? "Air System" : "",
       location: null,
       fitmentAxle: null,
       fitmentSide: null,
       quantity: null,
       priceUsd: null,
-      amountUsd: null,
+      amountUsd: isAirSystem ? 0 : null,
       distance: null,
       latestDate: null,
       notes: event.notes,
