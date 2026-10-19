@@ -152,27 +152,37 @@ function AirSystemCheckCell({
 }: {
   events: DirectorSummaryCellEvent[]
 }) {
-  const hasFail = events.some((event) => event.eventType === "Fail")
-  const hasOk = events.some((event) => event.eventType === "Check")
+  const failEvent = events.find((event) => event.eventType === "Fail")
+  const okEvent = events.find((event) => event.eventType === "Check")
+  const event = failEvent ?? okEvent
 
-  if (!hasFail && !hasOk) return null
+  if (!event) return null
 
-  const Icon = hasFail ? TriangleAlert : CheckCircle2
-  const className = hasFail
-    ? "text-destructive print:text-destructive"
-    : "text-green-500 print:text-green-500"
-  const label = hasFail ? "Air system test failed" : "Air system test OK"
+  const Icon = event.eventType === "Fail" ? TriangleAlert : CheckCircle2
+  const className =
+    event.eventType === "Fail"
+      ? "text-destructive print:text-destructive"
+      : "text-green-500 print:text-green-500"
+  const label =
+    event.eventType === "Fail"
+      ? "Air system test failed"
+      : "Air system test OK"
 
   return (
-    <div className="flex items-center justify-center">
+    <div
+      className="flex items-center gap-1.5 whitespace-nowrap text-[11px] leading-tight print:text-[9px]"
+      title={`${label} ${event.formattedDate}`}
+    >
       <Icon
         aria-label={label}
         className={cn(
-          "h-5 w-5 shrink-0 print:size-4 [print-color-adjust:exact] [-webkit-print-color-adjust:exact]",
+          "size-3 shrink-0 print:size-2.5 [print-color-adjust:exact] [-webkit-print-color-adjust:exact]",
           className
         )}
-        strokeWidth={2.5}
       />
+      <span className="whitespace-nowrap tabular-nums">
+        {event.formattedDate}
+      </span>
     </div>
   )
 }

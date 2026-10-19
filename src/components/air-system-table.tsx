@@ -1,7 +1,5 @@
 "use client"
 
-import { TriangleAlert } from "lucide-react"
-
 import { Badge } from "@/components/ui/badge"
 import {
   Table,
@@ -40,12 +38,7 @@ function ResponseSparesCell({ row }: { row: AirSystemComplianceRow }) {
   }
 
   if (row.responseSpares.length === 0) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
-        <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
-        Awaiting Parts/Repair
-      </span>
-    )
+    return <span className="text-muted-foreground">No parts issued</span>
   }
 
   return (
