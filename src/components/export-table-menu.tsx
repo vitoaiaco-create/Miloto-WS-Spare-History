@@ -87,6 +87,9 @@ function describeFilters(filters: SparesHistoryFilters) {
   if (filters.materialName) parts.push(`Material: ${filters.materialName}`)
   if (filters.subEquipment?.length)
     parts.push(`Sub Equipment: ${filters.subEquipment.join(", ")}`)
+  if (filters.fitmentAxle !== undefined)
+    parts.push(`Axle: ${filters.fitmentAxle}`)
+  if (filters.fitmentSide) parts.push(`Side: ${filters.fitmentSide}`)
   if (filters.startDate || filters.endDate) {
     parts.push(
       `Date Range: ${filters.startDate ? formatDate(filters.startDate) : "…"} to ${
@@ -135,9 +138,15 @@ const SPARES_COLUMNS: ExportColumn<SparesHistoryRow>[] = [
     pdf: (spare) => spare.subEquipment,
   },
   {
-    header: "Location",
-    csv: (spare) => spare.location,
-    pdf: (spare) => (spare.location?.trim() ? spare.location : "—"),
+    header: "Axle",
+    csv: (spare) => spare.fitmentAxle,
+    pdf: (spare) =>
+      spare.fitmentAxle === null ? "—" : String(spare.fitmentAxle),
+  },
+  {
+    header: "Side",
+    csv: (spare) => spare.fitmentSide,
+    pdf: (spare) => (spare.fitmentSide?.trim() ? spare.fitmentSide : "—"),
   },
   {
     header: "Quantity",

@@ -31,6 +31,7 @@ import {
   toNumber,
   toTrimmedString,
 } from "@/lib/spreadsheet"
+import { parseFitmentLocation } from "@/lib/location-parser"
 import {
   isCompleteTaxonomyPath,
   sanitizeTaxonomyTiers,
@@ -260,6 +261,7 @@ function toSpareInsertValues(
     jobCardType: row.jobCardType,
     subEquipment: row.subEquipment,
     location: row.location,
+    ...parseFitmentLocation(row.location),
     brandName: row.brandName,
     supplierName: row.supplierName,
     docketNo: row.docketNo,
@@ -308,6 +310,7 @@ function toStagingInsertValues(
     jobCardType: row.jobCardType,
     subEquipment: row.subEquipment,
     location: row.location,
+    ...parseFitmentLocation(row.location),
     brandName: row.brandName,
     supplierName: row.supplierName,
     docketNo: row.docketNo,

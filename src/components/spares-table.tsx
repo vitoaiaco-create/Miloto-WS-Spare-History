@@ -107,6 +107,16 @@ function formatUsdTotal(value: number) {
   return value.toLocaleString("en-US", { style: "currency", currency: "USD" })
 }
 
+function FitmentCell({
+  value,
+  location,
+}: {
+  value: number | string | null
+  location: string | null
+}) {
+  return <span title={location ?? undefined}>{value ?? "—"}</span>
+}
+
 export function SparesTable({
   spares,
   isFiltered,
@@ -133,7 +143,8 @@ export function SparesTable({
           <TableHead>Supplier</TableHead>
           <TableHead>Part Number</TableHead>
           <TableHead>Sub Equipment</TableHead>
-          <TableHead>Location</TableHead>
+          <TableHead>Axle</TableHead>
+          <TableHead>Side</TableHead>
           <TableHead>Quantity</TableHead>
           <TableHead>Price ($)</TableHead>
           <TableHead>Amount ($)</TableHead>
@@ -144,7 +155,7 @@ export function SparesTable({
         {spares.length === 0 ? (
           <TableRow>
             <TableCell
-              colSpan={11}
+              colSpan={12}
               className="text-center text-muted-foreground"
             >
               {isFiltered
@@ -166,7 +177,16 @@ export function SparesTable({
                 {spare.subEquipment.trim() ? spare.subEquipment : "—"}
               </TableCell>
               <TableCell>
-                {spare.location?.trim() ? spare.location : "—"}
+                <FitmentCell
+                  value={spare.fitmentAxle}
+                  location={spare.location}
+                />
+              </TableCell>
+              <TableCell>
+                <FitmentCell
+                  value={spare.fitmentSide}
+                  location={spare.location}
+                />
               </TableCell>
               <TableCell>{spare.quantity}</TableCell>
               <TableCell>{formatUsd(spare.priceUsd)}</TableCell>
@@ -184,7 +204,7 @@ export function SparesTable({
       {spares.length > 0 ? (
         <TableFooter>
           <TableRow className="border-t-2 bg-muted/50 font-bold hover:bg-muted/50">
-            <TableCell colSpan={8}>Total</TableCell>
+            <TableCell colSpan={9}>Total</TableCell>
             <TableCell>{formatUsdTotal(totalPrice)}</TableCell>
             <TableCell>{formatUsdTotal(totalAmount)}</TableCell>
             <TableCell />

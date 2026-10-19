@@ -54,6 +54,18 @@ function toFilterList(value: string | string[] | undefined) {
   return [...new Set(raw.map((item) => item.trim()).filter(Boolean))]
 }
 
+function toOptionalAxle(value: string | string[] | undefined) {
+  const raw = toFilterString(value)
+  if (!/^[1-4]$/.test(raw)) return undefined
+  return Number(raw)
+}
+
+function toOptionalSide(value: string | string[] | undefined) {
+  const raw = toFilterString(value)
+  if (raw === "Left" || raw === "Right" || raw === "Both") return raw
+  return undefined
+}
+
 export default async function SparesHistoryPage({
   searchParams,
 }: {
@@ -116,6 +128,8 @@ export default async function SparesHistoryPage({
         partNumber: toFilterString(resolvedSearchParams.partNumber),
         materialName: toFilterString(resolvedSearchParams.materialName),
         subEquipment: toFilterList(resolvedSearchParams.subEquipment),
+        fitmentAxle: toOptionalAxle(resolvedSearchParams.fitmentAxle),
+        fitmentSide: toOptionalSide(resolvedSearchParams.fitmentSide),
         startDate: toFilterString(resolvedSearchParams.startDate),
         endDate: toFilterString(resolvedSearchParams.endDate),
         excludeFrom: hasExcludeRange ? excludeFrom : "",

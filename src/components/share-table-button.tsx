@@ -40,6 +40,9 @@ function describeFilters(filters: SparesHistoryFilters) {
   if (filters.materialName) parts.push(`Material: ${filters.materialName}`)
   if (filters.subEquipment?.length)
     parts.push(`Sub Equipment: ${filters.subEquipment.join(", ")}`)
+  if (filters.fitmentAxle !== undefined)
+    parts.push(`Axle: ${filters.fitmentAxle}`)
+  if (filters.fitmentSide) parts.push(`Side: ${filters.fitmentSide}`)
   if (filters.startDate || filters.endDate) {
     parts.push(
       `Date Range: ${filters.startDate ? formatDate(filters.startDate) : "…"} to ${
@@ -198,7 +201,8 @@ export function ShareTableButton({
                 <th className="p-2">Supplier</th>
                 <th className="p-2">Part Number</th>
                 <th className="p-2">Sub Equipment</th>
-                <th className="p-2">Location</th>
+                <th className="p-2">Axle</th>
+                <th className="p-2">Side</th>
                 <th className="p-2">Qty</th>
                 <th className="p-2">Price ($)</th>
                 <th className="p-2">Amount ($)</th>
@@ -216,8 +220,9 @@ export function ShareTableButton({
                   </td>
                   <td className="p-2">{spare.partNumber}</td>
                   <td className="p-2">{spare.subEquipment}</td>
+                  <td className="p-2">{spare.fitmentAxle ?? "—"}</td>
                   <td className="p-2">
-                    {spare.location?.trim() ? spare.location : "—"}
+                    {spare.fitmentSide?.trim() ? spare.fitmentSide : "—"}
                   </td>
                   <td className="p-2">{spare.quantity}</td>
                   <td className="p-2">{formatUsd(spare.priceUsd)}</td>

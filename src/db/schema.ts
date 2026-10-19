@@ -86,6 +86,11 @@ export const mechanicalSparesTable = pgTable(
     // Stored verbatim. Null on historical rows imported before the report
     // carried this column, and on blank cells.
     location: text("location"),
+    // Parsed from `location` at ingest time by `parseFitmentLocation`
+    // (src/lib/location-parser.ts). Null when the raw cell is blank or
+    // doesn't mention an axle / side. Never overwrite `location`.
+    fitmentAxle: integer("fitment_axle"),
+    fitmentSide: text("fitment_side"),
     brandName: text("brand_name"),
     supplierName: text("supplier_name"),
     docketNo: text("docket_no"),
@@ -470,6 +475,11 @@ export const unmappedSparesStagingTable = pgTable(
     // Stored verbatim. Null on historical rows imported before the report
     // carried this column, and on blank cells.
     location: text("location"),
+    // Parsed from `location` at ingest time by `parseFitmentLocation`
+    // (src/lib/location-parser.ts). Null when the raw cell is blank or
+    // doesn't mention an axle / side. Never overwrite `location`.
+    fitmentAxle: integer("fitment_axle"),
+    fitmentSide: text("fitment_side"),
     brandName: text("brand_name"),
     supplierName: text("supplier_name"),
     docketNo: text("docket_no"),

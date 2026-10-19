@@ -29,8 +29,19 @@ import {
 } from "@/components/ui/combobox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { formatIsoDate, parseIsoDate } from "@/lib/iso-date"
 import type { SparesHistoryFilters } from "@/lib/spares-history"
+
+const AXLE_OPTIONS = ["1", "2", "3", "4"] as const
+const SIDE_OPTIONS = ["Left", "Right", "Both"] as const
+const ALL_FITMENT_VALUE = "all"
 
 type ExcludeDateRange = { from: Date; to: Date }
 
@@ -40,6 +51,8 @@ type Filters = {
   materialName: string
   startDate: string
   endDate: string
+  fitmentAxle: string
+  fitmentSide: string
 }
 
 const EMPTY_FILTERS: Filters = {
@@ -48,6 +61,8 @@ const EMPTY_FILTERS: Filters = {
   materialName: "",
   startDate: "",
   endDate: "",
+  fitmentAxle: "",
+  fitmentSide: "",
 }
 
 // Debounce (ms) before free-text filter changes push a new URL, so the
@@ -75,6 +90,8 @@ function buildQueryString(
   for (const category of categories) {
     if (category) params.append("subEquipment", category)
   }
+  if (filters.fitmentAxle) params.set("fitmentAxle", filters.fitmentAxle)
+  if (filters.fitmentSide) params.set("fitmentSide", filters.fitmentSide)
   if (filters.startDate) params.set("startDate", filters.startDate)
   if (filters.endDate) params.set("endDate", filters.endDate)
   if (excludeDates) {
@@ -106,6 +123,11 @@ export function SparesFilterBar({
     materialName: initialFilters.materialName ?? "",
     startDate: initialFilters.startDate ?? "",
     endDate: initialFilters.endDate ?? "",
+    fitmentAxle:
+      initialFilters.fitmentAxle !== undefined
+        ? String(initialFilters.fitmentAxle)
+        : "",
+    fitmentSide: initialFilters.fitmentSide ?? "",
   })
 
   const isFirstRender = useRef(true)
@@ -147,10 +169,9 @@ export function SparesFilterBar({
     setFilters((current) => ({ ...current, [key]: value }))
   }
 
-  function updateDiscreteFilter<K extends "startDate" | "endDate">(
-    key: K,
-    value: Filters[K]
-  ) {
+  function updateDiscreteFilter<
+    K extends "startDate" | "endDate" | "fitmentAxle" | "fitmentSide",
+  >(key: K, value: Filters[K]) {
     setFilters((current) => {
       const next = { ...current, [key]: value }
       pushFiltersToUrl(next, categoriesRef.current)
@@ -194,7 +215,7 @@ export function SparesFilterBar({
         <CardTitle>Filters</CardTitle>
         <CardDescription>
           Narrow the history by asset, part, one or more sub equipment
-          values, or a date range.
+          values, axle, side, or a date range.
         </CardDescription>
         <CardAction>
           <Button
@@ -286,12 +307,64 @@ export function SparesFilterBar({
           </div>
 
           <div className="flex flex-col gap-1.5">
+            <Label htmlFor="filter-axle">Axle</Label>
+            <Select
+              value={filters.fitmentAxle || ALL_FITMENT_VALUE}
+              onValueChange={(value) =>
+                updateDiscreteFilter(
+                  "fitmentAxle",
+                  !value || value === ALL_FITMENT_VALUE ? "" : value
+                )
+              }
+            >
+              <SelectTrigger id="filter-axle" className="w-full">
+                <SelectValue placeholder="All axles" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_FITMENT_VALUE}>All axles</SelectItem>
+                {AXLE_OPTIONS.map((axle) => (
+                  <SelectItem key={axle} value={axle}>
+                    {axle}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="filter-side">Side</Label>
+            <Select
+              value={filters.fitmentSide || ALL_FITMENT_VALUE}
+              onValueChange={(value) =>
+                updateDiscreteFilter(
+                  "fitmentSide",
+                  !value || value === ALL_FITMENT_VALUE ? "" : value
+                )
+              }
+            >
+              <SelectTrigger id="filter-side" className="w-full">
+                <SelectValue placeholder="All sides" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_FITMENT_VALUE}>All sides</SelectItem>
+                {SIDE_OPTIONS.map((side) => (
+                  <SelectItem key={side} value={side}>
+                    {side}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor="filter-start-date">Start Date</Label>
             <Input
               id="filter-start-date"
               type="date"
               value={filters.startDate}
-              onChange={(e) => updateDiscreteFilter("startDate", e.target.value)}
+              onChange={(e) =>
+                updateDiscreteFilter("startDate", e.target.value)
+              }
             />
           </div>
 

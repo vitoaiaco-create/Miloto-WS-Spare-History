@@ -6,6 +6,7 @@ import { z } from "zod"
 
 import { requireAdmin } from "@/actions/ingestion"
 import { db } from "@/db"
+import { parseFitmentLocation } from "@/lib/location-parser"
 import {
   masterTaxonomyDictionaryTable,
   mechanicalSparesTable,
@@ -133,6 +134,7 @@ export async function commitUnmappedSpare(
         jobCardType: staging.jobCardType,
         subEquipment: staging.subEquipment,
         location: staging.location,
+        ...parseFitmentLocation(staging.location),
         brandName: staging.brandName,
         supplierName: staging.supplierName,
         docketNo: staging.docketNo,

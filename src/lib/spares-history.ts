@@ -47,9 +47,17 @@ export type SparesHistoryFilters = {
   // All / Truck / Trailer scope used by the executive statement. Narrows
   // the joined asset, not a column on the spare itself.
   assetType?: StatementAssetScope
+  // Parsed from the ERP Location cell. Omitted means no fitment filter.
+  fitmentAxle?: number
+  fitmentSide?: string
 }
 
-function isActiveFilterValue(value: string | string[] | undefined) {
+function isActiveFilterValue(
+  value: string | string[] | number | undefined
+) {
+  if (typeof value === "number") {
+    return Number.isFinite(value)
+  }
   if (Array.isArray(value)) {
     return value.some((item) => item.trim().length > 0)
   }
@@ -87,6 +95,8 @@ export type SparesHistoryRow = {
   partNumber: string
   subEquipment: string
   location: string | null
+  fitmentAxle: number | null
+  fitmentSide: string | null
   quantity: number | null
   priceUsd: number | null
   amountUsd: number | null
@@ -302,6 +312,10 @@ export async function getSparesHistory(
         ? { materialName: { ilike: `%${filters.materialName}%` } }
         : {}),
       ...(categories.length > 0 ? { subEquipment: { in: categories } } : {}),
+      ...(filters.fitmentAxle !== undefined
+        ? { fitmentAxle: filters.fitmentAxle }
+        : {}),
+      ...(filters.fitmentSide ? { fitmentSide: filters.fitmentSide } : {}),
       ...(filters.startDate || filters.endDate
         ? {
             outwardDate: {
@@ -391,6 +405,8 @@ export async function getSparesHistory(
       partNumber: spare.partNumber,
       subEquipment: spare.subEquipment ?? "",
       location: spare.location ?? null,
+      fitmentAxle: spare.fitmentAxle ?? null,
+      fitmentSide: spare.fitmentSide ?? null,
       quantity: Number(spare.quantity),
       priceUsd: toNullableNumber(spare.priceUsd),
       amountUsd: toNullableNumber(spare.amountUsd),
@@ -491,6 +507,8 @@ export async function getStatementManualEvents(
       partNumber: "",
       subEquipment: "",
       location: null,
+      fitmentAxle: null,
+      fitmentSide: null,
       quantity: null,
       priceUsd: null,
       amountUsd: null,
