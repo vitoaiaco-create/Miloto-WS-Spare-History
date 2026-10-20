@@ -100,7 +100,7 @@ function describeFilters(filters: SparesHistoryFilters) {
   return parts.join(" • ")
 }
 
-type ExportColumn<T> = {
+export type ExportColumn<T> = {
   header: string
   csv: (row: T) => string | number | null
   pdf: (row: T) => string
@@ -315,7 +315,7 @@ function preloadPdfLibs() {
   return pdfLibsPromise
 }
 
-function ExportMenu<T>({
+export function ExportMenu<T>({
   rows,
   columns,
   title,

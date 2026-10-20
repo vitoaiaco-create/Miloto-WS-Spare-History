@@ -73,6 +73,7 @@ import {
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
+import { ExportMenu as TableExportMenu } from "@/components/export-table-menu"
 import { TireDamagesCharts } from "@/components/tire-damages-charts"
 import {
   Tooltip,
@@ -88,6 +89,10 @@ import type {
   PenaltyDetail,
   ScorecardClass,
 } from "@/lib/logistics-scoring"
+import {
+  buildAssetRankingsExportColumns,
+  type AssetRankingsExportRow,
+} from "@/lib/asset-rankings-export"
 import {
   SUSPENSION_PENALTY_FAULTS,
   TIRE_PENALTY_CONFIG,
@@ -870,6 +875,9 @@ function RankingsMacroTable<T extends RankableYield>({
   onSort,
   showMonthlyPoints,
   onShowMonthlyPointsChange,
+  exportTitle,
+  exportFileNamePrefix,
+  exportDescription,
 }: {
   data: T[]
   ytdMonths: YtdMonthColumn[]
@@ -879,20 +887,45 @@ function RankingsMacroTable<T extends RankableYield>({
   onSort: (key: SortKey) => void
   showMonthlyPoints: boolean
   onShowMonthlyPointsChange: (show: boolean) => void
+  exportTitle: string
+  exportFileNamePrefix: string
+  exportDescription?: string
 }) {
   const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
   const monthlyPointsSwitchId = useId()
   const columnCount = (showMonthlyPoints ? ytdMonths.length : 0) + 9
+  const exportRows = data as AssetRankingsExportRow[]
+  const exportColumns = useMemo(
+    () =>
+      buildAssetRankingsExportColumns(
+        data as AssetRankingsExportRow[],
+        ytdMonths
+      ).map((column) => ({
+        header: column.header,
+        csv: column.value,
+        pdf: column.value,
+      })),
+    [data, ytdMonths]
+  )
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2 print:hidden">
-        <Switch
-          id={monthlyPointsSwitchId}
-          checked={showMonthlyPoints}
-          onCheckedChange={onShowMonthlyPointsChange}
+      <div className="flex items-center justify-between gap-2 print:hidden">
+        <div className="flex items-center gap-2">
+          <Switch
+            id={monthlyPointsSwitchId}
+            checked={showMonthlyPoints}
+            onCheckedChange={onShowMonthlyPointsChange}
+          />
+          <Label htmlFor={monthlyPointsSwitchId}>Monthly points</Label>
+        </div>
+        <TableExportMenu
+          rows={exportRows}
+          columns={exportColumns}
+          title={exportTitle}
+          fileNamePrefix={exportFileNamePrefix}
+          description={exportDescription}
         />
-        <Label htmlFor={monthlyPointsSwitchId}>Monthly points</Label>
       </div>
       <Table
         containerClassName="relative w-full max-h-[calc(100vh-250px)] overflow-auto print:max-h-none print:overflow-visible"
@@ -1510,6 +1543,9 @@ function AssetRankings({
               onSort={updateSort}
               showMonthlyPoints={showMonthlyPoints}
               onShowMonthlyPointsChange={setShowMonthlyPoints}
+              exportTitle="Asset Rankings — Motive Units"
+              exportFileNamePrefix="asset-rankings-motive-units"
+              exportDescription={ytdPeriodLabel}
             />
           </TabsContent>
           <TabsContent value="operators">
@@ -1530,6 +1566,9 @@ function AssetRankings({
               onSort={updateSort}
               showMonthlyPoints={showMonthlyPoints}
               onShowMonthlyPointsChange={setShowMonthlyPoints}
+              exportTitle="Asset Rankings — Operators"
+              exportFileNamePrefix="asset-rankings-operators"
+              exportDescription={ytdPeriodLabel}
             />
           </TabsContent>
         </Tabs>
