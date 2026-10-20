@@ -100,10 +100,22 @@ function describeFilters(filters: SparesHistoryFilters) {
   return parts.join(" • ")
 }
 
+export type ExportPdfRgb = [number, number, number]
+
+export type ExportPdfCell = {
+  content: string
+  styles?: {
+    fillColor?: ExportPdfRgb
+    textColor?: ExportPdfRgb
+    fontStyle?: "normal" | "bold" | "italic" | "bolditalic"
+    halign?: "left" | "center" | "right"
+  }
+}
+
 export type ExportColumn<T> = {
   header: string
   csv: (row: T) => string | number | null
-  pdf: (row: T) => string
+  pdf: (row: T) => string | ExportPdfCell
 }
 
 const SPARES_COLUMNS: ExportColumn<SparesHistoryRow>[] = [

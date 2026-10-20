@@ -91,6 +91,7 @@ import type {
 } from "@/lib/logistics-scoring"
 import {
   buildAssetRankingsExportColumns,
+  getScorecardClassColor,
   type AssetRankingsExportRow,
 } from "@/lib/asset-rankings-export"
 import {
@@ -392,18 +393,6 @@ function ClassBadge({ matrixClass }: { matrixClass: MatrixClass }) {
   )
 }
 
-// Same green/blue/orange/red letter-grade palette as CLASS_BADGE, extended
-// with a muted "N/A" for the 6-column scorecard (no active-distance months
-// to grade). Used as a full-cell background so the 7-column grid reads as a
-// heat map at a glance.
-const SCORECARD_CLASS_STYLES: Record<ScorecardClass, string> = {
-  "Class A": "bg-green-600 text-white",
-  "Class B": "bg-blue-600 text-white",
-  "Class C": "bg-orange-500 text-white",
-  "Class D": "bg-red-600 text-white",
-  "N/A": "bg-muted text-muted-foreground",
-}
-
 function scorecardLetter(value: ScorecardClass) {
   return value === "N/A" ? "N/A" : value.slice(-1)
 }
@@ -411,7 +400,7 @@ function scorecardLetter(value: ScorecardClass) {
 function ScorecardCell({ value }: { value: ScorecardClass }) {
   return (
     <TableCell
-      className={`text-center text-xs font-semibold ${SCORECARD_CLASS_STYLES[value]}`}
+      className={`text-center text-xs font-semibold [print-color-adjust:exact] [-webkit-print-color-adjust:exact] ${getScorecardClassColor(value)}`}
       title={value}
     >
       {scorecardLetter(value)}
@@ -903,7 +892,7 @@ function RankingsMacroTable<T extends RankableYield>({
       ).map((column) => ({
         header: column.header,
         csv: column.value,
-        pdf: column.value,
+        pdf: column.pdf,
       })),
     [data, ytdMonths]
   )
