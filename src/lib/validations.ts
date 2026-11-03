@@ -345,6 +345,25 @@ export type PairingRow = z.infer<typeof pairingRowSchema>
 const MAX_SCRAP_REASON = 255
 const MAX_VISUAL_ID = 100
 
+// The scrapping export's "Scrap Date" arrives day-first with a time, e.g.
+// `08-10-2026 17:28:39`, which the native `Date` constructor reads as
+// "Invalid Date". Day-first values are rebuilt as ISO before parsing; anything
+// else falls through to the native parser. An unparseable value yields an
+// Invalid Date, which `dateNotInFuture` then rejects with the message below.
+const scrapDateSchema = z
+  .string()
+  .transform((val) => {
+    const datePart = val.split(" ")[0]
+    // Check if it's DD-MM-YYYY format
+    if (datePart && datePart.includes("-") && datePart.split("-")[0].length === 2) {
+      const [dd, mm, yyyy] = datePart.split("-")
+      const timePart = val.split(" ")[1] || "00:00:00"
+      return new Date(`${yyyy}-${mm}-${dd}T${timePart}`)
+    }
+    return new Date(val) // Fallback for standard ISO formats
+  })
+  .pipe(dateNotInFuture("Scrap Date must be a valid date (DD-MM-YYYY HH:MM:SS)"))
+
 // A single row of the processed tire-scrapping penalties CSV, mapped onto
 // `tirePenaltiesTable`. Asset ID stays a fleet-number string here;
 // `uploadTirePenalties` resolves it to `assetsTable.id`.
@@ -353,7 +372,7 @@ export const tirePenaltyRowSchema = z.preprocess((row) => {
 
   return {
     visualId: toTrimmedString(cells.get("visual id")),
-    scrapDate: parseSpreadsheetDate(cells.get("scrap date")),
+    scrapDate: toTrimmedString(cells.get("scrap date")),
     reason: toTrimmedString(cells.get("scrap reason")),
     penaltyPoints: toNumber(cells.get("penalty points")),
     fleetNumber: toCanonicalFleetNumber(toTrimmedString(cells.get("asset id"))),
@@ -363,7 +382,7 @@ export const tirePenaltyRowSchema = z.preprocess((row) => {
     .string()
     .min(1, "Visual Id is required")
     .max(MAX_VISUAL_ID, `Visual Id must be ${MAX_VISUAL_ID} characters or fewer`),
-  scrapDate: dateNotInFuture("Scrap Date must be a valid date (DD/MM/YYYY)"),
+  scrapDate: scrapDateSchema,
   reason: z
     .string()
     .min(1, "Scrap Reason is required")
