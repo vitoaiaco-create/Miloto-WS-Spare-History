@@ -5,7 +5,10 @@ import { NextResponse } from "next/server";
 // src/actions/ingestion.ts and src/app/data-ingestion/page.tsx for the
 // role check); this strictly gates the route itself, redirecting signed-out
 // visitors straight to sign-in before the page ever renders.
-const isDataIngestionRoute = createRouteMatcher(["/data-ingestion(.*)"]);
+const isDataIngestionRoute = createRouteMatcher([
+  "/data-ingestion(.*)",
+  "/admin(.*)",
+]);
 
 const isOilsOnlyAllowedRoute = createRouteMatcher([
   "/oils-and-servicing(.*)",

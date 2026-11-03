@@ -8,6 +8,7 @@ import {
   pgEnum,
   pgTable,
   real,
+  serial,
   text,
   timestamp,
   uniqueIndex,
@@ -394,6 +395,22 @@ export const monthlyPairingsTable = pgTable(
     ),
   ]
 );
+
+// Raw landing table for the Python-generated "Monthly Asset Pairings" CSV
+// uploaded from the admin ingestion page (`uploadMonthlyPairings` in
+// src/actions/admin-upload.ts). `truckId` / `trailerId` are resolved from the
+// CSV's fleet-number strings to `assetsTable.id`; `driverName` stays the raw
+// CSV text. Unlike `monthlyPairingsTable` above (which the Logistics scoring
+// reads), nothing here is unique or non-null — `uploadMonthlyPairings` also
+// mirrors each fully-resolved row into `monthlyPairingsTable` so the Asset
+// Rankings pick it up.
+export const monthlyAssetPairings = pgTable("monthly_asset_pairings", {
+  id: serial("id").primaryKey(),
+  activeMonth: date("active_month").notNull(),
+  truckId: integer("truck_id").references(() => assetsTable.id),
+  trailerId: integer("trailer_id").references(() => assetsTable.id),
+  driverName: text("driver_name"),
+});
 
 // Processed tire-scrapping penalties imported from the scrap CSV.
 // `assetId` is the fleet unit the scrap is charged against; `amount` is

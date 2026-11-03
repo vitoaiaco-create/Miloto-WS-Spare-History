@@ -33,6 +33,18 @@ export const relations = defineRelations(schema, (r) => ({
       to: r.monthlyPairingsTable.truckId,
       alias: "truck",
     }),
+    // Raw landing table for the admin pairings upload; same two-FK aliasing
+    // as `monthlyPairingsTable` above.
+    truckAssetPairings: r.many.monthlyAssetPairings({
+      from: r.assetsTable.id,
+      to: r.monthlyAssetPairings.truckId,
+      alias: "assetPairingTruck",
+    }),
+    trailerAssetPairings: r.many.monthlyAssetPairings({
+      from: r.assetsTable.id,
+      to: r.monthlyAssetPairings.trailerId,
+      alias: "assetPairingTrailer",
+    }),
     tireIncidents: r.many.tireIncidentsTable({
       from: r.assetsTable.id,
       to: r.tireIncidentsTable.assetId,
@@ -117,6 +129,19 @@ export const relations = defineRelations(schema, (r) => ({
       from: r.monthlyPairingsTable.driverId,
       to: r.driversTable.id,
       optional: false,
+    }),
+  },
+  monthlyAssetPairings: {
+    // Both FKs are nullable in schema.ts, so neither side is required.
+    truck: r.one.assetsTable({
+      from: r.monthlyAssetPairings.truckId,
+      to: r.assetsTable.id,
+      alias: "assetPairingTruck",
+    }),
+    trailer: r.one.assetsTable({
+      from: r.monthlyAssetPairings.trailerId,
+      to: r.assetsTable.id,
+      alias: "assetPairingTrailer",
     }),
   },
   tireIncidentsTable: {
