@@ -1,6 +1,5 @@
 import { SignInButton, Show, UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
-import { UploadCloud } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -85,17 +84,6 @@ export async function SiteHeader() {
                   render={<Link href="/data-ingestion" />}
                 >
                   Data Ingestion
-                </Button>
-              ) : null}
-              {showDataIngestion ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  nativeButton={false}
-                  render={<Link href="/admin/ingestion" />}
-                >
-                  <UploadCloud data-icon="inline-start" />
-                  Admin Ingestion
                 </Button>
               ) : null}
             </nav>

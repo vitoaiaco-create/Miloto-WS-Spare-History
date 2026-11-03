@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
+import { AdminIngestionUploader } from "@/components/admin-ingestion-uploader"
 import { DataUploader } from "@/components/data-uploader"
 import { DictionarySeedButton } from "@/components/dictionary-seed-button"
 import { MasterDictionary } from "@/components/master-dictionary"
@@ -42,45 +43,70 @@ export default async function DataIngestionPage() {
         </h1>
 
         {isAdmin ? (
-          <Tabs defaultValue="spares" className="gap-6">
-            <TabsList className="mx-auto h-12 w-full max-w-3xl group-data-horizontal/tabs:h-12">
-              <TabsTrigger className="px-6 text-base" value="spares">
-                Spares
-              </TabsTrigger>
-              <TabsTrigger className="px-6 text-base" value="mileage">
-                Mileage
-              </TabsTrigger>
-              <TabsTrigger className="px-6 text-base" value="oils">
-                Oils Ingestion
-              </TabsTrigger>
-              <TabsTrigger className="px-6 text-base" value="tire-penalties">
-                Tire Penalties
-              </TabsTrigger>
-              <TabsTrigger className="px-6 text-base" value="master-dictionary">
-                Master Dictionary
-              </TabsTrigger>
-              <TabsTrigger className="px-6 text-base" value="triage-inbox">
-                Triage Inbox
-              </TabsTrigger>
+          <Tabs defaultValue="standard" className="w-full gap-6">
+            <TabsList>
+              <TabsTrigger value="standard">Standard Uploads</TabsTrigger>
+              <TabsTrigger value="admin">Admin Python Exports</TabsTrigger>
             </TabsList>
-            <TabsContent value="spares">
-              <DataUploader />
+
+            <TabsContent value="standard">
+              <Tabs defaultValue="spares" className="gap-6">
+                <TabsList className="mx-auto h-12 w-full max-w-3xl group-data-horizontal/tabs:h-12">
+                  <TabsTrigger className="px-6 text-base" value="spares">
+                    Spares
+                  </TabsTrigger>
+                  <TabsTrigger className="px-6 text-base" value="mileage">
+                    Mileage
+                  </TabsTrigger>
+                  <TabsTrigger className="px-6 text-base" value="oils">
+                    Oils Ingestion
+                  </TabsTrigger>
+                  <TabsTrigger
+                    className="px-6 text-base"
+                    value="tire-penalties"
+                  >
+                    Tire Penalties
+                  </TabsTrigger>
+                  <TabsTrigger
+                    className="px-6 text-base"
+                    value="master-dictionary"
+                  >
+                    Master Dictionary
+                  </TabsTrigger>
+                  <TabsTrigger className="px-6 text-base" value="triage-inbox">
+                    Triage Inbox
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="spares">
+                  <DataUploader />
+                </TabsContent>
+                <TabsContent value="mileage">
+                  <MileageUploader />
+                </TabsContent>
+                <TabsContent value="oils">
+                  <OilUploader />
+                </TabsContent>
+                <TabsContent value="tire-penalties">
+                  <TirePenaltyUploader />
+                </TabsContent>
+                <TabsContent
+                  value="master-dictionary"
+                  className="flex flex-col gap-6"
+                >
+                  <DictionarySeedButton />
+                  <MasterDictionary />
+                </TabsContent>
+                <TabsContent value="triage-inbox">
+                  <TriageInbox />
+                </TabsContent>
+              </Tabs>
             </TabsContent>
-            <TabsContent value="mileage">
-              <MileageUploader />
-            </TabsContent>
-            <TabsContent value="oils">
-              <OilUploader />
-            </TabsContent>
-            <TabsContent value="tire-penalties">
-              <TirePenaltyUploader />
-            </TabsContent>
-            <TabsContent value="master-dictionary" className="flex flex-col gap-6">
-              <DictionarySeedButton />
-              <MasterDictionary />
-            </TabsContent>
-            <TabsContent value="triage-inbox">
-              <TriageInbox />
+
+            <TabsContent value="admin">
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <AdminIngestionUploader kind="tyre-penalties" />
+                <AdminIngestionUploader kind="monthly-pairings" />
+              </div>
             </TabsContent>
           </Tabs>
         ) : (
