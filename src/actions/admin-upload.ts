@@ -1,6 +1,6 @@
 "use server"
 
-import { inArray, sql } from "drizzle-orm"
+import { eq, inArray, sql } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 
@@ -10,9 +10,18 @@ import {
   assetsTable,
   driversTable,
   monthlyAssetPairings,
+  manualAlignmentEventsTable,
   monthlyPairingsTable,
   tirePenaltiesTable,
+  workshopEvents,
 } from "@/db/schema"
+import { MANUAL_EVENT_MATERIAL_NAMES } from "@/lib/spares-statement"
+import {
+  AIR_SYSTEM_TEST_FAILED,
+  AIR_SYSTEM_TEST_OK,
+  ALIGNMENT_COMPLETED,
+  workshopDayStart,
+} from "@/lib/workshop-events"
 import {
   indexRowByHeader,
   parseSpreadsheetDate,
@@ -500,4 +509,135 @@ async function mirrorToLogisticsPairings(pairings: ResolvedPairing[]) {
   }
 
   return mirrored
+}
+
+// ---------------------------------------------------------------------------
+// One-time historical migration: manual_alignment_events -> workshop_events
+// ---------------------------------------------------------------------------
+
+const LEGACY_MIGRATION_AUTHOR = "Legacy System Migration"
+
+// Maps a legacy row's event text to the strict `workshop_events` category /
+// outcome pair. Returns null for anything else (generic checks / notes),
+// which is not migrated. The legacy table stores its text as an enum whose
+// printed label is `MANUAL_EVENT_MATERIAL_NAMES[eventType]`
+// ("WHEEL ALIGNMENT", "PREVENTATIVE MAINT - AIR SYSTEM TEST FAILED", …).
+function mapLegacyEvent(text: string) {
+  const upper = text.toUpperCase()
+
+  if (upper.includes("WHEEL ALIGNMENT")) {
+    return {
+      eventCategory: "Wheel Alignment",
+      eventOutcome: ALIGNMENT_COMPLETED,
+    }
+  }
+
+  // FAILED is tested before OK so a failed test can never be read as passing.
+  if (upper.includes("AIR SYSTEM TEST FAILED")) {
+    return {
+      eventCategory: "Air System Check",
+      eventOutcome: AIR_SYSTEM_TEST_FAILED,
+    }
+  }
+
+  if (upper.includes("AIR SYSTEM TEST OK")) {
+    return {
+      eventCategory: "Air System Check",
+      eventOutcome: AIR_SYSTEM_TEST_OK,
+    }
+  }
+
+  return null
+}
+
+function legacyEventKey(event: {
+  assetId: number
+  eventCategory: string
+  eventOutcome: string
+  createdAt: Date
+}) {
+  return [
+    event.assetId,
+    event.eventCategory,
+    event.eventOutcome,
+    event.createdAt.getTime(),
+  ].join("|")
+}
+
+// Temporary, admin-only. Copies historical wheel alignments and air system
+// checks from `manual_alignment_events` (what `getStatementManualEvents`
+// reads) into `workshop_events`. The legacy rows are left untouched.
+// Re-running is safe: a row already migrated (same asset, category, outcome
+// and date, authored by "Legacy System Migration") is not inserted again.
+// Returns the number of rows newly written.
+export async function migrateHistoricalEvents(): Promise<number> {
+  await requireAdmin()
+
+  const legacyEvents = await db.select().from(manualAlignmentEventsTable)
+
+  const mapped: (typeof workshopEvents.$inferInsert)[] = []
+
+  for (const legacy of legacyEvents) {
+    const category = mapLegacyEvent(
+      MANUAL_EVENT_MATERIAL_NAMES[legacy.eventType] ?? legacy.eventType
+    )
+    if (!category) continue
+
+    // Legacy rows only carry a calendar day; anchor it to the start of that
+    // workshop day so date-range filters place it on the right day.
+    const createdAt = workshopDayStart(legacy.date)
+    if (!createdAt) continue
+
+    mapped.push({
+      assetId: legacy.assetId,
+      ...category,
+      createdAt,
+      createdBy: LEGACY_MIGRATION_AUTHOR,
+    })
+  }
+
+  if (mapped.length === 0) return 0
+
+  const alreadyMigrated = await db
+    .select({
+      assetId: workshopEvents.assetId,
+      eventCategory: workshopEvents.eventCategory,
+      eventOutcome: workshopEvents.eventOutcome,
+      createdAt: workshopEvents.createdAt,
+    })
+    .from(workshopEvents)
+    .where(eq(workshopEvents.createdBy, LEGACY_MIGRATION_AUTHOR))
+
+  const seen = new Set(
+    alreadyMigrated.map((event) => legacyEventKey(event))
+  )
+  const fresh = mapped.filter((event) => {
+    const key = legacyEventKey({
+      assetId: event.assetId,
+      eventCategory: event.eventCategory,
+      eventOutcome: event.eventOutcome,
+      createdAt: event.createdAt as Date,
+    })
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
+  let migrated = 0
+
+  // Batched so a large history stays under Postgres' bind-parameter limit.
+  for (const batch of chunk(fresh, INSERT_CHUNK_SIZE)) {
+    const inserted = await db
+      .insert(workshopEvents)
+      .values(batch)
+      .returning({ id: workshopEvents.id })
+
+    migrated += inserted.length
+  }
+
+  revalidatePath("/workshop/events")
+  revalidatePath("/spares-history")
+  revalidatePath("/analytics/event-compliance")
+
+  return migrated
 }

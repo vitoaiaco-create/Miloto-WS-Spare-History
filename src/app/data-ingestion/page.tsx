@@ -6,6 +6,7 @@ import { redirect } from "next/navigation"
 import { AdminIngestionUploader } from "@/components/admin-ingestion-uploader"
 import { DataUploader } from "@/components/data-uploader"
 import { DictionarySeedButton } from "@/components/dictionary-seed-button"
+import { HistoricalMigrationButton } from "@/components/historical-migration-button"
 import { MasterDictionary } from "@/components/master-dictionary"
 import { MileageUploader } from "@/components/mileage-uploader"
 import { OilUploader } from "@/components/oil-uploader"
@@ -41,6 +42,8 @@ export default async function DataIngestionPage() {
         <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl dark:text-zinc-50">
           Data Ingestion
         </h1>
+
+        {isAdmin && <HistoricalMigrationButton />}
 
         {isAdmin ? (
           <Tabs defaultValue="standard" className="w-full gap-6">
