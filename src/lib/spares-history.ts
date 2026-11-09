@@ -23,6 +23,11 @@ import {
   type StatementAssetScope,
   type StatementRowKind,
 } from "@/lib/spares-statement"
+import {
+  addWorkshopDays,
+  toWorkshopDay,
+  workshopDayStart,
+} from "@/lib/workshop-events"
 
 export { sparesHistoryHref } from "@/lib/spares-history-href"
 
@@ -527,6 +532,81 @@ export async function getStatementManualEvents(
 }
 
 export const getStatementAlignmentEvents = getStatementManualEvents
+
+// Technician-logged `workshop_events` shaped as pseudo spare rows so they
+// merge into the executive statement alongside physical parts. They carry
+// Qty 0 / Amount 0 (and "-" as the part number) so the financial totals are
+// unchanged. The statement's [startDate, endDate] are workshop calendar
+// days, so the timestamp range is widened to whole workshop days.
+export async function getStatementWorkshopEvents(
+  filters: Pick<
+    SparesHistoryFilters,
+    "fleetNo" | "assetIds" | "assetType" | "startDate" | "endDate"
+  >
+): Promise<SparesHistoryRow[]> {
+  const rangeStart = filters.startDate
+    ? workshopDayStart(filters.startDate)
+    : null
+  const rangeEnd = filters.endDate
+    ? workshopDayStart(addWorkshopDays(filters.endDate, 1))
+    : null
+
+  const events = await db.query.workshopEvents.findMany({
+    where: {
+      ...(rangeStart || rangeEnd
+        ? {
+            createdAt: {
+              ...(rangeStart ? { gte: rangeStart } : {}),
+              ...(rangeEnd ? { lt: rangeEnd } : {}),
+            },
+          }
+        : {}),
+      ...statementAssetFilter(filters),
+    },
+    with: { asset: true },
+    orderBy: { createdAt: "desc", id: "desc" },
+  })
+
+  return events.map((event) => ({
+    id: event.id,
+    kind: "workshop" as const,
+    outwardDate: toWorkshopDay(event.createdAt),
+    // e.g. "WHEEL ALIGNMENT - COMPLETED". Air system outcomes already carry
+    // their own prefix ("PREVENTATIVE MAINT - AIR SYSTEM TEST OK").
+    materialName:
+      event.eventCategory === "Wheel Alignment"
+        ? `WHEEL ALIGNMENT - ${event.eventOutcome}`
+        : event.eventOutcome,
+    identityNo: event.asset.assetName,
+    supplierName: "",
+    partNumber: "-",
+    subEquipment: event.eventCategory === "Air System Check" ? "Air System" : "",
+    location: null,
+    fitmentAxle: null,
+    fitmentSide: null,
+    quantity: 0,
+    priceUsd: null,
+    amountUsd: 0,
+    distance: null,
+    latestDate: null,
+    notes: null,
+  }))
+}
+
+// Physical spares plus manual / workshop events as one list, newest first —
+// the same order the statement groups use within each asset.
+export function mergeStatementRows(
+  ...sources: SparesHistoryRow[][]
+): SparesHistoryRow[] {
+  return sources.flat().sort((left, right) => {
+    const dateCmp = right.outwardDate.localeCompare(left.outwardDate)
+    if (dateCmp !== 0) return dateCmp
+    const leftKind = left.kind ?? "spare"
+    const rightKind = right.kind ?? "spare"
+    if (leftKind !== rightKind) return leftKind === "spare" ? -1 : 1
+    return right.id - left.id
+  })
+}
 
 // Fleet units offered in the executive statement's Asset ID dropdown,
 // already classified as Truck or Trailer. Unclassified "Other" units stay

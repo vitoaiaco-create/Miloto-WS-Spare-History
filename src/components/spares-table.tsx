@@ -339,24 +339,28 @@ export function SparesStatementTable({
                             outOfSquareAxle3={spare.outOfSquareAxle3}
                           />
                         ) : null}
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label={`Permanently delete ${spare.materialName}`}
-                                onClick={() => onDeleteManualEvent(spare.id)}
-                              />
-                            }
-                          >
-                            <Trash2 />
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            Permanently delete this event
-                          </TooltipContent>
-                        </Tooltip>
+                        {/* Workshop events are undone from the Workshop
+                            Events page; their ids aren't manual event ids. */}
+                        {spare.kind === "workshop" ? null : (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  aria-label={`Permanently delete ${spare.materialName}`}
+                                  onClick={() => onDeleteManualEvent(spare.id)}
+                                />
+                              }
+                            >
+                              <Trash2 />
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Permanently delete this event
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
                       </div>
                     ) : (
                       <Tooltip>

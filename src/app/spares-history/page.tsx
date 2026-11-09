@@ -26,7 +26,9 @@ import {
   getSparesHistory,
   getStatementAssets,
   getStatementManualEvents,
+  getStatementWorkshopEvents,
   hasActiveSparesFilters,
+  mergeStatementRows,
   type SparesHistoryFilters,
 } from "@/lib/spares-history"
 import {
@@ -136,7 +138,15 @@ export default async function SparesHistoryPage({
         excludeTo: hasExcludeRange ? excludeTo : "",
       }
 
-  const [spares, manualEvents, statementAssets, partAliases, subEquipmentOptions, directorSummary] =
+  const [
+    spares,
+    manualEvents,
+    workshopEvents,
+    statementAssets,
+    partAliases,
+    subEquipmentOptions,
+    directorSummary,
+  ] =
     await Promise.all([
       directorSummaryEnabled
         ? Promise.resolve([])
@@ -145,6 +155,9 @@ export default async function SparesHistoryPage({
           }),
       statementEnabled
         ? getStatementManualEvents(filters)
+        : Promise.resolve([]),
+      statementEnabled
+        ? getStatementWorkshopEvents(filters)
         : Promise.resolve([]),
       statementEnabled ? getStatementAssets() : Promise.resolve([]),
       statementEnabled ? getPartDescriptionAliases() : Promise.resolve({}),
@@ -161,9 +174,10 @@ export default async function SparesHistoryPage({
 
   // Manual events (alignment / checks / checks pending) merge in even
   // when the asset has no physical spare rows, so those units still get
-  // a statement section.
+  // a statement section. Workshop events (technician-logged) join the same
+  // list with Qty 0 / Amount 0, sorted by date descending.
   const statementSpares = statementEnabled
-    ? [...spares, ...manualEvents]
+    ? mergeStatementRows(spares, manualEvents, workshopEvents)
     : spares
 
   return (

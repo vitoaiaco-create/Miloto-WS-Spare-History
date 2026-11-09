@@ -53,7 +53,15 @@ export function isAirSystemManualEvent(
 
 export const STATEMENT_BLANK_VALUE = "-"
 
-export type StatementRowKind = "spare" | "manual" | "alignment" | "check"
+// `workshop` rows come from the `workshop_events` table (logged by
+// technicians). Their ids live in a different table than `manual` rows, so
+// they must never be passed to the manual-event delete action.
+export type StatementRowKind =
+  | "spare"
+  | "manual"
+  | "alignment"
+  | "check"
+  | "workshop"
 
 // The fields the statement layout and exports actually use. Compatible
 // with `SparesHistoryRow` without importing the server-only history module.
@@ -82,7 +90,12 @@ export type StatementSpareRow = {
 } & OutOfSquareMetrics
 
 export function isManualStatementRow(row: Pick<StatementSpareRow, "kind">) {
-  return row.kind === "manual" || row.kind === "alignment" || row.kind === "check"
+  return (
+    row.kind === "manual" ||
+    row.kind === "alignment" ||
+    row.kind === "check" ||
+    row.kind === "workshop"
+  )
 }
 
 export function isWheelAlignmentRow(

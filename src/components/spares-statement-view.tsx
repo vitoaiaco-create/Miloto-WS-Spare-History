@@ -166,6 +166,7 @@ export function SparesStatementView({
       }).filter(
         (row) =>
           !isManualStatementRow(row) ||
+          row.kind === "workshop" ||
           !deletedManualEventIds.includes(row.id)
       ),
     [

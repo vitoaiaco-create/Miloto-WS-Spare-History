@@ -224,6 +224,26 @@ export const manualAlignmentEventsTable = pgTable(
   ]
 );
 
+// Manual workshop checks logged by technicians from the Workshop Events
+// page. Shared across all staff. `createdBy` is the Clerk user id of whoever
+// logged it — used only to decide who may undo an event, never to hide rows
+// from other staff. Distinct from `manualAlignmentEventsTable`, which feeds
+// the executive statement.
+//
+// Allowed `eventCategory` / `eventOutcome` values live in
+// src/lib/workshop-events.ts (`WORKSHOP_EVENT_OUTCOMES`) and are enforced by
+// Zod in the Server Actions.
+export const workshopEvents = pgTable("workshop_events", {
+  id: serial("id").primaryKey(),
+  assetId: integer("asset_id")
+    .references(() => assetsTable.id, { onDelete: "cascade" })
+    .notNull(),
+  eventCategory: varchar("event_category", { length: 50 }).notNull(), // 'Wheel Alignment' or 'Air System Check'
+  eventOutcome: varchar("event_outcome", { length: 100 }).notNull(), // e.g. 'PREVENTATIVE MAINT - AIR SYSTEM TEST OK'
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdBy: text("created_by").notNull(),
+});
+
 // Consumables (nuts, bolts, electrodes, etc.) permanently omitted from
 // executive statements. Shared across all staff. A spare is hidden when
 // its part number OR material name matches an entry — history rows are

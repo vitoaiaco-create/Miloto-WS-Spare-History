@@ -24,7 +24,13 @@ const LOCATION_BY_SEGMENT: Record<string, string> = {
   settings: "Settings (Fleet KM)",
 }
 
-export function AnalyticsNav({ className }: { className?: string }) {
+export function AnalyticsNav({
+  className,
+  isAdmin = false,
+}: {
+  className?: string
+  isAdmin?: boolean
+}) {
   const segments = useSelectedLayoutSegments()
   const section = segments[0]
   const isMasterTable = section === "assets" && segments[1] === "table"
@@ -108,6 +114,14 @@ export function AnalyticsNav({ className }: { className?: string }) {
           >
             Cross-Module (Coming Soon)
           </DropdownMenuItem>
+          {isAdmin ? (
+            <DropdownMenuItem
+              nativeButton={false}
+              render={<Link href="/analytics/event-compliance" />}
+            >
+              Event Compliance
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             nativeButton={false}

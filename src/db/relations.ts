@@ -65,6 +65,10 @@ export const relations = defineRelations(schema, (r) => ({
       from: r.assetsTable.id,
       to: r.unmappedSparesStagingTable.assetId,
     }),
+    workshopEvents: r.many.workshopEvents({
+      from: r.assetsTable.id,
+      to: r.workshopEvents.assetId,
+    }),
   },
   driversTable: {
     monthlyPairings: r.many.monthlyPairingsTable({
@@ -175,6 +179,15 @@ export const relations = defineRelations(schema, (r) => ({
     // manual statement event can never exist without its asset.
     asset: r.one.assetsTable({
       from: r.manualAlignmentEventsTable.assetId,
+      to: r.assetsTable.id,
+      optional: false,
+    }),
+  },
+  workshopEvents: {
+    // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so a
+    // workshop event can never exist without its asset.
+    asset: r.one.assetsTable({
+      from: r.workshopEvents.assetId,
       to: r.assetsTable.id,
       optional: false,
     }),

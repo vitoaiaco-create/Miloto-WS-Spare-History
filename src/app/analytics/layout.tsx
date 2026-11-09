@@ -42,7 +42,7 @@ export default async function AnalyticsLayout({
           Workshop Analytics
         </h1>
 
-        <AnalyticsNav className="print:hidden" />
+        <AnalyticsNav className="print:hidden" isAdmin={isAdmin} />
 
         {children}
       </section>

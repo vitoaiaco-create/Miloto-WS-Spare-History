@@ -1,8 +1,10 @@
 import { auth } from "@clerk/nextjs/server";
 import {
   BarChart3,
+  ClipboardCheck,
   Droplets,
   PackageSearch,
+  ShieldCheck,
   TrendingUp,
   UploadCloud,
 } from "lucide-react";
@@ -17,6 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { canUseWorkshopEvents } from "@/lib/workshop-events";
 
 export default async function Home() {
   const { userId, sessionClaims } = await auth();
@@ -34,6 +37,8 @@ export default async function Home() {
   // "admin" role (see src/actions/ingestion.ts and
   // src/app/data-ingestion/page.tsx), so it's kept out of `allowedModules`.
   const isAdmin = role === "admin";
+  // Workshop Events is likewise role-gated (admin or workshop_technician).
+  const canLogWorkshopEvents = canUseWorkshopEvents(role);
 
   if (isOilsOnly) {
     redirect("/oils-and-servicing");
@@ -51,7 +56,7 @@ export default async function Home() {
       </section>
 
       <section className="mx-auto w-full max-w-7xl px-6 pb-24 sm:px-10 lg:px-16">
-        {allowedModules.length === 0 && !isAdmin ? (
+        {allowedModules.length === 0 && !isAdmin && !canLogWorkshopEvents ? (
           <Alert>
             <AlertTitle>No modules assigned</AlertTitle>
             <AlertDescription>
@@ -143,6 +148,46 @@ export default async function Home() {
                     <CardDescription className="text-sm leading-relaxed">
                       Track oil changes, servicing schedules, and maintenance
                       intervals across the fleet.
+                    </CardDescription>
+                  </CardContent>
+                </Card>
+              </Link>
+            )}
+
+            {!isOilsOnly && canLogWorkshopEvents && (
+              <Link href="/workshop/events">
+                <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                  <CardHeader>
+                    <ClipboardCheck
+                      className="mb-2 size-6 text-foreground"
+                      strokeWidth={1.75}
+                    />
+                    <CardTitle className="text-lg">Workshop Events</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription className="text-sm leading-relaxed">
+                      Log wheel alignments and air system checks against
+                      trucks and trailers.
+                    </CardDescription>
+                  </CardContent>
+                </Card>
+              </Link>
+            )}
+
+            {!isOilsOnly && isAdmin && (
+              <Link href="/analytics/event-compliance">
+                <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                  <CardHeader>
+                    <ShieldCheck
+                      className="mb-2 size-6 text-foreground"
+                      strokeWidth={1.75}
+                    />
+                    <CardTitle className="text-lg">Event Compliance</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription className="text-sm leading-relaxed">
+                      Cross-check which units are missing alignments or air
+                      system checks. Admins only.
                     </CardDescription>
                   </CardContent>
                 </Card>

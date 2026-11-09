@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { canUseWorkshopEvents } from "@/lib/workshop-events";
 
 export async function SiteHeader() {
   const { userId, sessionClaims } = await auth();
@@ -26,6 +27,7 @@ export async function SiteHeader() {
     Boolean(userId) &&
     (isOilsOnly || allowedModules.includes("oils_servicing"));
   const showDataIngestion = Boolean(userId) && !isOilsOnly && isAdmin;
+  const showWorkshopEvents = Boolean(userId) && canUseWorkshopEvents(role);
 
   return (
     <header className="flex h-16 w-full items-center border-b border-border print:hidden">
@@ -74,6 +76,16 @@ export async function SiteHeader() {
                   render={<Link href="/oils-and-servicing" />}
                 >
                   Oils &amp; Servicing
+                </Button>
+              ) : null}
+              {showWorkshopEvents ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  nativeButton={false}
+                  render={<Link href="/workshop/events" />}
+                >
+                  Workshop Events
                 </Button>
               ) : null}
               {showDataIngestion ? (
