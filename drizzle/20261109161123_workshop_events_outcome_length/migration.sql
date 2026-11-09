@@ -1,0 +1,1 @@
+ALTER TABLE "workshop_events" ALTER COLUMN "event_outcome" SET DATA TYPE varchar(255) USING "event_outcome"::varchar(255);

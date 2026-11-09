@@ -592,6 +592,7 @@ export async function migrateHistoricalEvents(): Promise<number> {
       assetId: legacy.assetId,
       ...category,
       createdAt,
+      eventDate: createdAt,
       createdBy: LEGACY_MIGRATION_AUTHOR,
     })
   }

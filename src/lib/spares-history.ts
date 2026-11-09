@@ -555,7 +555,7 @@ export async function getStatementWorkshopEvents(
     where: {
       ...(rangeStart || rangeEnd
         ? {
-            createdAt: {
+            eventDate: {
               ...(rangeStart ? { gte: rangeStart } : {}),
               ...(rangeEnd ? { lt: rangeEnd } : {}),
             },
@@ -564,17 +564,21 @@ export async function getStatementWorkshopEvents(
       ...statementAssetFilter(filters),
     },
     with: { asset: true },
-    orderBy: { createdAt: "desc", id: "desc" },
+    orderBy: { eventDate: "desc", id: "desc" },
   })
 
   return events.map((event) => ({
     id: event.id,
     kind: "workshop" as const,
-    outwardDate: toWorkshopDay(event.createdAt),
-    // e.g. "WHEEL ALIGNMENT - COMPLETED". Air system outcomes already carry
-    // their own prefix ("PREVENTATIVE MAINT - AIR SYSTEM TEST OK").
+    // The statement's Date column is when the check happened, not when it
+    // was entered into the system.
+    outwardDate: toWorkshopDay(event.eventDate),
+    // Legacy alignments read "WHEEL ALIGNMENT - COMPLETED". Current ones and
+    // air system outcomes already carry their own prefix ("WHEEL ALIGNMENT
+    // (OK) - Out of Square - …", "PREVENTATIVE MAINT - AIR SYSTEM TEST OK").
     materialName:
-      event.eventCategory === "Wheel Alignment"
+      event.eventCategory === "Wheel Alignment" &&
+      !event.eventOutcome.toUpperCase().startsWith("WHEEL ALIGNMENT")
         ? `WHEEL ALIGNMENT - ${event.eventOutcome}`
         : event.eventOutcome,
     identityNo: event.asset.assetName,

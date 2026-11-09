@@ -85,7 +85,7 @@ const TABLE_CONTAINER_CLASS =
 const ALIGNMENT_OUT_OF_SPEC = 3.0
 
 type AlignmentTableKind = "trucks" | "trailers"
-type AlignmentAxleKey = keyof DirectorSummaryAlignmentData
+type AlignmentAxleKey = "a1" | "a2" | "a3"
 
 const ALIGNMENT_AXLES: Record<
   AlignmentTableKind,
@@ -121,16 +121,24 @@ function alignmentExceptionDisplay(
       (axle): axle is typeof axle & { value: number } => axle.value != null
     )
 
-  if (logged.length === 0) return null
+  // Technician-logged alignments carry an explicit result; trust it over
+  // re-deriving from the axles. Statement-injected ones have no status and
+  // fall through to the axle check below.
+  if (data.status == null && logged.length === 0) return null
 
   const outOfSpec = logged.filter(
     (axle) => Math.abs(axle.value) >= ALIGNMENT_OUT_OF_SPEC
   )
 
-  if (outOfSpec.length > 0) {
-    const detail = outOfSpec
-      .map((axle) => `${axle.label}: ${formatSignedAlignment(axle.value)}`)
-      .join(", ")
+  if (data.status === "FAILED" || (data.status == null && outOfSpec.length > 0)) {
+    // e.g. "(A2+4.0, A3-5.2)". A FAILED result with no readable out-of-spec
+    // axle (shouldn't happen) still flags the failure.
+    const detail =
+      outOfSpec.length > 0
+        ? outOfSpec
+            .map((axle) => `${axle.label}${formatSignedAlignment(axle.value)}`)
+            .join(", ")
+        : "FAILED"
     return {
       Icon: TriangleAlert,
       className: "text-red-600 print:text-red-600",
@@ -182,6 +190,7 @@ function AirSystemCheckCell({
       />
       <span className="whitespace-nowrap tabular-nums">
         {event.formattedDate}
+        {event.eventType === "Check" ? " (OK)" : ""}
       </span>
     </div>
   )

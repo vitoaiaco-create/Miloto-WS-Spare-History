@@ -239,7 +239,13 @@ export const workshopEvents = pgTable("workshop_events", {
     .references(() => assetsTable.id, { onDelete: "cascade" })
     .notNull(),
   eventCategory: varchar("event_category", { length: 50 }).notNull(), // 'Wheel Alignment' or 'Air System Check'
-  eventOutcome: varchar("event_outcome", { length: 100 }).notNull(), // e.g. 'PREVENTATIVE MAINT - AIR SYSTEM TEST OK'
+  // e.g. 'PREVENTATIVE MAINT - AIR SYSTEM TEST OK' or, for alignments,
+  // 'WHEEL ALIGNMENT (FAILED) - Out of Square - Axle 1: -3.5 mm/m - Axle 2: ...'
+  // (can exceed 100 chars with all three axles, hence 255).
+  eventOutcome: varchar("event_outcome", { length: 255 }).notNull(),
+  // When the check actually happened (technicians may backdate it).
+  // `createdAt` stays the exact moment of system entry.
+  eventDate: timestamp("event_date").notNull().defaultNow(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   createdBy: text("created_by").notNull(),
 });

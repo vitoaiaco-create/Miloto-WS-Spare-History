@@ -8,7 +8,9 @@ import { db } from "@/db"
 import { assetsTable, workshopEvents } from "@/db/schema"
 import { classifyStatementAssetType } from "@/lib/spares-statement"
 import {
+  buildWheelAlignmentOutcome,
   canUseWorkshopEvents,
+  getAlignmentAxles,
   getWorkshopDayBounds,
   isWorkshopAdmin,
   WORKSHOP_EVENT_CATEGORIES,
@@ -26,14 +28,35 @@ const eventCategorySchema = z.enum(WORKSHOP_EVENT_CATEGORIES, {
   error: "Event category must be Wheel Alignment or Air System Check",
 })
 
+// Out-of-square reading in mm/m; negative values are valid.
+const axleMeasurementSchema = z
+  .number({ error: "Axle measurement must be a number" })
+  .finite()
+  .min(-100)
+  .max(100)
+  .nullish()
+
 const logWorkshopEventSchema = z
   .object({
     assetId: z.number({ error: "Asset is required" }).int().positive(),
     eventCategory: eventCategorySchema,
     eventOutcome: z.string({ error: "Outcome is required" }).trim().min(1),
+    eventDate: z.date({ error: "Event date is required" }),
+    axle1: axleMeasurementSchema,
+    axle2: axleMeasurementSchema,
+    axle3: axleMeasurementSchema,
   })
   .refine(
+    // Backdating is allowed; the future is not. Anything up to the end of
+    // today's workshop day passes.
+    (value) => value.eventDate < getWorkshopDayBounds().end,
+    { message: "Event date cannot be in the future", path: ["eventDate"] }
+  )
+  .refine(
+    // A Wheel Alignment outcome is derived from the axle measurements below,
+    // so only the other categories need their outcome checked here.
     (value) =>
+      value.eventCategory === "Wheel Alignment" ||
       WORKSHOP_EVENT_OUTCOMES[value.eventCategory].includes(
         value.eventOutcome
       ),
@@ -136,7 +159,13 @@ export async function getWorkshopEventAssets(): Promise<
 export async function logWorkshopEvent(
   assetId: number,
   eventCategory: string,
-  eventOutcome: string
+  eventOutcome: string,
+  eventDate: Date,
+  // Wheel Alignment only: out-of-square readings in mm/m. Ignored for other
+  // categories.
+  axle1?: number,
+  axle2?: number,
+  axle3?: number
 ): Promise<{ id: number }> {
   const { userId } = await requireWorkshopEventsAccess()
 
@@ -144,21 +173,40 @@ export async function logWorkshopEvent(
     assetId,
     eventCategory,
     eventOutcome,
+    eventDate,
+    axle1,
+    axle2,
+    axle3,
   })
 
   const [asset] = await db
-    .select({ id: assetsTable.id })
+    .select({ id: assetsTable.id, assetName: assetsTable.assetName })
     .from(assetsTable)
     .where(eq(assetsTable.id, data.assetId))
     .limit(1)
   if (!asset) throw new Error("Asset not found")
+
+  let finalOutcome = data.eventOutcome
+  if (data.eventCategory === "Wheel Alignment") {
+    // Drop readings for axles the unit doesn't have (e.g. Axle 1 on a
+    // prime mover) so a stray value can never fail an alignment.
+    const axles = getAlignmentAxles(asset.assetName)
+    finalOutcome = buildWheelAlignmentOutcome({
+      axle1: axles.includes(1) ? data.axle1 : undefined,
+      axle2: axles.includes(2) ? data.axle2 : undefined,
+      axle3: axles.includes(3) ? data.axle3 : undefined,
+    }).outcome
+  }
 
   const [created] = await db
     .insert(workshopEvents)
     .values({
       assetId: data.assetId,
       eventCategory: data.eventCategory,
-      eventOutcome: data.eventOutcome,
+      eventOutcome: finalOutcome,
+      // `createdAt` is deliberately not set: it defaults to the moment of
+      // system entry and drives "Today's Logs" / undo.
+      eventDate: data.eventDate,
       createdBy: userId,
     })
     .returning({ id: workshopEvents.id })
@@ -227,6 +275,7 @@ export async function getTodayEvents(): Promise<WorkshopEventRow[]> {
     ),
     eventCategory: event.eventCategory as WorkshopEventCategory,
     eventOutcome: event.eventOutcome,
+    eventDate: event.eventDate,
     createdAt: event.createdAt,
     createdBy: event.createdBy,
     createdByName: names.get(event.createdBy) ?? event.createdBy,
@@ -257,7 +306,7 @@ export async function getFleetCompliance(
   const windowStart = getWorkshopDayBounds(data.startDate).start
   const windowEnd = getWorkshopDayBounds(data.endDate).end
 
-  // Postgres `DISTINCT ON (asset_id)` ordered by `created_at DESC` keeps only
+  // Postgres `DISTINCT ON (asset_id)` ordered by `event_date DESC` keeps only
   // the newest in-window event per asset (`id DESC` breaks same-instant
   // ties). The category and date filters sit inside this subquery rather
   // than in the outer WHERE so the LEFT JOIN below still returns assets that
@@ -265,20 +314,20 @@ export async function getFleetCompliance(
   const latestEvents = db
     .selectDistinctOn([workshopEvents.assetId], {
       assetId: workshopEvents.assetId,
-      createdAt: workshopEvents.createdAt,
+      eventDate: workshopEvents.eventDate,
       eventOutcome: workshopEvents.eventOutcome,
     })
     .from(workshopEvents)
     .where(
       and(
         eq(workshopEvents.eventCategory, data.eventCategory),
-        gte(workshopEvents.createdAt, windowStart),
-        lt(workshopEvents.createdAt, windowEnd)
+        gte(workshopEvents.eventDate, windowStart),
+        lt(workshopEvents.eventDate, windowEnd)
       )
     )
     .orderBy(
       workshopEvents.assetId,
-      desc(workshopEvents.createdAt),
+      desc(workshopEvents.eventDate),
       desc(workshopEvents.id)
     )
     .as("latest_events")
@@ -288,7 +337,7 @@ export async function getFleetCompliance(
       assetId: assetsTable.id,
       assetName: assetsTable.assetName,
       assetType: assetsTable.assetType,
-      lastEventDate: latestEvents.createdAt,
+      lastEventDate: latestEvents.eventDate,
       lastEventOutcome: latestEvents.eventOutcome,
     })
     .from(assetsTable)

@@ -10,16 +10,148 @@ export type WorkshopEventCategory = (typeof WORKSHOP_EVENT_CATEGORIES)[number]
 export const AIR_SYSTEM_TEST_OK = "PREVENTATIVE MAINT - AIR SYSTEM TEST OK"
 export const AIR_SYSTEM_TEST_FAILED =
   "PREVENTATIVE MAINT - AIR SYSTEM TEST FAILED"
+// Legacy outcome of alignments logged before out-of-square measurements were
+// captured (and of the historical migration). New alignments never use it.
 export const ALIGNMENT_COMPLETED = "COMPLETED"
 
 // The only outcomes each category may record. Enforced by Zod in the Server
-// Actions and used to drive the technician form's Outcome select.
+// Actions and used to drive the technician form's Outcome select. Wheel
+// Alignment is deliberately not listed as selectable: its outcome is derived
+// from the axle measurements (see `buildWheelAlignmentOutcome`).
 export const WORKSHOP_EVENT_OUTCOMES: Record<
   WorkshopEventCategory,
   readonly string[]
 > = {
   "Wheel Alignment": [ALIGNMENT_COMPLETED],
   "Air System Check": [AIR_SYSTEM_TEST_OK, AIR_SYSTEM_TEST_FAILED],
+}
+
+// ---------------------------------------------------------------------------
+// Wheel alignment out-of-square measurements (mm/m)
+// ---------------------------------------------------------------------------
+
+// An axle at or beyond +/- this value is out of spec and fails the alignment.
+export const ALIGNMENT_OUT_OF_SQUARE_LIMIT = 3
+
+export type AlignmentAxleNumber = 1 | 2 | 3
+
+export type AlignmentAxleValues = {
+  axle1?: number | null
+  axle2?: number | null
+  axle3?: number | null
+}
+
+export function isAlignmentAxleOutOfSpec(value: number) {
+  return (
+    value >= ALIGNMENT_OUT_OF_SQUARE_LIMIT ||
+    value <= -ALIGNMENT_OUT_OF_SQUARE_LIMIT
+  )
+}
+
+// Which axles a technician measures for a unit, from its fleet number:
+// MTL = prime mover (Axle 2 and 3), other MT = trailer (Axle 1, 2 and 3).
+// Anything else offers all three rather than blocking the entry.
+export function getAlignmentAxles(assetName: string | null | undefined) {
+  const name = (assetName ?? "").trim().toUpperCase()
+  const axles: AlignmentAxleNumber[] = name.startsWith("MTL") ? [2, 3] : [1, 2, 3]
+  return axles
+}
+
+// Builds the stored outcome for a wheel alignment, e.g.
+// "WHEEL ALIGNMENT (FAILED) - Out of Square - Axle 2: 4 mm/m". Any axle at or
+// beyond +/-3 fails the alignment. The "FAILED" keyword is what the Compliance
+// Dashboard and the Director's Summary Matrix key off.
+export function buildWheelAlignmentOutcome(axles: AlignmentAxleValues) {
+  const { axle1, axle2, axle3 } = axles
+  const values = [axle1, axle2, axle3]
+  const status = values.some(
+    (value) => typeof value === "number" && isAlignmentAxleOutOfSpec(value)
+  )
+    ? "FAILED"
+    : "OK"
+
+  // `!= null` (not truthiness) so a perfect 0 mm/m reading is still recorded.
+  const outcome =
+    `WHEEL ALIGNMENT (${status}) - Out of Square` +
+    (axle1 != null ? ` - Axle 1: ${axle1} mm/m` : "") +
+    (axle2 != null ? ` - Axle 2: ${axle2} mm/m` : "") +
+    (axle3 != null ? ` - Axle 3: ${axle3} mm/m` : "")
+
+  return { status, outcome } as const
+}
+
+export type ParsedWheelAlignmentOutcome = {
+  // null for legacy "COMPLETED" alignments that carry no pass/fail result.
+  status: "OK" | "FAILED" | null
+  axle1: number | null
+  axle2: number | null
+  axle3: number | null
+}
+
+const ALIGNMENT_AXLE_PATTERN = /Axle ([123]): (-?[\d.]+(?:e[-+]?\d+)?) mm\/m/gi
+
+export function parseWheelAlignmentOutcome(
+  eventOutcome: string
+): ParsedWheelAlignmentOutcome {
+  const upper = eventOutcome.toUpperCase()
+  const parsed: ParsedWheelAlignmentOutcome = {
+    status: upper.includes("WHEEL ALIGNMENT (FAILED)")
+      ? "FAILED"
+      : upper.includes("WHEEL ALIGNMENT (OK)")
+        ? "OK"
+        : null,
+    axle1: null,
+    axle2: null,
+    axle3: null,
+  }
+
+  for (const match of eventOutcome.matchAll(ALIGNMENT_AXLE_PATTERN)) {
+    const value = Number(match[2])
+    if (!Number.isFinite(value)) continue
+    if (match[1] === "1") parsed.axle1 = value
+    else if (match[1] === "2") parsed.axle2 = value
+    else parsed.axle3 = value
+  }
+
+  return parsed
+}
+
+// The matrix-friendly shape of a technician event (same event types the
+// Director's Summary Matrix uses for manual events), or null for an
+// unrecognised category/outcome.
+export type WorkshopEventMatrixInput = {
+  eventType: "WHEEL_ALIGNMENT" | "AIR_SYSTEM_OK" | "AIR_SYSTEM_FAIL"
+  alignmentStatus?: "OK" | "FAILED" | null
+  outOfSquareAxle1?: number | null
+  outOfSquareAxle2?: number | null
+  outOfSquareAxle3?: number | null
+}
+
+export function toWorkshopEventMatrixInput(
+  eventCategory: string,
+  eventOutcome: string
+): WorkshopEventMatrixInput | null {
+  if (eventCategory === "Wheel Alignment") {
+    const parsed = parseWheelAlignmentOutcome(eventOutcome)
+    return {
+      eventType: "WHEEL_ALIGNMENT",
+      alignmentStatus: parsed.status,
+      outOfSquareAxle1: parsed.axle1,
+      outOfSquareAxle2: parsed.axle2,
+      outOfSquareAxle3: parsed.axle3,
+    }
+  }
+
+  if (eventCategory === "Air System Check") {
+    const outcome = eventOutcome.toUpperCase()
+    // FAILED first so a failed test can never be read as passing.
+    if (outcome.includes("FAILED")) return { eventType: "AIR_SYSTEM_FAIL" }
+    if (outcome.includes("AIR SYSTEM TEST OK")) {
+      return { eventType: "AIR_SYSTEM_OK" }
+    }
+  }
+
+  return null
 }
 
 // Compliance status shown to admins for one asset in the selected window.
@@ -58,6 +190,9 @@ export type WorkshopEventRow = {
   assetType: WorkshopEventAssetType | null
   eventCategory: WorkshopEventCategory
   eventOutcome: string
+  // When the check actually happened (may be backdated).
+  eventDate: Date
+  // When the entry was made in the system.
   createdAt: Date
   createdBy: string
   // Display name of `createdBy`; falls back to the raw Clerk id when the

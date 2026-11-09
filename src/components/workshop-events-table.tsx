@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table"
 import { toast } from "@/components/ui/toast"
 import {
+  formatWorkshopDate,
   formatWorkshopTime,
   getComplianceStatus,
   type WorkshopEventRow,
@@ -55,6 +56,7 @@ export function WorkshopEventsTable({ events }: { events: WorkshopEventRow[] }) 
       <TableHeader>
         <TableRow className="hover:bg-transparent">
           <TableHead>Time</TableHead>
+          <TableHead>Event date</TableHead>
           <TableHead>Asset</TableHead>
           <TableHead>Type</TableHead>
           <TableHead>Category</TableHead>
@@ -69,7 +71,7 @@ export function WorkshopEventsTable({ events }: { events: WorkshopEventRow[] }) 
         {events.length === 0 ? (
           <TableRow className="hover:bg-transparent">
             <TableCell
-              colSpan={7}
+              colSpan={8}
               className="h-24 text-center whitespace-normal text-muted-foreground"
             >
               No events logged today.
@@ -80,6 +82,9 @@ export function WorkshopEventsTable({ events }: { events: WorkshopEventRow[] }) 
             <TableRow key={event.id}>
               <TableCell className="tabular-nums">
                 {formatWorkshopTime(event.createdAt)}
+              </TableCell>
+              <TableCell className="tabular-nums">
+                {formatWorkshopDate(event.eventDate)}
               </TableCell>
               <TableCell className="font-medium">{event.assetName}</TableCell>
               <TableCell>{event.assetType ?? "—"}</TableCell>

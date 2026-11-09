@@ -100,12 +100,16 @@ export type DirectorSummaryManualEventInput = {
   outOfSquareAxle1?: number | null
   outOfSquareAxle2?: number | null
   outOfSquareAxle3?: number | null
+  // Pass/fail recorded by the technician form ("WHEEL ALIGNMENT (OK|FAILED)").
+  // Absent for statement-injected alignments, which derive it from the axles.
+  alignmentStatus?: "OK" | "FAILED" | null
 }
 
 export type DirectorSummaryAlignmentData = {
   a1: number | null
   a2: number | null
   a3: number | null
+  status?: "OK" | "FAILED" | null
 }
 
 export type DirectorSummaryCellEvent = {
@@ -243,6 +247,7 @@ function alignmentDataFromEvent(
     a1: event.outOfSquareAxle1 ?? null,
     a2: event.outOfSquareAxle2 ?? null,
     a3: event.outOfSquareAxle3 ?? null,
+    status: event.alignmentStatus ?? null,
   }
 }
 
