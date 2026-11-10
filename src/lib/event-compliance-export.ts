@@ -97,6 +97,30 @@ const PDF_STATUS_COLORS: Record<ComplianceStatus, [number, number, number]> = {
   OK: [22, 163, 74],
 }
 
+// Plural base string for the PDF title, e.g. "Air System Check" ->
+// "Air System Checks", "Wheel Alignment" -> "Wheel Alignments".
+function pluralizeCategory(category: string) {
+  const base = category.trim()
+  if (base === "Air System Check") return "Air System Checks"
+  if (base === "Wheel Alignment") return "Wheel Alignments"
+  return base
+}
+
+// "Miloto Workshop - Air System Checks: TRUCKS"
+function buildPdfTitle(tabName: string, category: string) {
+  const suffix = tabName.includes("Trucks")
+    ? ": TRUCKS"
+    : tabName.includes("Trailers")
+      ? ": TRAILERS"
+      : `: ${tabName.toUpperCase()}`
+  return `Miloto Workshop - ${pluralizeCategory(category)}${suffix}`
+}
+
+// Cosmetic, PDF-only rename. The stored/CSV value stays "Prime Mover".
+function displayAssetType(assetType: string) {
+  return assetType === "Prime Mover" ? "Horse" : assetType
+}
+
 export async function exportToPDF(
   data: ClassifiedComplianceRow[],
   tabName: string,
@@ -111,7 +135,7 @@ export async function exportToPDF(
   const doc = new jsPDF()
 
   doc.setFontSize(16)
-  doc.text(`Miloto Workshop - Event Compliance: ${tabName}`, 14, 18)
+  doc.text(buildPdfTitle(tabName, filters.category), 14, 18)
 
   doc.setFontSize(10)
   doc.setTextColor(100)
@@ -124,7 +148,7 @@ export async function exportToPDF(
     head: [["Asset Name", "Asset Type", "Last Event Date", "Status"]],
     body: data.map((row) => [
       row.assetName,
-      row.assetType,
+      displayAssetType(row.assetType),
       row.lastEventDate ? formatWorkshopDate(row.lastEventDate) : "-",
       row.status,
     ]),
