@@ -4,6 +4,7 @@ import Link from "next/link"
 import { redirect } from "next/navigation"
 
 import { AdminIngestionUploader } from "@/components/admin-ingestion-uploader"
+import { BulkAlignmentsUploader } from "@/components/bulk-alignments-uploader"
 import { DataUploader } from "@/components/data-uploader"
 import { DictionarySeedButton } from "@/components/dictionary-seed-button"
 import { HistoricalMigrationButton } from "@/components/historical-migration-button"
@@ -70,6 +71,9 @@ export default async function DataIngestionPage() {
                   >
                     Tire Penalties
                   </TabsTrigger>
+                  <TabsTrigger className="px-6 text-base" value="alignments">
+                    Wheel Alignments
+                  </TabsTrigger>
                   <TabsTrigger
                     className="px-6 text-base"
                     value="master-dictionary"
@@ -91,6 +95,9 @@ export default async function DataIngestionPage() {
                 </TabsContent>
                 <TabsContent value="tire-penalties">
                   <TirePenaltyUploader />
+                </TabsContent>
+                <TabsContent value="alignments">
+                  <BulkAlignmentsUploader />
                 </TabsContent>
                 <TabsContent
                   value="master-dictionary"

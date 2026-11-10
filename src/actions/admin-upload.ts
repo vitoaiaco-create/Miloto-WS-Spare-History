@@ -1,6 +1,6 @@
 "use server"
 
-import { eq, inArray, sql } from "drizzle-orm"
+import { and, eq, gte, inArray, lt, sql } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 
@@ -20,6 +20,10 @@ import {
   AIR_SYSTEM_TEST_FAILED,
   AIR_SYSTEM_TEST_OK,
   ALIGNMENT_COMPLETED,
+  buildWheelAlignmentOutcome,
+  getAlignmentAxles,
+  getWorkshopDayBounds,
+  toWorkshopDay,
   workshopDayStart,
 } from "@/lib/workshop-events"
 import {
@@ -641,4 +645,228 @@ export async function migrateHistoricalEvents(): Promise<number> {
   revalidatePath("/analytics/event-compliance")
 
   return migrated
+}
+
+// ---------------------------------------------------------------------------
+// Bulk wheel alignments (Excel)
+// ---------------------------------------------------------------------------
+
+const BULK_ALIGNMENT_AUTHOR = "Bulk Excel Upload"
+const WHEEL_ALIGNMENT_CATEGORY = "Wheel Alignment"
+
+// Out-of-square reading in mm/m; same bounds as `logWorkshopEvent`.
+const bulkAxleSchema = z.number().finite().min(-100).max(100).nullish()
+
+const bulkAlignmentRowSchema = z.object({
+  assetName: z.string().trim().min(1, "Identity No is required"),
+  date: z.date({ error: "Date is required" }),
+  axle1: bulkAxleSchema,
+  axle2: bulkAxleSchema,
+  axle3: bulkAxleSchema,
+})
+
+export type BulkAlignmentRow = z.input<typeof bulkAlignmentRowSchema>
+
+export type BulkAlignmentUploadResult = {
+  // Alignments newly written to `workshop_events`.
+  inserted: number
+  // Rows skipped because an alignment for that asset and calendar day
+  // (Africa/Lusaka) is already on file, or repeats earlier in the upload.
+  duplicatesSkipped: number
+  // Rows skipped because the Identity No isn't on `assetsTable`.
+  unmappedSkipped: number
+  // Rows skipped because a cell failed validation (or the date is in the future).
+  invalidSkipped: number
+  // First few distinct unmapped Identity Nos, as typed in the sheet.
+  unmappedAssets: string[]
+}
+
+// Bulk-imports historical wheel alignments from the workshop's Excel
+// workbook into `workshop_events`. Outcomes are built with the same helper
+// (and the same per-unit axle filtering) as `logWorkshopEvent`.
+//
+// Idempotent: an alignment is identified by (asset, calendar day in the
+// workshop zone). A row matching an existing alignment — or an earlier row in
+// the same upload — is skipped, so re-uploading the same file inserts nothing.
+export async function uploadBulkAlignments(
+  data: BulkAlignmentRow[]
+): Promise<BulkAlignmentUploadResult> {
+  await requireAdmin()
+
+  const rawRows = z.array(z.unknown()).parse(data)
+
+  const result: BulkAlignmentUploadResult = {
+    inserted: 0,
+    duplicatesSkipped: 0,
+    unmappedSkipped: 0,
+    invalidSkipped: 0,
+    unmappedAssets: [],
+  }
+
+  const todayEnd = getWorkshopDayBounds().end
+  const candidates: z.output<typeof bulkAlignmentRowSchema>[] = []
+
+  for (const rawRow of rawRows) {
+    const parsed = bulkAlignmentRowSchema.safeParse(rawRow)
+
+    if (
+      !parsed.success ||
+      Number.isNaN(parsed.data.date.getTime()) ||
+      parsed.data.date >= todayEnd
+    ) {
+      result.invalidSkipped += 1
+      continue
+    }
+
+    candidates.push(parsed.data)
+  }
+
+  if (candidates.length === 0) return result
+
+  // Identity No -> asset id. Tries the name exactly as typed, then the
+  // canonical fleet number ("MTL 99" -> "MTL99").
+  const lookupNames = candidates.flatMap(({ assetName }) => [
+    assetName,
+    toCanonicalFleetNumber(assetName),
+  ])
+  const assetByName = new Map<string, { id: number; assetName: string }>()
+
+  for (const batch of chunk([...new Set(lookupNames)], INSERT_CHUNK_SIZE)) {
+    const assets = await db
+      .select({ id: assetsTable.id, assetName: assetsTable.assetName })
+      .from(assetsTable)
+      .where(inArray(assetsTable.assetName, batch))
+
+    for (const asset of assets) assetByName.set(asset.assetName, asset)
+  }
+
+  const unmapped = new Set<string>()
+  const resolved: {
+    assetId: number
+    assetName: string
+    day: string
+    dayStart: Date
+    axle1?: number | null
+    axle2?: number | null
+    axle3?: number | null
+  }[] = []
+
+  for (const row of candidates) {
+    const asset =
+      assetByName.get(row.assetName) ??
+      assetByName.get(toCanonicalFleetNumber(row.assetName))
+
+    if (!asset) {
+      result.unmappedSkipped += 1
+      unmapped.add(row.assetName)
+      continue
+    }
+
+    // The calendar day in the workshop zone is the identity of the event;
+    // it's stored anchored to the start of that day (like the legacy
+    // migration) so day-range filters place it correctly.
+    const day = toWorkshopDay(row.date)
+    const dayStart = workshopDayStart(day)
+
+    if (!dayStart) {
+      result.invalidSkipped += 1
+      continue
+    }
+
+    resolved.push({
+      assetId: asset.id,
+      assetName: asset.assetName,
+      day,
+      dayStart,
+      axle1: row.axle1,
+      axle2: row.axle2,
+      axle3: row.axle3,
+    })
+  }
+
+  result.unmappedAssets = [...unmapped].slice(0, MAX_LISTED_INVALID_REASONS * 2)
+
+  if (resolved.length === 0) return result
+
+  // Idempotency: every existing Wheel Alignment for these assets inside the
+  // uploaded date span, keyed by (asset, workshop calendar day).
+  const sortedStarts = resolved.map(({ dayStart }) => dayStart.getTime())
+  const windowStart = new Date(Math.min(...sortedStarts))
+  const windowEnd = getWorkshopDayBounds(
+    new Date(Math.max(...sortedStarts))
+  ).end
+
+  const seen = new Set<string>()
+
+  for (const batch of chunk(
+    [...new Set(resolved.map(({ assetId }) => assetId))],
+    INSERT_CHUNK_SIZE
+  )) {
+    const existing = await db
+      .select({
+        assetId: workshopEvents.assetId,
+        eventDate: workshopEvents.eventDate,
+      })
+      .from(workshopEvents)
+      .where(
+        and(
+          inArray(workshopEvents.assetId, batch),
+          eq(workshopEvents.eventCategory, WHEEL_ALIGNMENT_CATEGORY),
+          gte(workshopEvents.eventDate, windowStart),
+          lt(workshopEvents.eventDate, windowEnd)
+        )
+      )
+
+    for (const event of existing) {
+      seen.add(`${event.assetId}|${toWorkshopDay(event.eventDate)}`)
+    }
+  }
+
+  const fresh: (typeof workshopEvents.$inferInsert)[] = []
+
+  for (const row of resolved) {
+    const key = `${row.assetId}|${row.day}`
+
+    if (seen.has(key)) {
+      result.duplicatesSkipped += 1
+      continue
+    }
+
+    // Also guards against repeats within the file itself.
+    seen.add(key)
+
+    // Same outcome logic as `logWorkshopEvent`: readings for axles the unit
+    // doesn't have are dropped so a stray value can never fail an alignment.
+    const axles = getAlignmentAxles(row.assetName)
+    const { outcome } = buildWheelAlignmentOutcome({
+      axle1: axles.includes(1) ? row.axle1 : undefined,
+      axle2: axles.includes(2) ? row.axle2 : undefined,
+      axle3: axles.includes(3) ? row.axle3 : undefined,
+    })
+
+    fresh.push({
+      assetId: row.assetId,
+      eventCategory: WHEEL_ALIGNMENT_CATEGORY,
+      eventOutcome: outcome,
+      eventDate: row.dayStart,
+      createdBy: BULK_ALIGNMENT_AUTHOR,
+    })
+  }
+
+  for (const batch of chunk(fresh, INSERT_CHUNK_SIZE)) {
+    const inserted = await db
+      .insert(workshopEvents)
+      .values(batch)
+      .returning({ id: workshopEvents.id })
+
+    result.inserted += inserted.length
+  }
+
+  if (result.inserted > 0) {
+    revalidatePath("/workshop/events")
+    revalidatePath("/spares-history")
+    revalidatePath("/analytics/event-compliance")
+  }
+
+  return result
 }
