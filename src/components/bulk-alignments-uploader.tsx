@@ -220,6 +220,7 @@ export function BulkAlignmentsUploader() {
 
       const total: BulkAlignmentUploadResult = {
         inserted: 0,
+        updated: 0,
         duplicatesSkipped: 0,
         unmappedSkipped: 0,
         invalidSkipped: 0,
@@ -234,6 +235,7 @@ export function BulkAlignmentsUploader() {
         )
 
         total.inserted += next.inserted
+        total.updated += next.updated
         total.duplicatesSkipped += next.duplicatesSkipped
         total.unmappedSkipped += next.unmappedSkipped
         total.invalidSkipped += next.invalidSkipped
@@ -246,8 +248,9 @@ export function BulkAlignmentsUploader() {
       }
 
       const parts = [
-        `Uploaded ${total.inserted} ${plural(total.inserted, "alignment")}.`,
-        `Skipped ${total.duplicatesSkipped} ${plural(
+        `Inserted ${total.inserted}.`,
+        `Updated ${total.updated} legacy ${plural(total.updated, "record")}.`,
+        `Skipped ${total.duplicatesSkipped} true ${plural(
           total.duplicatesSkipped,
           "duplicate"
         )}.`,
@@ -323,7 +326,9 @@ export function BulkAlignmentsUploader() {
           Reads the &quot;MTL Alignment&quot; and &quot;MT Alingment&quot;
           sheets (columns: DATE, Identity No, OS 1st/2nd/3rd AXEL). Identity No
           must already exist on the fleet list. An alignment already on file
-          for the same asset and day is skipped, so re-uploading is safe.
+          for the same asset and day is skipped, except generic legacy
+          &quot;COMPLETED&quot; records, which are overwritten with the
+          measured results. Re-uploading is safe.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">

@@ -653,6 +653,8 @@ export async function migrateHistoricalEvents(): Promise<number> {
 
 const BULK_ALIGNMENT_AUTHOR = "Bulk Excel Upload"
 const WHEEL_ALIGNMENT_CATEGORY = "Wheel Alignment"
+// Legacy overrides are issued a few at a time (one UPDATE per record).
+const UPDATE_CONCURRENCY = 25
 
 // Out-of-square reading in mm/m; same bounds as `logWorkshopEvent`.
 const bulkAxleSchema = z.number().finite().min(-100).max(100).nullish()
@@ -670,8 +672,11 @@ export type BulkAlignmentRow = z.input<typeof bulkAlignmentRowSchema>
 export type BulkAlignmentUploadResult = {
   // Alignments newly written to `workshop_events`.
   inserted: number
-  // Rows skipped because an alignment for that asset and calendar day
-  // (Africa/Lusaka) is already on file, or repeats earlier in the upload.
+  // Generic legacy "COMPLETED" records overwritten with the measured outcome.
+  updated: number
+  // Rows skipped because a real (non-legacy) alignment for that asset and
+  // calendar day (Africa/Lusaka) is already on file, or the row repeats an
+  // earlier one in the upload.
   duplicatesSkipped: number
   // Rows skipped because the Identity No isn't on `assetsTable`.
   unmappedSkipped: number
@@ -687,7 +692,10 @@ export type BulkAlignmentUploadResult = {
 //
 // Idempotent: an alignment is identified by (asset, calendar day in the
 // workshop zone). A row matching an existing alignment — or an earlier row in
-// the same upload — is skipped, so re-uploading the same file inserts nothing.
+// the same upload — is skipped, with one exception: if the existing record is
+// a generic legacy "COMPLETED" one (from the historical migration), it is
+// UPDATED with the measured outcome instead. Once overwritten it no longer
+// reads "COMPLETED", so re-uploading the same file changes nothing.
 export async function uploadBulkAlignments(
   data: BulkAlignmentRow[]
 ): Promise<BulkAlignmentUploadResult> {
@@ -697,6 +705,7 @@ export async function uploadBulkAlignments(
 
   const result: BulkAlignmentUploadResult = {
     inserted: 0,
+    updated: 0,
     duplicatesSkipped: 0,
     unmappedSkipped: 0,
     invalidSkipped: 0,
@@ -796,7 +805,10 @@ export async function uploadBulkAlignments(
     new Date(Math.max(...sortedStarts))
   ).end
 
-  const seen = new Set<string>()
+  // Per (asset, day): the ids of generic legacy "COMPLETED" records that may
+  // be overwritten, and whether any real (non-legacy) alignment is on file.
+  type ExistingDay = { legacyIds: number[]; hasRealEvent: boolean }
+  const existingByKey = new Map<string, ExistingDay>()
 
   for (const batch of chunk(
     [...new Set(resolved.map(({ assetId }) => assetId))],
@@ -804,8 +816,10 @@ export async function uploadBulkAlignments(
   )) {
     const existing = await db
       .select({
+        id: workshopEvents.id,
         assetId: workshopEvents.assetId,
         eventDate: workshopEvents.eventDate,
+        eventOutcome: workshopEvents.eventOutcome,
       })
       .from(workshopEvents)
       .where(
@@ -816,35 +830,72 @@ export async function uploadBulkAlignments(
           lt(workshopEvents.eventDate, windowEnd)
         )
       )
+      // Deterministic pick when a day has several legacy records.
+      .orderBy(workshopEvents.id)
 
     for (const event of existing) {
-      seen.add(`${event.assetId}|${toWorkshopDay(event.eventDate)}`)
+      const key = `${event.assetId}|${toWorkshopDay(event.eventDate)}`
+      const entry = existingByKey.get(key) ?? {
+        legacyIds: [],
+        hasRealEvent: false,
+      }
+
+      if (event.eventOutcome.toUpperCase().includes(ALIGNMENT_COMPLETED)) {
+        entry.legacyIds.push(event.id)
+      } else {
+        entry.hasRealEvent = true
+      }
+
+      existingByKey.set(key, entry)
     }
   }
 
-  const fresh: (typeof workshopEvents.$inferInsert)[] = []
+  const rowsToInsert: (typeof workshopEvents.$inferInsert)[] = []
+  const rowsToUpdate: { id: number; eventOutcome: string }[] = []
+  // Keys already handled in this upload, so repeats in the file are skipped.
+  const handled = new Set<string>()
 
   for (const row of resolved) {
     const key = `${row.assetId}|${row.day}`
 
-    if (seen.has(key)) {
+    if (handled.has(key)) {
       result.duplicatesSkipped += 1
       continue
     }
 
-    // Also guards against repeats within the file itself.
-    seen.add(key)
-
     // Same outcome logic as `logWorkshopEvent`: readings for axles the unit
     // doesn't have are dropped so a stray value can never fail an alignment.
     const axles = getAlignmentAxles(row.assetName)
-    const { outcome } = buildWheelAlignmentOutcome({
+    const readings = {
       axle1: axles.includes(1) ? row.axle1 : undefined,
       axle2: axles.includes(2) ? row.axle2 : undefined,
       axle3: axles.includes(3) ? row.axle3 : undefined,
-    })
+    }
+    const { outcome } = buildWheelAlignmentOutcome(readings)
 
-    fresh.push({
+    const existing = existingByKey.get(key)
+
+    if (existing) {
+      const [legacyId] = existing.legacyIds
+      const hasMeasurements = Object.values(readings).some(
+        (value) => value != null
+      )
+
+      // Only a generic legacy record is overridden, and only by a row that
+      // actually carries a measurement (an empty row would just swap
+      // "COMPLETED" for an unmeasured "OK"). Anything else is a true
+      // duplicate and is left alone.
+      if (!existing.hasRealEvent && legacyId !== undefined && hasMeasurements) {
+        handled.add(key)
+        rowsToUpdate.push({ id: legacyId, eventOutcome: outcome })
+      } else {
+        result.duplicatesSkipped += 1
+      }
+      continue
+    }
+
+    handled.add(key)
+    rowsToInsert.push({
       assetId: row.assetId,
       eventCategory: WHEEL_ALIGNMENT_CATEGORY,
       eventOutcome: outcome,
@@ -853,7 +904,7 @@ export async function uploadBulkAlignments(
     })
   }
 
-  for (const batch of chunk(fresh, INSERT_CHUNK_SIZE)) {
+  for (const batch of chunk(rowsToInsert, INSERT_CHUNK_SIZE)) {
     const inserted = await db
       .insert(workshopEvents)
       .values(batch)
@@ -862,7 +913,23 @@ export async function uploadBulkAlignments(
     result.inserted += inserted.length
   }
 
-  if (result.inserted > 0) {
+  // Overwrites the generic legacy outcome with the measured one. Only
+  // `eventOutcome` changes; the record keeps its id, date and author.
+  for (const batch of chunk(rowsToUpdate, UPDATE_CONCURRENCY)) {
+    const updated = await Promise.all(
+      batch.map((row) =>
+        db
+          .update(workshopEvents)
+          .set({ eventOutcome: row.eventOutcome })
+          .where(eq(workshopEvents.id, row.id))
+          .returning({ id: workshopEvents.id })
+      )
+    )
+
+    result.updated += updated.reduce((sum, rows) => sum + rows.length, 0)
+  }
+
+  if (result.inserted > 0 || result.updated > 0) {
     revalidatePath("/workshop/events")
     revalidatePath("/spares-history")
     revalidatePath("/analytics/event-compliance")
