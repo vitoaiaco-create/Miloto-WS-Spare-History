@@ -208,6 +208,7 @@ export type WorkshopEventRow = {
 export type FleetComplianceRow = {
   assetId: number
   assetName: string
+  assetType: string
   lastEventDate: Date | null
   lastEventOutcome: string | null
 }

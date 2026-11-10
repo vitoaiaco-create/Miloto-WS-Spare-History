@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { DownloadIcon } from "lucide-react"
+import { DownloadIcon, FileTextIcon } from "lucide-react"
 
 import { ComplianceStatusBadge } from "@/components/compliance-status-badge"
 import { DatePickerWithRange } from "@/components/date-picker-with-range"
@@ -30,14 +30,28 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
-import { exportDataToCSV } from "@/lib/export-image"
+import {
+  COMPLIANCE_TAB_EXPORT_NAMES,
+  COMPLIANCE_TAB_KEYS,
+  COMPLIANCE_TAB_LABELS,
+  exportToCSV,
+  exportToPDF,
+  partitionByAssetName,
+  type ClassifiedComplianceRow,
+  type ComplianceTabKey,
+} from "@/lib/event-compliance-export"
 import { formatIsoDate, parseIsoDate } from "@/lib/iso-date"
 import { cn } from "@/lib/utils"
 import {
   formatWorkshopDate,
   getComplianceStatus,
-  toWorkshopDay,
   WORKSHOP_EVENT_CATEGORIES,
   type ComplianceStatus,
   type FleetComplianceRow,
@@ -74,6 +88,7 @@ export function EventComplianceDashboard({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("All")
+  const [activeTab, setActiveTab] = useState<ComplianceTabKey>("trucks")
 
   const date = useMemo(() => {
     const start = parseIsoDate(from)
@@ -81,7 +96,7 @@ export function EventComplianceDashboard({
     return start && end ? { from: start, to: end } : undefined
   }, [from, to])
 
-  const classified = useMemo(
+  const classified = useMemo<ClassifiedComplianceRow[]>(
     () =>
       rows.map((row) => ({
         ...row,
@@ -125,28 +140,41 @@ export function EventComplianceDashboard({
     })
   }
 
-  function handleExport() {
-    if (visibleRows.length === 0) {
+  // Partition after the status filter so each tab only holds matching rows.
+  const partitions = useMemo(
+    () => partitionByAssetName(visibleRows),
+    [visibleRows]
+  )
+
+  const activeData = partitions[activeTab]
+  const activeTabName = COMPLIANCE_TAB_EXPORT_NAMES[activeTab]
+
+  function hasExportableData() {
+    if (activeData.length > 0) return true
+    toast.add({
+      title: "Nothing to export",
+      description: `No ${activeTabName} match the current filter.`,
+      type: "error",
+    })
+    return false
+  }
+
+  function handleExportCSV() {
+    if (!hasExportableData()) return
+    exportToCSV(activeData, activeTabName)
+  }
+
+  async function handleExportPDF() {
+    if (!hasExportableData()) return
+    try {
+      await exportToPDF(activeData, activeTabName, { from, to, category })
+    } catch {
       toast.add({
-        title: "Nothing to export",
-        description: "No assets match the current filter.",
+        title: "PDF export failed",
+        description: "Could not generate the PDF. Please try again.",
         type: "error",
       })
-      return
     }
-
-    const slug = (value: string) => value.toLowerCase().replace(/\s+/g, "-")
-    exportDataToCSV(
-      visibleRows.map((row) => ({
-        "Asset Name": row.assetName,
-        "Last Event Date": row.lastEventDate
-          ? toWorkshopDay(row.lastEventDate)
-          : "",
-        "Last Event Outcome": row.lastEventOutcome ?? "",
-        Status: row.status,
-      })),
-      `event-compliance-${slug(category)}-${slug(statusFilter)}-${from}-to-${to}.csv`
-    )
   }
 
   return (
@@ -230,10 +258,16 @@ export function EventComplianceDashboard({
             </Select>
           </div>
 
-          <Button type="button" variant="outline" onClick={handleExport}>
-            <DownloadIcon data-icon="inline-start" />
-            Export CSV
-          </Button>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" onClick={handleExportCSV}>
+              <DownloadIcon data-icon="inline-start" />
+              Export CSV
+            </Button>
+            <Button type="button" variant="outline" onClick={handleExportPDF}>
+              <FileTextIcon data-icon="inline-start" />
+              Export PDF
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -256,49 +290,83 @@ export function EventComplianceDashboard({
           </CardDescription>
         </CardHeader>
         <CardContent className={cn(isPending && "opacity-70")}>
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Asset Name</TableHead>
-                <TableHead>Last Event Date</TableHead>
-                <TableHead>Last Event Outcome</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visibleRows.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell
-                    colSpan={4}
-                    className="h-24 text-center whitespace-normal text-muted-foreground"
-                  >
-                    No assets match the current filter.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                visibleRows.map((row) => (
-                  <TableRow key={row.assetId}>
-                    <TableCell className="font-medium">
-                      {row.assetName}
-                    </TableCell>
-                    <TableCell>
-                      {row.lastEventDate
-                        ? formatWorkshopDate(row.lastEventDate)
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {row.lastEventOutcome ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <ComplianceStatusBadge status={row.status} />
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <Tabs
+            defaultValue="trucks"
+            className="w-full"
+            onValueChange={(value) => {
+              if ((COMPLIANCE_TAB_KEYS as readonly string[]).includes(value)) {
+                setActiveTab(value as ComplianceTabKey)
+              }
+            }}
+          >
+            <TabsList>
+              {COMPLIANCE_TAB_KEYS.map((key) => (
+                <TabsTrigger key={key} value={key}>
+                  {COMPLIANCE_TAB_LABELS[key]} ({partitions[key].length})
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {COMPLIANCE_TAB_KEYS.map((key) => (
+              <TabsContent key={key} value={key}>
+                <ComplianceTable rows={partitions[key]} />
+              </TabsContent>
+            ))}
+          </Tabs>
+          {partitions.other.length > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {partitions.other.length} unit
+              {partitions.other.length === 1 ? "" : "s"} did not match any
+              tab ({partitions.other.map((row) => row.assetName).join(", ")}).
+            </p>
+          )}
         </CardContent>
       </Card>
     </>
+  )
+}
+
+function ComplianceTable({ rows }: { rows: ClassifiedComplianceRow[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead>Asset Name</TableHead>
+          <TableHead>Asset Type</TableHead>
+          <TableHead>Last Event Date</TableHead>
+          <TableHead>Last Event Outcome</TableHead>
+          <TableHead>Status</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.length === 0 ? (
+          <TableRow className="hover:bg-transparent">
+            <TableCell
+              colSpan={5}
+              className="h-24 text-center whitespace-normal text-muted-foreground"
+            >
+              No assets match the current filter.
+            </TableCell>
+          </TableRow>
+        ) : (
+          rows.map((row) => (
+            <TableRow key={row.assetId}>
+              <TableCell className="font-medium">{row.assetName}</TableCell>
+              <TableCell>{row.assetType}</TableCell>
+              <TableCell>
+                {row.lastEventDate
+                  ? formatWorkshopDate(row.lastEventDate)
+                  : "—"}
+              </TableCell>
+              <TableCell className="text-muted-foreground">
+                {row.lastEventOutcome ?? "—"}
+              </TableCell>
+              <TableCell>
+                <ComplianceStatusBadge status={row.status} />
+              </TableCell>
+            </TableRow>
+          ))
+        )}
+      </TableBody>
+    </Table>
   )
 }

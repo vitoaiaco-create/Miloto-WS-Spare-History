@@ -350,6 +350,7 @@ export async function getFleetCompliance(
     .map((row) => ({
       assetId: row.assetId,
       assetName: row.assetName,
+      assetType: row.assetType,
       lastEventDate: row.lastEventDate,
       lastEventOutcome: row.lastEventOutcome,
     }))
