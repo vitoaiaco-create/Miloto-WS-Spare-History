@@ -8,10 +8,14 @@ import { db } from "@/db"
 import { assetsTable, workshopEvents } from "@/db/schema"
 import { classifyStatementAssetType } from "@/lib/spares-statement"
 import {
+  buildInjectorTrimOutcome,
   buildWheelAlignmentOutcome,
   canUseWorkshopEvents,
   getAlignmentAxles,
   getWorkshopDayBounds,
+  INJECTOR_CODE_MAX_LENGTH,
+  INJECTOR_CODE_PATTERN,
+  isInjectorTrimAsset,
   isWorkshopAdmin,
   WORKSHOP_EVENT_CATEGORIES,
   WORKSHOP_EVENT_OUTCOMES,
@@ -25,8 +29,22 @@ import {
 // server" files may only export async functions).
 
 const eventCategorySchema = z.enum(WORKSHOP_EVENT_CATEGORIES, {
-  error: "Event category must be Wheel Alignment or Air System Check",
+  error:
+    "Event category must be Wheel Alignment, Air System Check or Injector Trim Codes",
 })
+
+// One cylinder's injector trim code: letters and digits only. Blank is
+// allowed (stored as "-").
+const injectorCodeSchema = z
+  .string({ error: "Cylinder code must be text" })
+  .trim()
+  .max(INJECTOR_CODE_MAX_LENGTH, {
+    error: `Cylinder code cannot exceed ${INJECTOR_CODE_MAX_LENGTH} characters`,
+  })
+  .regex(INJECTOR_CODE_PATTERN, {
+    error: "Cylinder codes may only contain letters and numbers",
+  })
+  .nullish()
 
 // Out-of-square reading in mm/m; negative values are valid.
 const axleMeasurementSchema = z
@@ -45,6 +63,12 @@ const logWorkshopEventSchema = z
     axle1: axleMeasurementSchema,
     axle2: axleMeasurementSchema,
     axle3: axleMeasurementSchema,
+    cyl1: injectorCodeSchema,
+    cyl2: injectorCodeSchema,
+    cyl3: injectorCodeSchema,
+    cyl4: injectorCodeSchema,
+    cyl5: injectorCodeSchema,
+    cyl6: injectorCodeSchema,
   })
   .refine(
     // Backdating is allowed; the future is not. Anything up to the end of
@@ -53,10 +77,12 @@ const logWorkshopEventSchema = z
     { message: "Event date cannot be in the future", path: ["eventDate"] }
   )
   .refine(
-    // A Wheel Alignment outcome is derived from the axle measurements below,
-    // so only the other categories need their outcome checked here.
+    // Wheel Alignment and Injector Trim Codes outcomes are derived below
+    // (from the axle measurements / cylinder codes), so only the other
+    // categories need their outcome checked here.
     (value) =>
       value.eventCategory === "Wheel Alignment" ||
+      value.eventCategory === "Injector Trim Codes" ||
       WORKSHOP_EVENT_OUTCOMES[value.eventCategory].includes(
         value.eventOutcome
       ),
@@ -165,7 +191,15 @@ export async function logWorkshopEvent(
   // categories.
   axle1?: number,
   axle2?: number,
-  axle3?: number
+  axle3?: number,
+  // Injector Trim Codes only: alphanumeric code per cylinder. Ignored for
+  // other categories.
+  cyl1?: string,
+  cyl2?: string,
+  cyl3?: string,
+  cyl4?: string,
+  cyl5?: string,
+  cyl6?: string
 ): Promise<{ id: number }> {
   const { userId } = await requireWorkshopEventsAccess()
 
@@ -177,6 +211,12 @@ export async function logWorkshopEvent(
     axle1,
     axle2,
     axle3,
+    cyl1,
+    cyl2,
+    cyl3,
+    cyl4,
+    cyl5,
+    cyl6,
   })
 
   const [asset] = await db
@@ -196,6 +236,22 @@ export async function logWorkshopEvent(
       axle2: axles.includes(2) ? data.axle2 : undefined,
       axle3: axles.includes(3) ? data.axle3 : undefined,
     }).outcome
+  }
+
+  if (data.eventCategory === "Injector Trim Codes") {
+    // Trucks only; guard here too so the UI restriction can't be bypassed.
+    if (!isInjectorTrimAsset(asset.assetName)) {
+      throw new Error("Injector Trim Codes are only applicable to Trucks (MTL)")
+    }
+    // Always "(OK)", which the Event Compliance dashboard reads as compliant.
+    finalOutcome = buildInjectorTrimOutcome({
+      cyl1: data.cyl1,
+      cyl2: data.cyl2,
+      cyl3: data.cyl3,
+      cyl4: data.cyl4,
+      cyl5: data.cyl5,
+      cyl6: data.cyl6,
+    })
   }
 
   const [created] = await db

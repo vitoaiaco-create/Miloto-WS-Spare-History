@@ -34,10 +34,15 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/toast"
 import {
+  buildInjectorTrimOutcome,
   buildWheelAlignmentOutcome,
   formatWorkshopDate,
   getAlignmentAxles,
+  INJECTOR_CODE_MAX_LENGTH,
+  INJECTOR_CODE_PATTERN,
+  INJECTOR_CYLINDER_COUNT,
   isAlignmentAxleOutOfSpec,
+  isInjectorTrimAsset,
   toWorkshopDay,
   WORKSHOP_EVENT_CATEGORIES,
   WORKSHOP_EVENT_OUTCOMES,
@@ -100,6 +105,15 @@ export function WorkshopEventForm({
       }).status
     : null
 
+  // Injector trim codes: one alphanumeric code per cylinder (Trucks / MTL
+  // only). The outcome is always "(OK)" and built from the codes.
+  const isInjectorTrim = eventCategory === "Injector Trim Codes"
+  const isInjectorAssetInvalid =
+    isInjectorTrim && !!assetName && !isInjectorTrimAsset(assetName)
+  const [cylinderInputs, setCylinderInputs] = useState<string[]>(() =>
+    Array.from({ length: INJECTOR_CYLINDER_COUNT }, () => "")
+  )
+
   function handleCategoryChange(category: WorkshopEventCategory) {
     setEventCategory(category)
     // Outcomes are category-specific, so a previous pick never carries over.
@@ -134,10 +148,22 @@ export function WorkshopEventForm({
 
     const assetId = assetName ? assetIdByName.get(assetName) : undefined
     const eventDate = workshopDayStart(eventDay)
+    const cylinderCodes = cylinderInputs.map((code) => code.trim())
+    // Injector trim outcomes are derived from the codes, not picked.
+    const submitOutcome = isInjectorTrim
+      ? buildInjectorTrimOutcome({
+          cyl1: cylinderCodes[0],
+          cyl2: cylinderCodes[1],
+          cyl3: cylinderCodes[2],
+          cyl4: cylinderCodes[3],
+          cyl5: cylinderCodes[4],
+          cyl6: cylinderCodes[5],
+        })
+      : eventOutcome
     if (
       assetId === undefined ||
       !eventCategory ||
-      !eventOutcome ||
+      !submitOutcome ||
       !eventDate
     ) {
       toast.add({
@@ -164,16 +190,47 @@ export function WorkshopEventForm({
       return
     }
 
+    if (isInjectorTrim) {
+      if (isInjectorAssetInvalid) {
+        toast.add({
+          title: "Trucks only",
+          description: "Injector Trim Codes are only applicable to Trucks (MTL).",
+          type: "error",
+        })
+        return
+      }
+      const invalidCylinder = cylinderCodes.findIndex(
+        (code) =>
+          !INJECTOR_CODE_PATTERN.test(code) ||
+          code.length > INJECTOR_CODE_MAX_LENGTH
+      )
+      if (invalidCylinder !== -1) {
+        toast.add({
+          title: "Check the trim codes",
+          description: `Cylinder ${invalidCylinder + 1} may only contain letters and numbers (max ${INJECTOR_CODE_MAX_LENGTH}).`,
+          type: "error",
+        })
+        return
+      }
+    }
+
     setIsSaving(true)
     try {
       await logWorkshopEvent(
         assetId,
         eventCategory,
-        eventOutcome,
+        submitOutcome,
         eventDate,
         readAxle(1),
         readAxle(2),
-        readAxle(3)
+        readAxle(3),
+        // Cylinder codes are only sent for Injector Trim Codes.
+        isInjectorTrim ? cylinderCodes[0] : undefined,
+        isInjectorTrim ? cylinderCodes[1] : undefined,
+        isInjectorTrim ? cylinderCodes[2] : undefined,
+        isInjectorTrim ? cylinderCodes[3] : undefined,
+        isInjectorTrim ? cylinderCodes[4] : undefined,
+        isInjectorTrim ? cylinderCodes[5] : undefined
       )
       toast.add({
         title: "Event logged",
@@ -184,6 +241,7 @@ export function WorkshopEventForm({
       setEventCategory(null)
       setEventOutcome(null)
       setAxleInputs({ 1: "", 2: "", 3: "" })
+      setCylinderInputs(Array.from({ length: INJECTOR_CYLINDER_COUNT }, () => ""))
       // Back to today so a backdated entry never leaks into the next one.
       setEventDay(toWorkshopDay())
       router.refresh()
@@ -267,7 +325,10 @@ export function WorkshopEventForm({
 
       <div className="grid gap-1.5">
         <Label htmlFor="workshop-event-outcome">Outcome</Label>
-        {isAlignment ? (
+        {isInjectorTrim ? (
+          // Injector trim codes are always recorded as OK; nothing to pick.
+          <Input id="workshop-event-outcome" readOnly value="OK (auto)" />
+        ) : isAlignment ? (
           // The alignment outcome is derived from the readings below (any
           // axle at or beyond +/-3 mm/m fails), so it is shown, not picked.
           <Input
@@ -386,9 +447,61 @@ export function WorkshopEventForm({
         </fieldset>
       ) : null}
 
+      {isInjectorTrim && assetName ? (
+        isInjectorAssetInvalid ? (
+          <p
+            role="alert"
+            className="text-sm font-medium text-destructive sm:col-span-2 lg:col-span-full"
+          >
+            Injector Trim Codes are only applicable to Trucks (MTL).
+          </p>
+        ) : (
+          <fieldset className="grid gap-3 rounded-lg border p-3 sm:col-span-2 lg:col-span-full">
+            <legend className="px-1 text-sm font-medium">
+              Injector Trim Codes
+            </legend>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {cylinderInputs.map((code, index) => (
+                <div key={index} className="grid gap-1.5">
+                  <Label htmlFor={`workshop-event-cyl-${index + 1}`}>
+                    Cylinder {index + 1}
+                  </Label>
+                  <Input
+                    id={`workshop-event-cyl-${index + 1}`}
+                    type="text"
+                    autoComplete="off"
+                    autoCapitalize="characters"
+                    maxLength={INJECTOR_CODE_MAX_LENGTH}
+                    placeholder="e.g. A1B2C3"
+                    value={code}
+                    onChange={(event) => {
+                      // Letters and digits only; anything else is dropped.
+                      const next = event.target.value
+                        .replace(/[^A-Za-z0-9]/g, "")
+                        .toUpperCase()
+                      setCylinderInputs((current) =>
+                        current.map((value, i) => (i === index ? next : value))
+                      )
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Letters and numbers only. Leave a cylinder blank if not recorded.
+            </p>
+          </fieldset>
+        )
+      ) : null}
+
       <Button
         type="submit"
-        disabled={isSaving || !assetName || !eventCategory || !eventOutcome}
+        disabled={
+          isSaving ||
+          !assetName ||
+          !eventCategory ||
+          (isInjectorTrim ? isInjectorAssetInvalid : !eventOutcome)
+        }
       >
         {isSaving ? (
           <Loader2Icon data-icon="inline-start" className="animate-spin" />

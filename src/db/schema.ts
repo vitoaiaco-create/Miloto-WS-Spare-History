@@ -238,7 +238,7 @@ export const workshopEvents = pgTable("workshop_events", {
   assetId: integer("asset_id")
     .references(() => assetsTable.id, { onDelete: "cascade" })
     .notNull(),
-  eventCategory: varchar("event_category", { length: 50 }).notNull(), // 'Wheel Alignment' or 'Air System Check'
+  eventCategory: varchar("event_category", { length: 50 }).notNull(), // 'Wheel Alignment', 'Air System Check' or 'Injector Trim Codes'
   // e.g. 'PREVENTATIVE MAINT - AIR SYSTEM TEST OK' or, for alignments,
   // 'WHEEL ALIGNMENT (FAILED) - Out of Square - Axle 1: -3.5 mm/m - Axle 2: ...'
   // (can exceed 100 chars with all three axles, hence 255).

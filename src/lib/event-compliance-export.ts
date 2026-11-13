@@ -103,6 +103,8 @@ function pluralizeCategory(category: string) {
   const base = category.trim()
   if (base === "Air System Check") return "Air System Checks"
   if (base === "Wheel Alignment") return "Wheel Alignments"
+  // Already plural-ish; no extra "s".
+  if (base === "Injector Trim Codes") return "Injector Trim Codes"
   return base
 }
 

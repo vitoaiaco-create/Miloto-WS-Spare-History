@@ -4,6 +4,7 @@
 export const WORKSHOP_EVENT_CATEGORIES = [
   "Wheel Alignment",
   "Air System Check",
+  "Injector Trim Codes",
 ] as const
 export type WorkshopEventCategory = (typeof WORKSHOP_EVENT_CATEGORIES)[number]
 
@@ -24,6 +25,42 @@ export const WORKSHOP_EVENT_OUTCOMES: Record<
 > = {
   "Wheel Alignment": [ALIGNMENT_COMPLETED],
   "Air System Check": [AIR_SYSTEM_TEST_OK, AIR_SYSTEM_TEST_FAILED],
+  // Derived from the cylinder codes (see `buildInjectorTrimOutcome`).
+  "Injector Trim Codes": [],
+}
+
+// ---------------------------------------------------------------------------
+// Injector trim codes (Trucks / MTL only, 6 cylinders)
+// ---------------------------------------------------------------------------
+
+export const INJECTOR_CYLINDER_COUNT = 6
+export const INJECTOR_CODE_MAX_LENGTH = 20
+// Letters and digits only; an empty value means "not recorded".
+export const INJECTOR_CODE_PATTERN = /^[A-Za-z0-9]*$/
+
+export type InjectorTrimCodes = {
+  cyl1?: string | null
+  cyl2?: string | null
+  cyl3?: string | null
+  cyl4?: string | null
+  cyl5?: string | null
+  cyl6?: string | null
+}
+
+// Injector trim codes only apply to prime movers (fleet numbers starting MTL).
+export function isInjectorTrimAsset(assetName: string | null | undefined) {
+  return (assetName ?? "").trim().toUpperCase().startsWith("MTL")
+}
+
+// e.g. "INJECTOR TRIM CODES (OK) - Cyl 1: A1B2 - Cyl 2: - - Cyl 3: ...".
+// Always "(OK)" so the Event Compliance dashboard counts it as compliant.
+export function buildInjectorTrimOutcome(codes: InjectorTrimCodes) {
+  const { cyl1, cyl2, cyl3, cyl4, cyl5, cyl6 } = codes
+  return (
+    `INJECTOR TRIM CODES (OK) - Cyl 1: ${cyl1 || "-"} - Cyl 2: ${cyl2 || "-"}` +
+    ` - Cyl 3: ${cyl3 || "-"} - Cyl 4: ${cyl4 || "-"} - Cyl 5: ${cyl5 || "-"}` +
+    ` - Cyl 6: ${cyl6 || "-"}`
+  )
 }
 
 // ---------------------------------------------------------------------------
