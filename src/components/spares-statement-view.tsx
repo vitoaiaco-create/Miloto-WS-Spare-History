@@ -14,6 +14,7 @@ import {
   excludeConsumableFromStatement,
   savePartDescriptionAlias,
 } from "@/actions/spares-statement"
+import { deleteWorkshopEvent } from "@/actions/workshop-events"
 import { AddManualEventDialog } from "@/components/add-manual-event-dialog"
 import { CustomDateRangePicker } from "@/components/custom-date-range-picker"
 import { StatementEventSummary } from "@/components/statement-event-summary"
@@ -265,6 +266,31 @@ export function SparesStatementView({
             : "Something went wrong while deleting the event.",
         type: "error",
       })
+    }
+  }
+
+  // Returns whether the deletion succeeded so the confirmation dialog only
+  // closes once the server action has finished. The action revalidates the
+  // reporting pages, so the row disappears on the refreshed render.
+  async function handleDeleteWorkshopEvent(eventId: number) {
+    try {
+      await deleteWorkshopEvent(eventId)
+      toast.add({
+        title: "Event deleted",
+        description: "The event was removed from the compliance logs.",
+        type: "success",
+      })
+      return true
+    } catch (error) {
+      toast.add({
+        title: "Could not delete event",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while deleting the event.",
+        type: "error",
+      })
+      return false
     }
   }
 
@@ -680,6 +706,7 @@ export function SparesStatementView({
           aliases={aliases}
           onRemove={removeLine}
           onDeleteManualEvent={handleDeleteManualEvent}
+          onDeleteWorkshopEvent={handleDeleteWorkshopEvent}
           onExcludeAsset={excludeAsset}
           onSaveAlias={handleSaveAlias}
           emptyMessage={

@@ -25,6 +25,9 @@ import {
 } from "@/lib/spares-statement"
 import {
   addWorkshopDays,
+  canUseWorkshopEvents,
+  getWorkshopDayBounds,
+  isWorkshopAdmin,
   toWorkshopDay,
   WORKSHOP_EVENT_CATEGORIES,
   workshopDayStart,
@@ -113,6 +116,14 @@ export type SparesHistoryRow = {
   outOfSquareAxle1?: number | null
   outOfSquareAxle2?: number | null
   outOfSquareAxle3?: number | null
+  // Workshop-event rows only: whether the viewing user may delete the event.
+  canDelete?: boolean
+}
+
+// The signed-in user, used to decide which workshop events they may delete.
+export type StatementViewer = {
+  userId: string
+  role: string | undefined
 }
 
 function runningKmFromReadings(
@@ -543,8 +554,17 @@ export async function getStatementWorkshopEvents(
   filters: Pick<
     SparesHistoryFilters,
     "fleetNo" | "assetIds" | "assetType" | "startDate" | "endDate"
-  >
+  >,
+  viewer: StatementViewer
 ): Promise<SparesHistoryRow[]> {
+  // Mirrors the delete rules enforced by `deleteWorkshopEvent`: admins may
+  // delete anything; a technician only their own events, and only on the
+  // workshop day (Africa/Lusaka) the event was logged. Anyone else gets no
+  // delete button.
+  const isAdmin = isWorkshopAdmin(viewer.role)
+  const isTechnician = canUseWorkshopEvents(viewer.role)
+  const today = getWorkshopDayBounds()
+
   const rangeStart = filters.startDate
     ? workshopDayStart(filters.startDate)
     : null
@@ -597,6 +617,12 @@ export async function getStatementWorkshopEvents(
     distance: null,
     latestDate: null,
     notes: null,
+    canDelete:
+      isAdmin ||
+      (isTechnician &&
+        event.createdBy === viewer.userId &&
+        event.createdAt >= today.start &&
+        event.createdAt < today.end),
   }))
 }
 

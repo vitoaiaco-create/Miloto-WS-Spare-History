@@ -88,6 +88,8 @@ export type StatementSpareRow = {
   quantity: number | null
   amountUsd: number | null
   notes?: string | null
+  // Workshop-event rows only: whether the viewing user may delete the event.
+  canDelete?: boolean
 } & OutOfSquareMetrics
 
 export function isManualStatementRow(row: Pick<StatementSpareRow, "kind">) {

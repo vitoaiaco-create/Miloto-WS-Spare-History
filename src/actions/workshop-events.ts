@@ -2,6 +2,7 @@
 
 import { auth, clerkClient } from "@clerk/nextjs/server"
 import { and, desc, eq, gte, lt } from "drizzle-orm"
+import { revalidatePath } from "next/cache"
 import { z } from "zod"
 
 import { db } from "@/db"
@@ -303,6 +304,11 @@ export async function deleteWorkshopEvent(
   }
 
   await db.delete(workshopEvents).where(eq(workshopEvents.id, event.id))
+
+  // Every report fed by workshop_events must drop the row immediately.
+  revalidatePath("/spares-history")
+  revalidatePath("/analytics/event-compliance")
+  revalidatePath("/workshop/events")
 
   return { id: event.id }
 }
