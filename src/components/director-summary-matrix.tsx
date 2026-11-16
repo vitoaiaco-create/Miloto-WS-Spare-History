@@ -48,6 +48,7 @@ import {
   type DirectorSummaryRow,
   type DirectorSummarySystem,
 } from "@/lib/director-summary-matrix"
+import { exportMatrixToPDF } from "@/lib/directors-matrix-export"
 import { cn } from "@/lib/utils"
 
 const EVENT_ICON: Record<
@@ -231,6 +232,31 @@ function StatusCheckCell({
   )
 }
 
+// Plain-text equivalent of a matrix cell for the PDF export. Mirrors what
+// `StatusCheckCell` / `MatrixEventLine` render, minus the icons.
+function matrixCellText(
+  events: DirectorSummaryCellEvent[],
+  system: DirectorSummarySystem,
+  tableKind: AlignmentTableKind
+) {
+  if (system === "Air System Check" || system === "Trim Codes") {
+    const event = latestStatusEvent(events)
+    if (!event) return ""
+    return `${event.formattedDate}${event.eventType === "Fail" ? " (FAIL)" : " (OK)"}`
+  }
+
+  return events
+    .map((event) => {
+      const alignment =
+        system === "Alignment" && event.alignmentData
+          ? alignmentExceptionDisplay(event.alignmentData, tableKind)
+          : null
+      if (alignment) return `${event.formattedDate} ${alignment.suffix}`
+      return `${EVENT_ICON[event.eventType].label}: ${event.formattedDate}`
+    })
+    .join("\n")
+}
+
 function MatrixEventLine({
   event,
   system,
@@ -330,6 +356,7 @@ function DirectorSummaryAssetTable({
   printLabel,
   printSection,
   onPrint,
+  onExportPdf,
   hiddenOnPrint,
   rows,
   systems,
@@ -339,6 +366,7 @@ function DirectorSummaryAssetTable({
   printLabel: string
   printSection: "trucks" | "trailers"
   onPrint: () => void
+  onExportPdf: () => void
   hiddenOnPrint: boolean
   rows: DirectorSummaryRow[]
   systems: readonly DirectorSummarySystem[]
@@ -358,15 +386,15 @@ function DirectorSummaryAssetTable({
         <h3 className="text-lg font-semibold tracking-tight print:block print:pt-2 print:text-sm print:text-black">
           {title}
         </h3>
-        <Button
-          type="button"
-          variant="outline"
-          className="print:hidden"
-          onClick={onPrint}
-        >
-          <Printer data-icon="inline-start" />
-          {printLabel}
-        </Button>
+        <div className="flex items-center gap-2 print:hidden">
+          <Button type="button" variant="outline" onClick={onPrint}>
+            <Printer data-icon="inline-start" />
+            {printLabel}
+          </Button>
+          <Button type="button" variant="outline" onClick={onExportPdf}>
+            Export PDF (A1)
+          </Button>
+        </div>
       </div>
       <Table className="print:text-xs" containerClassName={TABLE_CONTAINER_CLASS}>
         <TableHeader className="sticky top-0 z-20 bg-background shadow-sm print:static print:shadow-none [&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-background print:[&_th]:static">
@@ -461,6 +489,34 @@ export function DirectorSummaryMatrix({
     setTimeout(() => window.print(), 100)
   }
 
+  const handlePDFExport = (target: "trucks" | "trailers") => {
+    const isTrucks = target === "trucks"
+    const systems = isTrucks
+      ? DIRECTOR_SUMMARY_SYSTEMS
+      : DIRECTOR_SUMMARY_TRAILER_SYSTEMS
+    const rows = isTrucks ? truckRows : trailerRows
+
+    const columns = [
+      { key: "asset", label: "Asset" },
+      ...systems.map((system) => ({ key: system, label: system })),
+    ]
+    const matrixData = rows.map((row) => {
+      const record: Record<string, string> = { asset: row.assetName }
+      for (const system of systems) {
+        record[system] = matrixCellText(row.cells[system], system, target)
+      }
+      return record
+    })
+
+    // Trucks and trailers have different columns, so each exports on its own.
+    const sectionLabel = isTrucks ? "Prime Movers" : "Trailers"
+    void exportMatrixToPDF(
+      matrixData,
+      columns,
+      `${data.periodLabel} - ${sectionLabel}`
+    )
+  }
+
   return (
     <Card
       id="director-summary-matrix"
@@ -548,6 +604,7 @@ export function DirectorSummaryMatrix({
           printLabel="Print Trucks"
           printSection="trucks"
           onPrint={() => handlePrint("trucks")}
+          onExportPdf={() => handlePDFExport("trucks")}
           hiddenOnPrint={printTarget === "trailers"}
           rows={truckRows}
           systems={DIRECTOR_SUMMARY_SYSTEMS}
@@ -558,6 +615,7 @@ export function DirectorSummaryMatrix({
           printLabel="Print Trailers"
           printSection="trailers"
           onPrint={() => handlePrint("trailers")}
+          onExportPdf={() => handlePDFExport("trailers")}
           hiddenOnPrint={printTarget === "trucks"}
           rows={trailerRows}
           systems={DIRECTOR_SUMMARY_TRAILER_SYSTEMS}
