@@ -48,7 +48,12 @@ import {
   type DirectorSummaryRow,
   type DirectorSummarySystem,
 } from "@/lib/director-summary-matrix"
-import { exportMatrixToPDF } from "@/lib/directors-matrix-export"
+import {
+  exportMatrixToPDF,
+  type MatrixExportCell,
+  type MatrixExportCellLine,
+  type MatrixExportRow,
+} from "@/lib/directors-matrix-export"
 import { cn } from "@/lib/utils"
 
 const EVENT_ICON: Record<
@@ -232,29 +237,53 @@ function StatusCheckCell({
   )
 }
 
-// Plain-text equivalent of a matrix cell for the PDF export. Mirrors what
-// `StatusCheckCell` / `MatrixEventLine` render, minus the icons.
-function matrixCellText(
+// Structured equivalent of a matrix cell for the PDF export. Mirrors what
+// `StatusCheckCell` / `MatrixEventLine` render; the exporter draws the icon
+// (OK check, FAIL cross, Intervention spanner) next to each date.
+function matrixCellExport(
   events: DirectorSummaryCellEvent[],
   system: DirectorSummarySystem,
   tableKind: AlignmentTableKind
-) {
+): MatrixExportCell {
   if (system === "Air System Check" || system === "Trim Codes") {
     const event = latestStatusEvent(events)
     if (!event) return ""
-    return `${event.formattedDate}${event.eventType === "Fail" ? " (FAIL)" : " (OK)"}`
+    return [
+      {
+        date: event.formattedDate,
+        status: event.eventType === "Fail" ? "FAIL" : "OK",
+      },
+    ]
   }
 
-  return events
-    .map((event) => {
-      const alignment =
-        system === "Alignment" && event.alignmentData
-          ? alignmentExceptionDisplay(event.alignmentData, tableKind)
-          : null
-      if (alignment) return `${event.formattedDate} ${alignment.suffix}`
-      return `${EVENT_ICON[event.eventType].label}: ${event.formattedDate}`
-    })
-    .join("\n")
+  return events.map((event): MatrixExportCellLine => {
+    const alignment =
+      system === "Alignment" && event.alignmentData
+        ? alignmentExceptionDisplay(event.alignmentData, tableKind)
+        : null
+    if (alignment) {
+      return alignment.Icon === TriangleAlert
+        ? {
+            date: event.formattedDate,
+            status: "FAIL",
+            detail: alignment.suffix,
+          }
+        : { date: event.formattedDate, status: "OK" }
+    }
+    switch (event.eventType) {
+      case "Intervention":
+        return { date: event.formattedDate, status: "Spanner" }
+      case "Check":
+        return { date: event.formattedDate, status: "OK" }
+      case "Fail":
+        return { date: event.formattedDate, status: "FAIL" }
+      default:
+        return {
+          date: event.formattedDate,
+          label: `${EVENT_ICON[event.eventType].label}:`,
+        }
+    }
+  })
 }
 
 function MatrixEventLine({
@@ -501,9 +530,9 @@ export function DirectorSummaryMatrix({
       ...systems.map((system) => ({ key: system, label: system })),
     ]
     const matrixData = rows.map((row) => {
-      const record: Record<string, string> = { asset: row.assetName }
+      const record: MatrixExportRow = { asset: row.assetName }
       for (const system of systems) {
-        record[system] = matrixCellText(row.cells[system], system, target)
+        record[system] = matrixCellExport(row.cells[system], system, target)
       }
       return record
     })
