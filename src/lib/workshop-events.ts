@@ -5,12 +5,15 @@ export const WORKSHOP_EVENT_CATEGORIES = [
   "Wheel Alignment",
   "Air System Check",
   "Injector Trim Codes",
+  "General Checks",
 ] as const
 export type WorkshopEventCategory = (typeof WORKSHOP_EVENT_CATEGORIES)[number]
 
 export const AIR_SYSTEM_TEST_OK = "PREVENTATIVE MAINT - AIR SYSTEM TEST OK"
 export const AIR_SYSTEM_TEST_FAILED =
   "PREVENTATIVE MAINT - AIR SYSTEM TEST FAILED"
+export const GENERAL_CHECKS_OK = "GENERAL CHECKS - OK"
+export const GENERAL_CHECKS_FAILED = "GENERAL CHECKS - FAILED"
 // Legacy outcome of alignments logged before out-of-square measurements were
 // captured (and of the historical migration). New alignments never use it.
 export const ALIGNMENT_COMPLETED = "COMPLETED"
@@ -27,6 +30,8 @@ export const WORKSHOP_EVENT_OUTCOMES: Record<
   "Air System Check": [AIR_SYSTEM_TEST_OK, AIR_SYSTEM_TEST_FAILED],
   // Derived from the cylinder codes (see `buildInjectorTrimOutcome`).
   "Injector Trim Codes": [],
+  // Same explicit pass/fail pick as Air System Check; stored as-is.
+  "General Checks": [GENERAL_CHECKS_OK, GENERAL_CHECKS_FAILED],
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +187,8 @@ export type WorkshopEventMatrixInput = {
     | "AIR_SYSTEM_FAIL"
     | "INJECTOR_TRIM_OK"
     | "INJECTOR_TRIM_FAIL"
+    | "CHECKS_OK"
+    | "CHECKS_FAIL"
   alignmentStatus?: "OK" | "FAILED" | null
   // Six cylinder codes (null = not recorded) for injector trim events.
   trimCodes?: (string | null)[]
@@ -211,6 +218,15 @@ export function toWorkshopEventMatrixInput(
     if (outcome.includes("FAILED")) return { eventType: "AIR_SYSTEM_FAIL" }
     if (outcome.includes("AIR SYSTEM TEST OK")) {
       return { eventType: "AIR_SYSTEM_OK" }
+    }
+  }
+
+  if (eventCategory === "General Checks") {
+    const outcome = eventOutcome.toUpperCase()
+    // FAILED first so a failed check can never be read as passing.
+    if (outcome.includes("FAILED")) return { eventType: "CHECKS_FAIL" }
+    if (outcome.includes("GENERAL CHECKS - OK")) {
+      return { eventType: "CHECKS_OK" }
     }
   }
 

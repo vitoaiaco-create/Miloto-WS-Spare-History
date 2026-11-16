@@ -174,7 +174,15 @@ function latestStatusEvent(events: DirectorSummaryCellEvent[]) {
   return failEvent ?? okEvent
 }
 
+function isStatusEvent(event: DirectorSummaryCellEvent) {
+  return event.eventType === "Check" || event.eventType === "Fail"
+}
+
 const STATUS_CELL_LABELS = {
+  "General Checks": {
+    ok: "General checks OK",
+    fail: "General checks failed",
+  },
   "Air System Check": {
     ok: "Air system test OK",
     fail: "Air system test failed",
@@ -185,13 +193,22 @@ const STATUS_CELL_LABELS = {
   },
 } as const
 
+// General Checks cell contents: every non-status event (interventions) plus
+// only the latest pass/fail check, if any.
+function generalChecksVisibleEvents(events: DirectorSummaryCellEvent[]) {
+  const status = latestStatusEvent(events)
+  const others = events.filter((event) => !isStatusEvent(event))
+  return status ? [...others, status] : others
+}
+
 function formatTrimCodes(codes: (string | null)[]) {
   return codes
     .map((code, index) => `Cyl ${index + 1}: ${code ?? "-"}`)
     .join(", ")
 }
 
-// Latest Pass/Fail status for the Air System Check and Trim Codes columns.
+// Latest Pass/Fail status for the General Checks, Air System Check and Trim
+// Codes columns.
 // A unit with nothing logged in the window renders an empty cell.
 function StatusCheckCell({
   events,
@@ -256,7 +273,14 @@ function matrixCellExport(
     ]
   }
 
-  return events.map((event): MatrixExportCellLine => {
+  // General Checks mixes interventions (kept as-is) with pass/fail checks,
+  // of which only the latest is shown: Green Check (OK) or Red Cross (FAIL).
+  const visibleEvents =
+    system === "General Checks"
+      ? generalChecksVisibleEvents(events)
+      : events
+
+  return visibleEvents.map((event): MatrixExportCellLine => {
     const alignment =
       system === "Alignment" && event.alignmentData
         ? alignmentExceptionDisplay(event.alignmentData, tableKind)
@@ -467,6 +491,20 @@ function DirectorSummaryAssetTable({
                       {system === "Air System Check" ||
                       system === "Trim Codes" ? (
                         <StatusCheckCell events={events} system={system} />
+                      ) : system === "General Checks" ? (
+                        <div className="flex flex-col gap-1 print:gap-0.5">
+                          {events
+                            .filter((event) => !isStatusEvent(event))
+                            .map((event) => (
+                              <MatrixEventLine
+                                key={`${row.assetName}-${system}-${event.eventType}`}
+                                event={event}
+                                system={system}
+                                tableKind={printSection}
+                              />
+                            ))}
+                          <StatusCheckCell events={events} system={system} />
+                        </div>
                       ) : events.length > 0 ? (
                         <div className="flex flex-col gap-1 print:gap-0.5">
                           {events.map((event) => (

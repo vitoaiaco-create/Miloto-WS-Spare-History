@@ -105,6 +105,7 @@ function pluralizeCategory(category: string) {
   if (base === "Wheel Alignment") return "Wheel Alignments"
   // Already plural-ish; no extra "s".
   if (base === "Injector Trim Codes") return "Injector Trim Codes"
+  if (base === "General Checks") return "General Checks"
   return base
 }
 

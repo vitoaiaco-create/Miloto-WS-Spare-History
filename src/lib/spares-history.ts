@@ -554,7 +554,7 @@ export async function getStatementWorkshopEvents(
 
   const events = await db.query.workshopEvents.findMany({
     where: {
-      // Only the three reporting categories feed the statement.
+      // Only the reporting categories feed the statement.
       eventCategory: { in: [...WORKSHOP_EVENT_CATEGORIES] },
       ...(rangeStart || rangeEnd
         ? {

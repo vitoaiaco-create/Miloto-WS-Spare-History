@@ -584,6 +584,7 @@ export const STATEMENT_EVENT_CATEGORIES = [
   "Wheel Alignment",
   "Air System Check",
   "Injector Trim Codes",
+  "General Checks",
 ] as const
 export type StatementEventCategory = (typeof STATEMENT_EVENT_CATEGORIES)[number]
 
@@ -598,6 +599,7 @@ export function statementEventCategory(
   if (name.startsWith("WHEEL ALIGNMENT")) return "Wheel Alignment"
   if (name.includes("AIR SYSTEM TEST")) return "Air System Check"
   if (name.startsWith("INJECTOR TRIM CODES")) return "Injector Trim Codes"
+  if (name.startsWith("GENERAL CHECKS")) return "General Checks"
   return null
 }
 

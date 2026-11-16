@@ -150,11 +150,12 @@ const MANUAL_EVENT_SYSTEM: Record<
   Extract<
     ManualStatementEventType,
     "WHEEL_ALIGNMENT" | "CHECKS_OK" | "AIR_SYSTEM_OK" | "AIR_SYSTEM_FAIL"
-  > | "INJECTOR_TRIM_OK" | "INJECTOR_TRIM_FAIL",
+  > | "CHECKS_FAIL" | "INJECTOR_TRIM_OK" | "INJECTOR_TRIM_FAIL",
   DirectorSummarySystem
 > = {
   WHEEL_ALIGNMENT: "Alignment",
   CHECKS_OK: "General Checks",
+  CHECKS_FAIL: "General Checks",
   AIR_SYSTEM_OK: "Air System Check",
   AIR_SYSTEM_FAIL: "Air System Check",
   INJECTOR_TRIM_OK: "Trim Codes",
@@ -237,6 +238,9 @@ function mapManualEvent(
   }
   if (eventType === "CHECKS_OK") {
     return { eventType: "Check", system: MANUAL_EVENT_SYSTEM.CHECKS_OK }
+  }
+  if (eventType === "CHECKS_FAIL") {
+    return { eventType: "Fail", system: MANUAL_EVENT_SYSTEM.CHECKS_FAIL }
   }
   if (eventType === "AIR_SYSTEM_OK") {
     return { eventType: "Check", system: MANUAL_EVENT_SYSTEM.AIR_SYSTEM_OK }

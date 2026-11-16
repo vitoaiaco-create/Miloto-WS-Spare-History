@@ -30,7 +30,7 @@ import {
 
 const eventCategorySchema = z.enum(WORKSHOP_EVENT_CATEGORIES, {
   error:
-    "Event category must be Wheel Alignment, Air System Check or Injector Trim Codes",
+    "Event category must be Wheel Alignment, Air System Check, Injector Trim Codes or General Checks",
 })
 
 // One cylinder's injector trim code: letters and digits only. Blank is
@@ -79,7 +79,8 @@ const logWorkshopEventSchema = z
   .refine(
     // Wheel Alignment and Injector Trim Codes outcomes are derived below
     // (from the axle measurements / cylinder codes), so only the other
-    // categories need their outcome checked here.
+    // categories (Air System Check, General Checks) need their Pass/Fail
+    // outcome checked here; it is then stored as submitted.
     (value) =>
       value.eventCategory === "Wheel Alignment" ||
       value.eventCategory === "Injector Trim Codes" ||

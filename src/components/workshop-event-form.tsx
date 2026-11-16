@@ -118,7 +118,8 @@ export function WorkshopEventForm({
     setEventCategory(category)
     // Outcomes are category-specific, so a previous pick never carries over.
     // A category with a single outcome (Wheel Alignment) is preselected;
-    // Air System Check always needs an explicit pass/fail choice.
+    // Air System Check and General Checks always need an explicit pass/fail
+    // choice.
     const options = WORKSHOP_EVENT_OUTCOMES[category]
     setEventOutcome(options.length === 1 ? options[0] : null)
   }
