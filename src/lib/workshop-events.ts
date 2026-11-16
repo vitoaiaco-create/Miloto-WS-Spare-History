@@ -63,6 +63,25 @@ export function buildInjectorTrimOutcome(codes: InjectorTrimCodes) {
   )
 }
 
+const INJECTOR_CYLINDER_PATTERN = /Cyl ([1-6]): (.*?)(?= - Cyl [1-6]:|$)/g
+
+// Reads the six cylinder codes back out of a stored trim outcome. Always
+// returns INJECTOR_CYLINDER_COUNT entries; a cylinder with no recorded code
+// ("-" or missing) is null.
+export function parseInjectorTrimOutcome(eventOutcome: string) {
+  const codes: (string | null)[] = Array.from(
+    { length: INJECTOR_CYLINDER_COUNT },
+    () => null
+  )
+
+  for (const match of eventOutcome.matchAll(INJECTOR_CYLINDER_PATTERN)) {
+    const value = match[2].trim()
+    codes[Number(match[1]) - 1] = value && value !== "-" ? value : null
+  }
+
+  return codes
+}
+
 // ---------------------------------------------------------------------------
 // Wheel alignment out-of-square measurements (mm/m)
 // ---------------------------------------------------------------------------
@@ -157,8 +176,15 @@ export function parseWheelAlignmentOutcome(
 // Director's Summary Matrix uses for manual events), or null for an
 // unrecognised category/outcome.
 export type WorkshopEventMatrixInput = {
-  eventType: "WHEEL_ALIGNMENT" | "AIR_SYSTEM_OK" | "AIR_SYSTEM_FAIL"
+  eventType:
+    | "WHEEL_ALIGNMENT"
+    | "AIR_SYSTEM_OK"
+    | "AIR_SYSTEM_FAIL"
+    | "INJECTOR_TRIM_OK"
+    | "INJECTOR_TRIM_FAIL"
   alignmentStatus?: "OK" | "FAILED" | null
+  // Six cylinder codes (null = not recorded) for injector trim events.
+  trimCodes?: (string | null)[]
   outOfSquareAxle1?: number | null
   outOfSquareAxle2?: number | null
   outOfSquareAxle3?: number | null
@@ -185,6 +211,18 @@ export function toWorkshopEventMatrixInput(
     if (outcome.includes("FAILED")) return { eventType: "AIR_SYSTEM_FAIL" }
     if (outcome.includes("AIR SYSTEM TEST OK")) {
       return { eventType: "AIR_SYSTEM_OK" }
+    }
+  }
+
+  if (eventCategory === "Injector Trim Codes") {
+    const trimCodes = parseInjectorTrimOutcome(eventOutcome)
+    // Trim outcomes are always "(OK)", but check FAILED first so a failed
+    // entry could never be read as passing.
+    return {
+      eventType: eventOutcome.toUpperCase().includes("FAILED")
+        ? "INJECTOR_TRIM_FAIL"
+        : "INJECTOR_TRIM_OK",
+      trimCodes,
     }
   }
 

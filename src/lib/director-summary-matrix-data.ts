@@ -1,7 +1,7 @@
 import "server-only"
 
 import { auth } from "@clerk/nextjs/server"
-import { and, eq, gte, lt, lte } from "drizzle-orm"
+import { and, eq, gte, inArray, lt, lte } from "drizzle-orm"
 
 import { db } from "@/db"
 import {
@@ -17,7 +17,12 @@ import {
 } from "@/lib/director-summary-matrix"
 import { formatIsoDate } from "@/lib/iso-date"
 import {
+  formatCustomDateRange,
+  type CustomDateRange,
+} from "@/lib/report-date-range"
+import {
   addWorkshopDays,
+  WORKSHOP_EVENT_CATEGORIES,
   toWorkshopDay,
   toWorkshopEventMatrixInput,
   workshopDayStart,
@@ -29,14 +34,19 @@ function monthBounds(year: number, month: number) {
   return { startDate, endDate }
 }
 
+// `range` (a validated `?from` / `?to` pair) overrides the monthly window;
+// without it the report covers the whole `year` / `month`.
 export async function getDirectorSummaryMatrix(
   year: number,
-  month: number
+  month: number,
+  range: CustomDateRange | null = null
 ): Promise<DirectorSummaryMatrixPayload> {
   const { userId } = await auth()
   if (!userId) throw new Error("Unauthorized")
 
-  const { startDate, endDate } = monthBounds(year, month)
+  const { startDate, endDate } = range
+    ? { startDate: range.from, endDate: range.to }
+    : monthBounds(year, month)
 
   // `workshop_events.event_date` is a timestamp; widen the month to whole
   // workshop days so events near midnight land on the right calendar day.
@@ -84,7 +94,8 @@ export async function getDirectorSummaryMatrix(
           lte(manualAlignmentEventsTable.date, endDate)
         )
       ),
-    // Technician-logged events from the Workshop Events page.
+    // Technician-logged events from the Workshop Events page: wheel
+    // alignments, air system checks and injector trim codes.
     db
       .select({
         assetName: assetsTable.assetName,
@@ -96,6 +107,7 @@ export async function getDirectorSummaryMatrix(
       .innerJoin(assetsTable, eq(workshopEvents.assetId, assetsTable.id))
       .where(
         and(
+          inArray(workshopEvents.eventCategory, [...WORKSHOP_EVENT_CATEGORIES]),
           gte(workshopEvents.eventDate, workshopStart),
           lt(workshopEvents.eventDate, workshopEnd)
         )
@@ -123,8 +135,11 @@ export async function getDirectorSummaryMatrix(
       spares,
       [...manualEvents, ...workshopManualEvents],
       year,
-      month
+      month,
+      range
     ),
-    periodLabel: analyticsPeriodLabel({ year, month }),
+    periodLabel: range
+      ? formatCustomDateRange(range)
+      : analyticsPeriodLabel({ year, month }),
   }
 }

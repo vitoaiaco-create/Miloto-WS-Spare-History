@@ -4,6 +4,7 @@ import { CheckCircle2, Crosshair, Printer, TriangleAlert, Wrench } from "lucide-
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState, type ComponentType } from "react"
 
+import { CustomDateRangePicker } from "@/components/custom-date-range-picker"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -155,31 +156,65 @@ function alignmentExceptionDisplay(
   }
 }
 
-function AirSystemCheckCell({
-  events,
-}: {
-  events: DirectorSummaryCellEvent[]
-}) {
+// The most recent pass/fail for a status column. When a unit has both a pass
+// and a fail in the window, the later date wins; on the same day the fail
+// wins so a failure is never hidden behind a pass.
+function latestStatusEvent(events: DirectorSummaryCellEvent[]) {
   const failEvent = events.find((event) => event.eventType === "Fail")
   const okEvent = events.find((event) => event.eventType === "Check")
-  const event = failEvent ?? okEvent
+  if (failEvent && okEvent) {
+    return okEvent.latestDate > failEvent.latestDate ? okEvent : failEvent
+  }
+  return failEvent ?? okEvent
+}
+
+const STATUS_CELL_LABELS = {
+  "Air System Check": {
+    ok: "Air system test OK",
+    fail: "Air system test failed",
+  },
+  "Trim Codes": {
+    ok: "Injector trim codes logged",
+    fail: "Injector trim codes failed",
+  },
+} as const
+
+function formatTrimCodes(codes: (string | null)[]) {
+  return codes
+    .map((code, index) => `Cyl ${index + 1}: ${code ?? "-"}`)
+    .join(", ")
+}
+
+// Latest Pass/Fail status for the Air System Check and Trim Codes columns.
+// A unit with nothing logged in the window renders an empty cell.
+function StatusCheckCell({
+  events,
+  system,
+}: {
+  events: DirectorSummaryCellEvent[]
+  system: keyof typeof STATUS_CELL_LABELS
+}) {
+  const event = latestStatusEvent(events)
 
   if (!event) return null
 
-  const Icon = event.eventType === "Fail" ? TriangleAlert : CheckCircle2
-  const className =
-    event.eventType === "Fail"
-      ? "text-destructive print:text-destructive"
-      : "text-green-500 print:text-green-500"
-  const label =
-    event.eventType === "Fail"
-      ? "Air system test failed"
-      : "Air system test OK"
+  const isFail = event.eventType === "Fail"
+  const Icon = isFail ? TriangleAlert : CheckCircle2
+  const className = isFail
+    ? "text-destructive print:text-destructive"
+    : "text-green-500 print:text-green-500"
+  const label = isFail
+    ? STATUS_CELL_LABELS[system].fail
+    : STATUS_CELL_LABELS[system].ok
+  const codes =
+    system === "Trim Codes" && event.trimCodes?.some(Boolean)
+      ? ` (${formatTrimCodes(event.trimCodes)})`
+      : ""
 
   return (
     <div
       className="flex items-center gap-1.5 whitespace-nowrap text-[11px] leading-tight print:text-[9px]"
-      title={`${label} ${event.formattedDate}`}
+      title={`${label} ${event.formattedDate}${codes}`}
     >
       <Icon
         aria-label={label}
@@ -190,7 +225,7 @@ function AirSystemCheckCell({
       />
       <span className="whitespace-nowrap tabular-nums">
         {event.formattedDate}
-        {event.eventType === "Check" ? " (OK)" : ""}
+        {isFail ? "" : " (OK)"}
       </span>
     </div>
   )
@@ -242,7 +277,13 @@ function MatrixEventLine({
   )
 }
 
-function PeriodSelect({ period }: { period: AnalyticsPeriod }) {
+function PeriodSelect({
+  period,
+  customRangeActive,
+}: {
+  period: AnalyticsPeriod
+  customRangeActive: boolean
+}) {
   const router = useRouter()
   const pathname = usePathname()
   const value = formatAnalyticsPeriod(period)
@@ -261,9 +302,16 @@ function PeriodSelect({ period }: { period: AnalyticsPeriod }) {
   return (
     <div className="flex min-w-[180px] flex-col gap-1.5 print:hidden">
       <Label htmlFor="director-summary-period">Month</Label>
-      <Select value={value} onValueChange={onValueChange}>
+      {/* A custom range overrides the month, so no month is shown as
+          selected while one is active. */}
+      <Select
+        value={customRangeActive ? null : value}
+        onValueChange={onValueChange}
+      >
         <SelectTrigger id="director-summary-period" className="w-[180px]">
-          <SelectValue placeholder="Select month" />
+          <SelectValue
+            placeholder={customRangeActive ? "Custom range" : "Select month"}
+          />
         </SelectTrigger>
         <SelectContent>
           {selectableOptions.map((option) => (
@@ -359,8 +407,9 @@ function DirectorSummaryAssetTable({
                       key={system}
                       className="align-top whitespace-normal border-r border-border px-1.5 py-1 print:px-1 print:py-0.5"
                     >
-                      {system === "Air System Check" ? (
-                        <AirSystemCheckCell events={events} />
+                      {system === "Air System Check" ||
+                      system === "Trim Codes" ? (
+                        <StatusCheckCell events={events} system={system} />
                       ) : events.length > 0 ? (
                         <div className="flex flex-col gap-1 print:gap-0.5">
                           {events.map((event) => (
@@ -448,13 +497,17 @@ export function DirectorSummaryMatrix({
       <CardHeader>
         <CardTitle>Director&apos;s Summary Matrix</CardTitle>
         <CardDescription>
-          Recency map of mechanical interventions, wheel alignments, and
-          routine checks for {data.periodLabel}. Print on A1 or A0 landscape.
+          Recency map of mechanical interventions, wheel alignments, air
+          system checks, injector trim codes, and routine checks for{" "}
+          {data.periodLabel}. Print on A1 or A0 landscape.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6 print:gap-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <PeriodSelect period={period} />
+          <div className="flex flex-wrap items-end gap-3">
+            <PeriodSelect period={period} customRangeActive={data.range !== null} />
+            <CustomDateRangePicker from={data.range?.from} to={data.range?.to} />
+          </div>
           <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs print:text-[9px]">
             {DIRECTOR_SUMMARY_LEGEND_EVENT_TYPES.map((eventType) => {
               const { Icon, className, label } = EVENT_ICON[eventType]
@@ -477,7 +530,7 @@ export function DirectorSummaryMatrix({
                 className="h-3.5 w-3.5 shrink-0 text-green-500 print:size-2.5 print:text-green-500 [print-color-adjust:exact] [-webkit-print-color-adjust:exact]"
                 strokeWidth={2.5}
               />
-              Air System OK
+              Air System / Trim Codes OK
             </li>
             <li className="inline-flex items-center gap-1.5">
               <TriangleAlert
@@ -485,7 +538,7 @@ export function DirectorSummaryMatrix({
                 className="h-3.5 w-3.5 shrink-0 text-destructive print:size-2.5 print:text-destructive [print-color-adjust:exact] [-webkit-print-color-adjust:exact]"
                 strokeWidth={2.5}
               />
-              Air System Fail
+              Air System / Trim Codes Fail
             </li>
           </ul>
         </div>

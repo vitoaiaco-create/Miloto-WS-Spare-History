@@ -26,6 +26,7 @@ import {
 import {
   addWorkshopDays,
   toWorkshopDay,
+  WORKSHOP_EVENT_CATEGORIES,
   workshopDayStart,
 } from "@/lib/workshop-events"
 
@@ -553,6 +554,8 @@ export async function getStatementWorkshopEvents(
 
   const events = await db.query.workshopEvents.findMany({
     where: {
+      // Only the three reporting categories feed the statement.
+      eventCategory: { in: [...WORKSHOP_EVENT_CATEGORIES] },
       ...(rangeStart || rangeEnd
         ? {
             eventDate: {

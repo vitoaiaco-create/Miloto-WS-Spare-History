@@ -1,6 +1,7 @@
 import { format } from "date-fns"
 
 import { formatIsoDate, parseIsoDate, toIsoDateParam } from "@/lib/iso-date"
+import type { CustomDateRange } from "@/lib/report-date-range"
 import {
   STATEMENT_COMPONENT_GROUPS,
   type ManualStatementEventType,
@@ -26,14 +27,16 @@ export const DIRECTOR_SUMMARY_LEGEND_EVENT_TYPES = [
 // Same ERP Sub Equipment labels the executive statement uses
 // (`STATEMENT_COMPONENT_GROUPS` / `mechanicalSparesTable.subEquipment`),
 // plus General Checks for blank rows and routine checks, Alignment for
-// WHEEL_ALIGNMENT, and Air System Check for AIR_SYSTEM_OK / AIR_SYSTEM_FAIL.
-// Print order puts General Checks, Alignment, and Air System Check first,
-// then the high-traffic mechanical groups. "Air System" remains the spare-
+// WHEEL_ALIGNMENT, Air System Check for AIR_SYSTEM_OK / AIR_SYSTEM_FAIL, and
+// Trim Codes for technician-logged Injector Trim Codes (trucks only).
+// Print order puts General Checks, Alignment, Air System Check, and Trim Codes
+// first, then the high-traffic mechanical groups. "Air System" remains the spare-
 // replacement column; "Air System Check" is the preventative-test column.
 export const DIRECTOR_SUMMARY_SYSTEMS = [
   "General Checks",
   "Alignment",
   "Air System Check",
+  "Trim Codes",
   "Engine",
   "Transmission",
   "Axles",
@@ -55,12 +58,14 @@ export const DIRECTOR_SUMMARY_SYSTEMS = [
   | "General Checks"
   | "Alignment"
   | "Air System Check"
+  | "Trim Codes"
   | (typeof STATEMENT_COMPONENT_GROUPS)[number]
 )[]
 
 export type DirectorSummarySystem = (typeof DIRECTOR_SUMMARY_SYSTEMS)[number]
 
 const TRAILER_EXCLUDED_SYSTEMS = new Set<DirectorSummarySystem>([
+  "Trim Codes",
   "Engine",
   "Transmission",
   "Diffs",
@@ -103,6 +108,8 @@ export type DirectorSummaryManualEventInput = {
   // Pass/fail recorded by the technician form ("WHEEL ALIGNMENT (OK|FAILED)").
   // Absent for statement-injected alignments, which derive it from the axles.
   alignmentStatus?: "OK" | "FAILED" | null
+  // Cylinder codes for injector trim events (null = not recorded).
+  trimCodes?: (string | null)[] | null
 }
 
 export type DirectorSummaryAlignmentData = {
@@ -118,6 +125,8 @@ export type DirectorSummaryCellEvent = {
   formattedDate: string
   distinctDaysCount: number
   alignmentData?: DirectorSummaryAlignmentData
+  // Latest cylinder codes for a Trim Codes cell; absent for other systems.
+  trimCodes?: (string | null)[]
 }
 
 export type DirectorSummaryRow = {
@@ -128,6 +137,8 @@ export type DirectorSummaryRow = {
 export type DirectorSummaryMatrixResult = {
   year: number
   month: number
+  // Set when a custom `from`/`to` range overrides the month.
+  range: CustomDateRange | null
   rows: DirectorSummaryRow[]
 }
 
@@ -139,13 +150,15 @@ const MANUAL_EVENT_SYSTEM: Record<
   Extract<
     ManualStatementEventType,
     "WHEEL_ALIGNMENT" | "CHECKS_OK" | "AIR_SYSTEM_OK" | "AIR_SYSTEM_FAIL"
-  >,
+  > | "INJECTOR_TRIM_OK" | "INJECTOR_TRIM_FAIL",
   DirectorSummarySystem
 > = {
   WHEEL_ALIGNMENT: "Alignment",
   CHECKS_OK: "General Checks",
   AIR_SYSTEM_OK: "Air System Check",
   AIR_SYSTEM_FAIL: "Air System Check",
+  INJECTOR_TRIM_OK: "Trim Codes",
+  INJECTOR_TRIM_FAIL: "Trim Codes",
 }
 
 function emptyCells(): Record<DirectorSummarySystem, DirectorSummaryCellEvent[]> {
@@ -166,6 +179,10 @@ function isIsoDateInMonth(isoDate: string, year: number, month: number) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate)
   if (!match) return false
   return Number(match[1]) === year && Number(match[2]) === month
+}
+
+function isIsoDateInRange(isoDate: string, range: CustomDateRange) {
+  return toIsoDateParam(isoDate) !== "" && isoDate >= range.from && isoDate <= range.to
 }
 
 function isFutureCalendarDate(isoDate: string, now = new Date()) {
@@ -227,6 +244,12 @@ function mapManualEvent(
   if (eventType === "AIR_SYSTEM_FAIL") {
     return { eventType: "Fail", system: MANUAL_EVENT_SYSTEM.AIR_SYSTEM_FAIL }
   }
+  if (eventType === "INJECTOR_TRIM_OK") {
+    return { eventType: "Check", system: MANUAL_EVENT_SYSTEM.INJECTOR_TRIM_OK }
+  }
+  if (eventType === "INJECTOR_TRIM_FAIL") {
+    return { eventType: "Fail", system: MANUAL_EVENT_SYSTEM.INJECTOR_TRIM_FAIL }
+  }
   return null
 }
 
@@ -237,6 +260,8 @@ type GroupAccumulator = {
   dates: Set<string>
   alignmentData?: DirectorSummaryAlignmentData
   alignmentDate?: string
+  trimCodes?: (string | null)[]
+  trimCodesDate?: string
 }
 
 function alignmentDataFromEvent(
@@ -249,6 +274,18 @@ function alignmentDataFromEvent(
     a3: event.outOfSquareAxle3 ?? null,
     status: event.alignmentStatus ?? null,
   }
+}
+
+function trimCodesFromEvent(
+  event: DirectorSummaryManualEventInput
+): (string | null)[] | undefined {
+  if (
+    event.eventType !== "INJECTOR_TRIM_OK" &&
+    event.eventType !== "INJECTOR_TRIM_FAIL"
+  ) {
+    return undefined
+  }
+  return event.trimCodes ?? undefined
 }
 
 function groupKey(
@@ -265,7 +302,8 @@ function addOccurrence(
   system: DirectorSummarySystem,
   eventType: DirectorSummaryEventType,
   date: string,
-  alignmentData?: DirectorSummaryAlignmentData
+  alignmentData?: DirectorSummaryAlignmentData,
+  trimCodes?: (string | null)[]
 ) {
   const name = assetName.trim()
   if (!name || !isDirectorSummarySystem(system)) return
@@ -281,6 +319,10 @@ function addOccurrence(
       existing.alignmentData = alignmentData
       existing.alignmentDate = date
     }
+    if (trimCodes && (!existing.trimCodesDate || date >= existing.trimCodesDate)) {
+      existing.trimCodes = trimCodes
+      existing.trimCodesDate = date
+    }
     return
   }
 
@@ -291,13 +333,16 @@ function addOccurrence(
     dates: new Set([date]),
     alignmentData,
     alignmentDate: alignmentData ? date : undefined,
+    trimCodes,
+    trimCodesDate: trimCodes ? date : undefined,
   })
 }
 
 function toCellEvent(
   dates: Set<string>,
   eventType: DirectorSummaryEventType,
-  alignmentData?: DirectorSummaryAlignmentData
+  alignmentData?: DirectorSummaryAlignmentData,
+  trimCodes?: (string | null)[]
 ): DirectorSummaryCellEvent {
   const sorted = [...dates].sort()
   const latestDate = sorted[sorted.length - 1] ?? ""
@@ -309,6 +354,7 @@ function toCellEvent(
     formattedDate: formatDirectorSummaryDate(latestDate, distinctDaysCount),
     distinctDaysCount,
     ...(alignmentData ? { alignmentData } : {}),
+    ...(trimCodes ? { trimCodes } : {}),
   }
 }
 
@@ -320,13 +366,17 @@ export function aggregateDirectorSummaryMatrix(
   spares: DirectorSummarySpareInput[],
   manualEvents: DirectorSummaryManualEventInput[],
   year: number,
-  month: number
+  month: number,
+  // When set, replaces the whole-month window with an exact inclusive range.
+  range: CustomDateRange | null = null
 ): DirectorSummaryMatrixResult {
   const groups = new Map<string, GroupAccumulator>()
+  const inWindow = (isoDate: string) =>
+    range ? isIsoDateInRange(isoDate, range) : isIsoDateInMonth(isoDate, year, month)
 
   for (const spare of spares) {
     const date = toCalendarDate(spare.date)
-    if (!date || isFutureCalendarDate(date) || !isIsoDateInMonth(date, year, month)) {
+    if (!date || isFutureCalendarDate(date) || !inWindow(date)) {
       continue
     }
     addOccurrence(
@@ -340,7 +390,7 @@ export function aggregateDirectorSummaryMatrix(
 
   for (const event of manualEvents) {
     const date = toCalendarDate(event.date)
-    if (!date || isFutureCalendarDate(date) || !isIsoDateInMonth(date, year, month)) {
+    if (!date || isFutureCalendarDate(date) || !inWindow(date)) {
       continue
     }
     const mapped = mapManualEvent(event.eventType)
@@ -351,7 +401,8 @@ export function aggregateDirectorSummaryMatrix(
       mapped.system,
       mapped.eventType,
       date,
-      alignmentDataFromEvent(event)
+      alignmentDataFromEvent(event),
+      trimCodesFromEvent(event)
     )
   }
 
@@ -363,7 +414,12 @@ export function aggregateDirectorSummaryMatrix(
       cells: emptyCells(),
     }
     row.cells[group.system].push(
-      toCellEvent(group.dates, group.eventType, group.alignmentData)
+      toCellEvent(
+        group.dates,
+        group.eventType,
+        group.alignmentData,
+        group.trimCodes
+      )
     )
     rowsByAsset.set(group.assetName, row)
   }
@@ -386,5 +442,5 @@ export function aggregateDirectorSummaryMatrix(
         })
     )
 
-  return { year, month, rows }
+  return { year, month, range, rows }
 }

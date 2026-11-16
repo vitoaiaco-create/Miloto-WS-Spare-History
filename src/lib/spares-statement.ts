@@ -1,6 +1,7 @@
 import { format } from "date-fns"
 
 import { formatIsoDate } from "@/lib/iso-date"
+import type { CustomDateRange } from "@/lib/report-date-range"
 import {
   normalizeSubEquipment,
   toCanonicalFleetNumber,
@@ -578,6 +579,54 @@ export function groupSparesByAsset(rows: StatementSpareRow[]): StatementGroup[] 
     })
 }
 
+// The workshop-event categories the statement summarises, in display order.
+export const STATEMENT_EVENT_CATEGORIES = [
+  "Wheel Alignment",
+  "Air System Check",
+  "Injector Trim Codes",
+] as const
+export type StatementEventCategory = (typeof STATEMENT_EVENT_CATEGORIES)[number]
+
+// Which reporting category a manual / workshop line belongs to, derived from
+// its material name (the stored outcome). Physical spares return null.
+export function statementEventCategory(
+  row: Pick<StatementSpareRow, "kind" | "materialName">
+): StatementEventCategory | null {
+  if (!isManualStatementRow(row)) return null
+
+  const name = row.materialName.trim().toUpperCase()
+  if (name.startsWith("WHEEL ALIGNMENT")) return "Wheel Alignment"
+  if (name.includes("AIR SYSTEM TEST")) return "Air System Check"
+  if (name.startsWith("INJECTOR TRIM CODES")) return "Injector Trim Codes"
+  return null
+}
+
+export type StatementEventCategorySummary = {
+  category: StatementEventCategory
+  events: number
+  assets: number
+  failed: number
+}
+
+// Per-category counts for the statement summary cards. Every category is
+// always returned (zeroed when empty) so the cards render in a stable layout.
+export function summarizeStatementEvents(
+  rows: Pick<StatementSpareRow, "kind" | "materialName" | "identityNo">[]
+): StatementEventCategorySummary[] {
+  return STATEMENT_EVENT_CATEGORIES.map((category) => {
+    const matching = rows.filter((row) => statementEventCategory(row) === category)
+    return {
+      category,
+      events: matching.length,
+      assets: new Set(matching.map((row) => statementAssetKey(row.identityNo)))
+        .size,
+      failed: matching.filter((row) =>
+        row.materialName.toUpperCase().includes("FAILED")
+      ).length,
+    }
+  })
+}
+
 export function statementTotals(rows: StatementSpareRow[]) {
   return {
     quantity: rows.reduce((sum, row) => sum + (row.quantity ?? 0), 0),
@@ -590,15 +639,23 @@ export function sparesStatementHref({
   assetType = "All",
   assetIds = [],
   fleetNo = "",
+  customRange = null,
 }: {
   period?: string
   assetType?: StatementAssetScope
   assetIds?: string[]
   fleetNo?: string
+  // A custom range overrides `period` on the server, so it is only carried
+  // across when the caller explicitly keeps it.
+  customRange?: CustomDateRange | null
 } = {}) {
   const params = new URLSearchParams()
   params.set("statement", "1")
   params.set("period", period)
+  if (customRange) {
+    params.set("from", customRange.from)
+    params.set("to", customRange.to)
+  }
   params.set("assetType", assetType)
   const ids = parseStatementAssetIds([...assetIds, fleetNo])
   for (const id of ids) params.append("fleetNo", id)

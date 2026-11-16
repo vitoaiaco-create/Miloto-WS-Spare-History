@@ -19,6 +19,7 @@ import {
 } from "@/lib/analytics-period"
 import { getDirectorSummaryMatrix } from "@/lib/director-summary-matrix-data"
 import { formatIsoDate, toIsoDateParam } from "@/lib/iso-date"
+import { parseCustomDateRange } from "@/lib/report-date-range"
 import { cn } from "@/lib/utils"
 import {
   getDistinctSubEquipmentValues,
@@ -108,7 +109,16 @@ export default async function SparesHistoryPage({
   const statementAssetIds = parseStatementAssetIds(
     resolvedSearchParams.fleetNo
   )
-  const statementRange = statementDateRange(statementPeriod, new Date())
+  // `?from=&to=` (both valid) overrides the Monthly / MTD period for the
+  // Executive Statement and the Director's Summary; otherwise it is null and
+  // the existing period logic applies.
+  const customRange = parseCustomDateRange(
+    resolvedSearchParams.from,
+    resolvedSearchParams.to
+  )
+  const statementRange = customRange
+    ? { startDate: customRange.from, endDate: customRange.to }
+    : statementDateRange(statementPeriod, new Date())
 
   const excludeFrom = toIsoDateParam(
     toFilterString(resolvedSearchParams.excludeFrom)
@@ -167,7 +177,8 @@ export default async function SparesHistoryPage({
       directorSummaryEnabled
         ? getDirectorSummaryMatrix(
             directorSummaryPeriod.year,
-            directorSummaryPeriod.month
+            directorSummaryPeriod.month,
+            customRange
           )
         : Promise.resolve(null),
     ])
@@ -249,11 +260,12 @@ export default async function SparesHistoryPage({
 
         {statementEnabled ? (
           <SparesStatementView
-            key={`${statementPeriod}-${statementAssetType}`}
+            key={`${statementPeriod}-${statementAssetType}-${customRange?.from ?? ""}-${customRange?.to ?? ""}`}
             spares={statementSpares}
             period={statementPeriod}
             startDate={statementRange.startDate}
             endDate={statementRange.endDate}
+            customRange={customRange}
             assetType={statementAssetType}
             assetIds={statementAssetIds}
             assets={statementAssets}

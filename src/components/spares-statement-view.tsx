@@ -15,6 +15,8 @@ import {
   savePartDescriptionAlias,
 } from "@/actions/spares-statement"
 import { AddManualEventDialog } from "@/components/add-manual-event-dialog"
+import { CustomDateRangePicker } from "@/components/custom-date-range-picker"
+import { StatementEventSummary } from "@/components/statement-event-summary"
 import { SparesStatementTable } from "@/components/spares-table"
 import { Button } from "@/components/ui/button"
 import {
@@ -56,6 +58,10 @@ import {
 } from "@/lib/spares-statement-export"
 import type { SparesHistoryRow } from "@/lib/spares-history"
 import {
+  formatCustomDateRange,
+  type CustomDateRange,
+} from "@/lib/report-date-range"
+import {
   applyStatementPreviewFilters,
   formatStatementDate,
   isManualStatementRow,
@@ -67,6 +73,7 @@ import {
   statementPeriodOptions,
   statementScopeLabel,
   sparesStatementHref,
+  summarizeStatementEvents,
   uniqueIdentityNos,
   type PartAliasMap,
   type StatementAssetOption,
@@ -79,6 +86,7 @@ export function SparesStatementView({
   period,
   startDate,
   endDate,
+  customRange,
   assetType,
   assetIds,
   assets,
@@ -89,6 +97,8 @@ export function SparesStatementView({
   period: string
   startDate: string
   endDate: string
+  // Validated `?from` / `?to`; overrides `period` when set.
+  customRange: CustomDateRange | null
   assetType: StatementAssetScope
   assetIds: string[]
   assets: StatementAssetOption[]
@@ -185,7 +195,13 @@ export function SparesStatementView({
     assetIds: scopedAssetIds,
     identityNos,
   })
-  const periodLabel = statementPeriodLabel(period, todayDate)
+  const periodLabel = customRange
+    ? `Custom range (${formatCustomDateRange(customRange)})`
+    : statementPeriodLabel(period, todayDate)
+  const eventSummary = useMemo(
+    () => summarizeStatementEvents(visibleSpares),
+    [visibleSpares]
+  )
   const dateRangeLabel = `${formatStatementDate(startDate)} to ${formatStatementDate(endDate)}`
   const componentLabel = statementComponentLabel(categories)
   const sortedExcludedAssets = useMemo(
@@ -213,6 +229,9 @@ export function SparesStatementView({
         period: next.period ?? period,
         assetType: nextType,
         assetIds: keepAssetIds,
+        // Picking a month returns to the monthly view; switching the asset
+        // group keeps whatever range is applied.
+        customRange: next.period ? null : customRange,
       }),
       { scroll: false }
     )
@@ -380,16 +399,18 @@ export function SparesStatementView({
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
             <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-              <Label htmlFor="statement-period">Date range</Label>
+              <Label htmlFor="statement-period">Period</Label>
               <Select
-                value={period}
+                value={customRange ? null : period}
                 onValueChange={(value) => {
                   if (!value) return
                   goTo({ period: value })
                 }}
               >
                 <SelectTrigger id="statement-period" className="w-full">
-                  <SelectValue placeholder="Select period" />
+                  <SelectValue
+                    placeholder={customRange ? "Custom range" : "Select period"}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {periodOptions.map((option) => (
@@ -400,6 +421,16 @@ export function SparesStatementView({
                 </SelectContent>
               </Select>
             </div>
+
+            <CustomDateRangePicker
+              from={customRange?.from}
+              to={customRange?.to}
+              // Keep chip selections that have not reached the URL yet.
+              transformParams={(params) => {
+                params.delete("fleetNo")
+                for (const id of scopedAssetIds) params.append("fleetNo", id)
+              }}
+            />
 
             <div className="flex min-w-0 flex-col gap-1.5">
               <Label>Asset group</Label>
@@ -558,6 +589,8 @@ export function SparesStatementView({
           </div>
         </CardContent>
       </Card>
+
+      <StatementEventSummary summary={eventSummary} />
 
       {excludedAssets.length > 0 ? (
         <div className="flex flex-col gap-3 rounded-lg border bg-card px-4 py-3 text-sm">
