@@ -342,7 +342,13 @@ export async function getTodayEvents(): Promise<WorkshopEventRow[]> {
     createdAt: event.createdAt,
     createdBy: event.createdBy,
     createdByName: names.get(event.createdBy) ?? event.createdBy,
-    canDelete: isAdmin || event.createdBy === userId,
+    // Mirrors `deleteWorkshopEvent`: admins may delete anything; the author
+    // only on the workshop day (Africa/Lusaka) the event was logged.
+    canDelete:
+      isAdmin ||
+      (event.createdBy === userId &&
+        event.createdAt >= start &&
+        event.createdAt < end),
   }))
 }
 

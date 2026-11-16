@@ -289,9 +289,9 @@ export type WorkshopEventRow = {
   // Display name of `createdBy`; falls back to the raw Clerk id when the
   // user can't be resolved.
   createdByName: string
-  // True when the current user may undo this event (admin or original
-  // author). Every row returned by `getTodayEvents` was created today.
-  canDelete: boolean
+  // True when the current user may delete this event: an admin, or the
+  // original author on the workshop day (Africa/Lusaka) it was logged.
+  canDelete?: boolean
 }
 
 // One asset's most recent event of the chosen category inside the window.

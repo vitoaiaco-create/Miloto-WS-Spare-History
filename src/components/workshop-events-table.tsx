@@ -2,10 +2,20 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2Icon, Trash2Icon } from "lucide-react"
+import { Loader2Icon, TrashIcon } from "lucide-react"
 
 import { deleteWorkshopEvent } from "@/actions/workshop-events"
 import { ComplianceStatusBadge } from "@/components/compliance-status-badge"
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Table,
@@ -24,33 +34,6 @@ import {
 } from "@/lib/workshop-events"
 
 export function WorkshopEventsTable({ events }: { events: WorkshopEventRow[] }) {
-  const router = useRouter()
-  const [pendingId, setPendingId] = useState<number | null>(null)
-
-  async function handleDelete(event: WorkshopEventRow) {
-    setPendingId(event.id)
-    try {
-      await deleteWorkshopEvent(event.id)
-      toast.add({
-        title: "Event removed",
-        description: `${event.eventCategory} for ${event.assetName} was deleted.`,
-        type: "success",
-      })
-      router.refresh()
-    } catch (error) {
-      toast.add({
-        title: "Could not delete event",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Something went wrong while deleting the event.",
-        type: "error",
-      })
-    } finally {
-      setPendingId(null)
-    }
-  }
-
   return (
     <Table>
       <TableHeader>
@@ -62,7 +45,7 @@ export function WorkshopEventsTable({ events }: { events: WorkshopEventRow[] }) 
           <TableHead>Category</TableHead>
           <TableHead>Outcome</TableHead>
           <TableHead>Logged by</TableHead>
-          <TableHead className="text-right">
+          <TableHead className="w-10 text-right">
             <span className="sr-only">Actions</span>
           </TableHead>
         </TableRow>
@@ -103,32 +86,100 @@ export function WorkshopEventsTable({ events }: { events: WorkshopEventRow[] }) 
                 </div>
               </TableCell>
               <TableCell>{event.createdByName}</TableCell>
-              <TableCell className="text-right">
-                {event.canDelete ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={pendingId !== null}
-                    onClick={() => handleDelete(event)}
-                    aria-label={`Delete ${event.eventCategory} for ${event.assetName}`}
-                  >
-                    {pendingId === event.id ? (
-                      <Loader2Icon
-                        data-icon="inline-start"
-                        className="animate-spin"
-                      />
-                    ) : (
-                      <Trash2Icon data-icon="inline-start" />
-                    )}
-                    Delete
-                  </Button>
-                ) : null}
+              <TableCell>
+                <div className="flex justify-end">
+                  {event.canDelete ? (
+                    <DeleteWorkshopEventDialog event={event} />
+                  ) : (
+                    // Same footprint as the icon-xs button so the actions
+                    // column doesn't shift.
+                    <span className="size-6" aria-hidden="true" />
+                  )}
+                </div>
               </TableCell>
             </TableRow>
           ))
         )}
       </TableBody>
     </Table>
+  )
+}
+
+function DeleteWorkshopEventDialog({ event }: { event: WorkshopEventRow }) {
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  const [pending, setPending] = useState(false)
+
+  async function handleConfirm() {
+    setPending(true)
+    try {
+      // Wait for the server action to confirm before closing the dialog.
+      await deleteWorkshopEvent(event.id)
+      toast.add({
+        title: "Event deleted",
+        description: `${event.eventCategory} for ${event.assetName} was removed from the compliance logs.`,
+        type: "success",
+      })
+      setOpen(false)
+      router.refresh()
+    } catch (error) {
+      toast.add({
+        title: "Could not delete event",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while deleting the event.",
+        type: "error",
+      })
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!pending) setOpen(next)
+      }}
+    >
+      <AlertDialogTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Delete ${event.eventCategory} for ${event.assetName}`}
+          />
+        }
+      >
+        <TrashIcon />
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete Event?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This will permanently remove this record from the compliance logs
+            and cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+          {/* A plain Button (not AlertDialogAction) so the dialog stays open
+              until the async deletion has finished. */}
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={pending}
+            onClick={() => void handleConfirm()}
+          >
+            {pending ? (
+              <Loader2Icon data-icon="inline-start" className="animate-spin" />
+            ) : null}
+            Delete
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
