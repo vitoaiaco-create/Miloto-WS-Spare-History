@@ -1,25 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import {
-  AlertTriangle,
-  Loader2Icon,
-  Pencil,
-  Trash2,
-  TrashIcon,
-} from "lucide-react"
+import { AlertTriangle, Loader2Icon, Pencil, Trash2 } from "lucide-react"
 
 import { EditAlignmentDialog } from "@/components/edit-alignment-dialog"
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -239,7 +223,6 @@ export function SparesStatementTable({
   aliases,
   onRemove,
   onDeleteManualEvent,
-  onDeleteWorkshopEvent,
   onExcludeAsset,
   onSaveAlias,
   emptyMessage = "No spare issues in this statement period.",
@@ -249,9 +232,6 @@ export function SparesStatementTable({
   aliases: PartAliasMap
   onRemove: (spare: { partNumber: string; materialName: string }) => void
   onDeleteManualEvent: (eventId: number) => void
-  // Resolves true once the event is deleted, false if it failed (the caller
-  // reports the error), so the confirmation dialog knows whether to close.
-  onDeleteWorkshopEvent: (eventId: number) => Promise<boolean>
   onExcludeAsset: (assetName: string) => void
   onSaveAlias: (sourceName: string, alias: string) => Promise<void>
   emptyMessage?: string
@@ -359,21 +339,9 @@ export function SparesStatementTable({
                             outOfSquareAxle3={spare.outOfSquareAxle3}
                           />
                         ) : null}
-                        {/* Workshop event ids belong to workshop_events, not
-                            manual events, so they take their own delete flow. */}
-                        {spare.kind === "workshop" ? (
-                          spare.canDelete ? (
-                            <DeleteWorkshopEventDialog
-                              eventId={spare.id}
-                              label={spare.materialName}
-                              onConfirm={onDeleteWorkshopEvent}
-                            />
-                          ) : (
-                            // Same footprint as the icon-xs button so the
-                            // actions column doesn't shift.
-                            <span className="size-6" aria-hidden="true" />
-                          )
-                        ) : (
+                        {/* Workshop events are undone from the Workshop
+                            Events page; their ids aren't manual event ids. */}
+                        {spare.kind === "workshop" ? null : (
                           <Tooltip>
                             <TooltipTrigger
                               render={
@@ -484,80 +452,9 @@ function StatementColumnHeaders() {
       <TableHead className="text-right">Qty</TableHead>
       <TableHead className="text-right">Amount</TableHead>
       <TableHead className="w-10 print:hidden">
-        <span className="sr-only">Actions</span>
+        <span className="sr-only">Remove</span>
       </TableHead>
     </TableRow>
-  )
-}
-
-function DeleteWorkshopEventDialog({
-  eventId,
-  label,
-  onConfirm,
-}: {
-  eventId: number
-  label: string
-  onConfirm: (eventId: number) => Promise<boolean>
-}) {
-  const [open, setOpen] = useState(false)
-  const [pending, setPending] = useState(false)
-
-  async function handleConfirm() {
-    setPending(true)
-    try {
-      // Wait for the deletion to finish before closing the dialog.
-      const deleted = await onConfirm(eventId)
-      if (deleted) setOpen(false)
-    } finally {
-      setPending(false)
-    }
-  }
-
-  return (
-    <AlertDialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!pending) setOpen(next)
-      }}
-    >
-      <AlertDialogTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label={`Permanently delete ${label}`}
-          />
-        }
-      >
-        <TrashIcon />
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete Event?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This will permanently remove this record from the compliance logs
-            and cannot be undone.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-          {/* A plain Button (not AlertDialogAction) so the dialog stays open
-              until the async deletion has finished. */}
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={pending}
-            onClick={() => void handleConfirm()}
-          >
-            {pending ? (
-              <Loader2Icon data-icon="inline-start" className="animate-spin" />
-            ) : null}
-            Delete
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
   )
 }
 

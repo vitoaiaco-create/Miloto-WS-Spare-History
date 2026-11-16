@@ -167,10 +167,7 @@ export default async function SparesHistoryPage({
         ? getStatementManualEvents(filters)
         : Promise.resolve([]),
       statementEnabled
-        ? getStatementWorkshopEvents(filters, {
-            userId,
-            role: sessionClaims?.metadata?.role,
-          })
+        ? getStatementWorkshopEvents(filters)
         : Promise.resolve([]),
       statementEnabled ? getStatementAssets() : Promise.resolve([]),
       statementEnabled ? getPartDescriptionAliases() : Promise.resolve({}),
