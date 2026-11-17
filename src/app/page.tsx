@@ -3,6 +3,7 @@ import {
   BarChart3,
   ClipboardCheck,
   Droplets,
+  Gavel,
   PackageSearch,
   ShieldCheck,
   TrendingUp,
@@ -188,6 +189,28 @@ export default async function Home() {
                     <CardDescription className="text-sm leading-relaxed">
                       Cross-check which units are missing alignments or air
                       system checks. Admins only.
+                    </CardDescription>
+                  </CardContent>
+                </Card>
+              </Link>
+            )}
+
+            {!isOilsOnly && isAdmin && (
+              <Link href="/hr/disciplinary">
+                <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                  <CardHeader>
+                    <Gavel
+                      className="mb-2 size-6 text-foreground"
+                      strokeWidth={1.75}
+                    />
+                    <CardTitle className="text-lg">
+                      Automated HR Charges
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription className="text-sm leading-relaxed">
+                      Analyze a charge summary against the Disciplinary Code
+                      and generate Notices of Charge and Penalty. Admins only.
                     </CardDescription>
                   </CardContent>
                 </Card>
