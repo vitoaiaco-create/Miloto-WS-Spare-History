@@ -31,6 +31,13 @@ export const disciplinaryDataSchema = z.object({
 
 export type DisciplinaryData = z.infer<typeof disciplinaryDataSchema>
 
+// Plain-object result returned by the `generateDisciplinaryData` Server Action.
+// Errors are returned (never thrown) so no Error instance crosses the
+// Client/Server boundary.
+export type GenerateDisciplinaryResult =
+  | { success: true; data: DisciplinaryData }
+  | { success: false; error: string }
+
 export const EMPTY_DISCIPLINARY_DATA: DisciplinaryData = {
   driver_name: "",
   employee_no: "",

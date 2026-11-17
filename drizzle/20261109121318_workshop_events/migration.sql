@@ -1,4 +1,5 @@
-CREATE TABLE "workshop_events" (
+-- Made idempotent in case the table was already created out-of-band.
+CREATE TABLE IF NOT EXISTS "workshop_events" (
 	"id" serial PRIMARY KEY,
 	"asset_id" integer NOT NULL,
 	"event_category" varchar(50) NOT NULL,
@@ -7,4 +8,7 @@ CREATE TABLE "workshop_events" (
 	"created_by" text NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "workshop_events" ADD CONSTRAINT "workshop_events_asset_id_assets_id_fkey" FOREIGN KEY ("asset_id") REFERENCES "assets"("id") ON DELETE CASCADE;
+DO $$ BEGIN
+	ALTER TABLE "workshop_events" ADD CONSTRAINT "workshop_events_asset_id_assets_id_fkey" FOREIGN KEY ("asset_id") REFERENCES "assets"("id") ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

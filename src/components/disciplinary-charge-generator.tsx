@@ -98,11 +98,29 @@ export function DisciplinaryChargeGenerator() {
     try {
       const base64 = await readAsBase64(file)
       setPreviewUrl(`data:${file.type};base64,${base64}`)
-      setData(await generateDisciplinaryData(base64))
+      // Only the plain base64 string crosses the boundary (no File/Event).
+      const result = await generateDisciplinaryData(base64)
+      if (result.success) {
+        setData(result.data)
+      } else {
+        setError(result.error)
+        toast.add({
+          title: "Could not analyze the image",
+          description: result.error,
+          type: "error",
+        })
+      }
     } catch (err) {
-      setError(
+      // Network failures / unexpected rejections only; action errors are
+      // returned as `{ success: false, error }`.
+      const message =
         err instanceof Error ? err.message : "Could not analyze the image."
-      )
+      setError(message)
+      toast.add({
+        title: "Could not analyze the image",
+        description: message,
+        type: "error",
+      })
     } finally {
       setIsAnalyzing(false)
     }
