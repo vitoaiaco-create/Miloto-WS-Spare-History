@@ -70,7 +70,13 @@ function readAsBase64(file: File) {
   })
 }
 
-export function DisciplinaryChargeGenerator() {
+export function DisciplinaryChargeGenerator({
+  onCaseLogged,
+}: {
+  // Fired right after `logDisciplinaryCase` succeeds so a parent can refresh
+  // its cases list.
+  onCaseLogged?: () => void
+} = {}) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -206,6 +212,7 @@ export function DisciplinaryChargeGenerator() {
         },
       })
       if (result.success) {
+        onCaseLogged?.()
         toast.add({
           title: "Case logged",
           description: `${caseRef} was logged to the Kanban tracker.`,
