@@ -7,6 +7,7 @@ import { DisciplinaryAttachmentsModal } from "@/components/disciplinary-attachme
 import { DisciplinaryChargeGenerator } from "@/components/disciplinary-charge-generator"
 import { DisciplinaryHistoryTable } from "@/components/disciplinary-history-table"
 import { DisciplinaryKanban } from "@/components/disciplinary-kanban"
+import { DisciplinaryPdfExportButton } from "@/components/disciplinary-pdf-export-button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -111,6 +112,7 @@ export function DisciplinaryWorkspace({
           <DisciplinaryKanban
             cases={cases}
             actions={actions}
+            headerSlot={<DisciplinaryPdfExportButton cases={cases} />}
             onOpenSignedDocs={openSignedDocs}
           />
         </TabsContent>
@@ -119,6 +121,7 @@ export function DisciplinaryWorkspace({
           <DisciplinaryHistoryTable
             cases={cases}
             actions={actions}
+            headerSlot={<DisciplinaryPdfExportButton cases={cases} />}
             onOpenSignedDocs={openSignedDocs}
           />
         </TabsContent>
