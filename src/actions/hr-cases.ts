@@ -1,15 +1,17 @@
 "use server"
 
-import { auth } from "@clerk/nextjs/server"
+import { del } from "@vercel/blob"
 import { eq } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 
 import { db } from "@/db"
 import {
-  HR_DISCIPLINARY_STATUSES,
+  hrDisciplinaryAttachmentsTable,
   hrDisciplinaryCasesTable,
 } from "@/db/schema"
+import { requireAdmin } from "@/lib/hr-admin-auth"
+import { HR_DISCIPLINARY_STATUSES } from "@/lib/hr-disciplinary"
 
 // Every action resolves to a plain `{ success, ... }` object. Raw Error
 // instances must never cross the Server -> Client boundary.
@@ -66,16 +68,6 @@ const updateDisciplinaryCaseSchema = z
 export type UpdateDisciplinaryCaseInput = z.infer<
   typeof updateDisciplinaryCaseSchema
 >
-
-// Verifies a Clerk session with the admin role (matches the page-level gate
-// and `generateDisciplinaryData`). Throws; callers catch and convert to a
-// plain error result.
-async function requireAdmin() {
-  const { userId, sessionClaims } = await auth()
-  if (!userId) throw new Error("Unauthorized")
-  if (sessionClaims?.metadata?.role !== "admin") throw new Error("Forbidden")
-  return userId
-}
 
 function toErrorMessage(error: unknown) {
   if (error instanceof z.ZodError) {
@@ -197,6 +189,17 @@ export async function deleteDisciplinaryCase(
   try {
     await requireAdmin()
     const caseId = caseIdSchema.parse(id)
+
+    // The attachment rows cascade away with the case, but the Blob objects
+    // do not — remove them first. If this throws, the case is left intact so
+    // the delete can simply be retried (no orphaned blobs, no dangling rows).
+    const attachments = await db
+      .select({ blobUrl: hrDisciplinaryAttachmentsTable.blobUrl })
+      .from(hrDisciplinaryAttachmentsTable)
+      .where(eq(hrDisciplinaryAttachmentsTable.caseId, caseId))
+    if (attachments.length > 0) {
+      await del(attachments.map((a) => a.blobUrl))
+    }
 
     const [row] = await db
       .delete(hrDisciplinaryCasesTable)

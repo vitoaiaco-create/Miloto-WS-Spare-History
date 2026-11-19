@@ -2,12 +2,10 @@ import { format } from "date-fns"
 
 import type { DisciplinaryCaseWithAttachments } from "@/actions/hr-cases"
 import {
-  HR_DISCIPLINARY_STATUSES,
-  type HrDisciplinaryStatus,
-} from "@/db/schema"
-import {
   EMPTY_DISCIPLINARY_DATA,
+  HR_DISCIPLINARY_STATUSES,
   type DisciplinaryData,
+  type HrDisciplinaryStatus,
 } from "@/lib/hr-disciplinary"
 
 export { HR_DISCIPLINARY_STATUSES }

@@ -17,6 +17,11 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
+import {
+  HR_DISCIPLINARY_STATUSES,
+  type HrDisciplinaryStatus,
+} from "../lib/hr-disciplinary";
+
 // Heavy transport units (e.g. prime movers, trailers) in the fleet.
 export const assetsTable = pgTable("assets", {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
@@ -586,15 +591,12 @@ export const tireIncidentsTable = pgTable("tire_incidents", {
   notes: text("notes"),
 });
 
-// Allowed `hr_disciplinary_cases.status` values. Enforced by Zod in the
-// Server Actions; the column itself is plain text.
-export const HR_DISCIPLINARY_STATUSES = [
-  "AWAITING_SIGNATURE",
-  "DISPUTED",
-  "CLOSED",
-] as const;
-
-export type HrDisciplinaryStatus = (typeof HR_DISCIPLINARY_STATUSES)[number];
+// Allowed `hr_disciplinary_cases.status` values live in the client-safe
+// src/lib/hr-disciplinary.ts so Client Components never import this schema.
+// Re-exported for server code that still imports them from here. (Relative
+// path: drizzle-kit loads this file without the `@/` alias.)
+export { HR_DISCIPLINARY_STATUSES };
+export type { HrDisciplinaryStatus };
 
 // Automated HR Charges: one row per disciplinary case generated from a
 // charge screenshot. Shared across all staff (admin-gated at the page level).

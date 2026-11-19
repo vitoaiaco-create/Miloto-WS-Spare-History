@@ -1,5 +1,33 @@
 import { z } from "zod"
 
+// Allowed `hr_disciplinary_cases.status` values. Lives here (not in
+// src/db/schema.ts) so Client Components can import it without pulling the
+// Drizzle schema into the browser bundle. The DB column is plain text;
+// Zod enforces these values in the Server Actions.
+export const HR_DISCIPLINARY_STATUSES = [
+  "AWAITING_SIGNATURE",
+  "DISPUTED",
+  "CLOSED",
+] as const
+
+export type HrDisciplinaryStatus = (typeof HR_DISCIPLINARY_STATUSES)[number]
+
+// Labels a signed document can be filed under (`hr_disciplinary_attachments
+// .doc_label`). Shared by the upload route's Zod validation and the modal.
+export const HR_ATTACHMENT_DOC_LABELS = [
+  "Signed Notice of Charge",
+  "Signed Notice of Penalty",
+  "Dispute Statement",
+  "Other",
+] as const
+
+export type HrAttachmentDocLabel = (typeof HR_ATTACHMENT_DOC_LABELS)[number]
+
+// Upload limits. 4.5 MB is Vercel's request-body limit for functions, so it
+// is enforced per file both in the browser and in the upload route.
+export const HR_ATTACHMENT_MAX_BYTES = 4.5 * 1024 * 1024
+export const HR_ATTACHMENT_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"] as const
+
 // The exact set of fields shared by the AI output, the review form and the
 // `{{ }}` tags in the Word templates (MILOTO CHARGE FORM AI.docx and
 // MILOTO PENALTY FORM AI.docx). Keep all three in sync.

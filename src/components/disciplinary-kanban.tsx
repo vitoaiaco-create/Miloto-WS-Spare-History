@@ -327,7 +327,7 @@ export function DisciplinaryKanban({
   actions: DisciplinaryCaseActions
   // Reserved for the "Export HR Report (PDF)" button.
   headerSlot?: ReactNode
-  // Wired to the Signed Docs modal in the next step.
+  // Opens the Signed Documents modal (see disciplinary-workspace.tsx).
   onOpenSignedDocs?: (caseItem: DisciplinaryCase) => void
 }) {
   const now = useNow()

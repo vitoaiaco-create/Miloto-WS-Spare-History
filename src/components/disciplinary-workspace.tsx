@@ -1,8 +1,9 @@
-"use client"
+﻿"use client"
 
 import { useCallback, useState } from "react"
 
 import { getDisciplinaryCases } from "@/actions/hr-cases"
+import { DisciplinaryAttachmentsModal } from "@/components/disciplinary-attachments-modal"
 import { DisciplinaryChargeGenerator } from "@/components/disciplinary-charge-generator"
 import { DisciplinaryHistoryTable } from "@/components/disciplinary-history-table"
 import { DisciplinaryKanban } from "@/components/disciplinary-kanban"
@@ -27,6 +28,7 @@ export function DisciplinaryWorkspace({
 }) {
   const [tab, setTab] = useState<TabValue>("generate")
   const [cases, setCases] = useState(initialCases)
+  const [docsCaseId, setDocsCaseId] = useState<number | null>(null)
   const actions = useDisciplinaryCaseActions(setCases)
 
   const refreshCases = useCallback(async () => {
@@ -50,6 +52,16 @@ export function DisciplinaryWorkspace({
       })
     }
   }, [])
+
+  // Keyed by id (not the case object) so the modal always shows the latest
+  // attachments after `refreshCases` replaces the list. Closes itself if the
+  // case disappears.
+  const docsCase =
+    docsCaseId === null ? null : (cases.find((c) => c.id === docsCaseId) ?? null)
+
+  function openSignedDocs(caseItem: DisciplinaryCase) {
+    setDocsCaseId(caseItem.id)
+  }
 
   function handleTabChange(value: unknown) {
     if (value !== "generate" && value !== "kanban" && value !== "history") {
@@ -96,13 +108,29 @@ export function DisciplinaryWorkspace({
         </TabsContent>
 
         <TabsContent value="kanban">
-          <DisciplinaryKanban cases={cases} actions={actions} />
+          <DisciplinaryKanban
+            cases={cases}
+            actions={actions}
+            onOpenSignedDocs={openSignedDocs}
+          />
         </TabsContent>
 
         <TabsContent value="history">
-          <DisciplinaryHistoryTable cases={cases} actions={actions} />
+          <DisciplinaryHistoryTable
+            cases={cases}
+            actions={actions}
+            onOpenSignedDocs={openSignedDocs}
+          />
         </TabsContent>
       </Tabs>
+
+      {docsCase && (
+        <DisciplinaryAttachmentsModal
+          caseItem={docsCase}
+          onClose={() => setDocsCaseId(null)}
+          onChanged={refreshCases}
+        />
+      )}
     </div>
   )
 }
