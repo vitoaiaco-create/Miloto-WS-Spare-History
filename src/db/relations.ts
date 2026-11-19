@@ -192,6 +192,21 @@ export const relations = defineRelations(schema, (r) => ({
       optional: false,
     }),
   },
+  hrDisciplinaryCasesTable: {
+    attachments: r.many.hrDisciplinaryAttachmentsTable({
+      from: r.hrDisciplinaryCasesTable.id,
+      to: r.hrDisciplinaryAttachmentsTable.caseId,
+    }),
+  },
+  hrDisciplinaryAttachmentsTable: {
+    // `caseId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so an
+    // attachment can never exist without its case.
+    case: r.one.hrDisciplinaryCasesTable({
+      from: r.hrDisciplinaryAttachmentsTable.caseId,
+      to: r.hrDisciplinaryCasesTable.id,
+      optional: false,
+    }),
+  },
   unmappedSparesStagingTable: {
     // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so a
     // staged row can never exist without its asset.

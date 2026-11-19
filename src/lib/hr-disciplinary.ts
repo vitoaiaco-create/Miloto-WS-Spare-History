@@ -15,11 +15,20 @@ export const DISCIPLINARY_FIELDS = [
 
 export type DisciplinaryField = (typeof DISCIPLINARY_FIELDS)[number]
 
+// Extra identifiers extracted from the charge screenshot for case tracking
+// (`hr_disciplinary_cases.case_ref` / `.fleet_id`). They are NOT template
+// tags — the Word templates only use `DISCIPLINARY_FIELDS` above.
+export const DISCIPLINARY_CASE_FIELDS = ["case_ref", "fleet_id"] as const
+
+export type DisciplinaryCaseField = (typeof DISCIPLINARY_CASE_FIELDS)[number]
+
 // The model sometimes returns numbers (e.g. a bare penalty amount), so coerce
 // every field to a string.
 const textField = z.coerce.string().trim()
 
 export const disciplinaryDataSchema = z.object({
+  case_ref: textField,
+  fleet_id: textField,
   driver_name: textField,
   employee_no: textField,
   date: textField,
@@ -39,6 +48,8 @@ export type GenerateDisciplinaryResult =
   | { success: false; error: string }
 
 export const EMPTY_DISCIPLINARY_DATA: DisciplinaryData = {
+  case_ref: "",
+  fleet_id: "",
   driver_name: "",
   employee_no: "",
   date: "",

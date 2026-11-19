@@ -52,7 +52,7 @@ export async function generateDisciplinaryData(
 OFFICIAL DISCIPLINARY CODE:
 ${MILOTO_DISCIPLINARY_CODE}
 
-STEP 1: Extract driver_name, employee_no, and date from the image. Auto-Correct Rule: If the employee_no starts with 'M' (e.g., M121), replace the 'M' with 'D' (e.g., D121). 
+STEP 1: Extract driver_name, employee_no, date, case_ref (the Case ref), and fleet_id (the Fleet ID) from the image. Auto-Correct Rule: If the employee_no starts with 'M' (e.g., M121), replace the 'M' with 'D' (e.g., D121). 
 STEP 2: Analyze the incident_description. You MUST write a comprehensive, expansive, and highly technical paragraph (at least 3 to 4 sentences). Do NOT write a short summary. 
 - Expand heavily on the mechanical failure and the specific component damaged.
 - Assert the likely negligent cause with absolute certainty (e.g., 'This specific component failure is a direct consequence of operational negligence, most likely arising from traversing uneven terrain or potholes at excessive speeds, which imparts extreme shearing force...').
@@ -61,7 +61,7 @@ Tone: Formal, technical, accusatory, and legally authoritative. Assign this long
 STEP 3: Identify ALL applicable disciplinary clauses STRICTLY based on the OFFICIAL DISCIPLINARY CODE. Format exactly as: 'Clause [Number]: [Title]\n'. Assign to 'formatted_charges'.
 STEP 4: Extract penalty_amount. Set deduction_clause to: 'Since you have not replied or admitted guilt, the Company has no other option but to recoup the losses by deducting from your wages.'
 
-Output strictly as JSON matching this schema: { driver_name: string, employee_no: string, date: string, incident_details: string, formatted_charges: string, penalty_amount: string, deduction_clause: string }`
+Output strictly as JSON matching this schema: { case_ref: string, fleet_id: string, driver_name: string, employee_no: string, date: string, incident_details: string, formatted_charges: string, penalty_amount: string, deduction_clause: string }`
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -106,6 +106,8 @@ Output strictly as JSON matching this schema: { driver_name: string, employee_no
     return {
       success: true,
       data: {
+        case_ref: data.case_ref,
+        fleet_id: data.fleet_id,
         driver_name: data.driver_name,
         employee_no: data.employee_no.replace(/^M(?=\d)/i, "D"),
         date: data.date,

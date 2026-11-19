@@ -24,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import { generateDisciplinaryDocx } from "@/lib/disciplinary-docx"
 import {
+  type DisciplinaryCaseField,
   type DisciplinaryData,
   type DisciplinaryField,
   type DisciplinaryTemplateKey,
@@ -34,12 +35,14 @@ const ACCEPTED_TYPES = ["image/jpeg", "image/png"]
 const MAX_FILE_BYTES = 7 * 1024 * 1024
 
 type FieldConfig = {
-  name: DisciplinaryField
+  name: DisciplinaryField | DisciplinaryCaseField
   label: string
   multiline?: boolean
 }
 
 const FIELDS: FieldConfig[] = [
+  { name: "case_ref", label: "Case Ref" },
+  { name: "fleet_id", label: "Fleet ID" },
   { name: "driver_name", label: "Driver name" },
   { name: "employee_no", label: "Employee no." },
   { name: "date", label: "Date" },
@@ -139,7 +142,10 @@ export function DisciplinaryChargeGenerator() {
     void processFile(event.dataTransfer.files?.[0])
   }
 
-  function updateField(name: DisciplinaryField, value: string) {
+  function updateField(
+    name: DisciplinaryField | DisciplinaryCaseField,
+    value: string
+  ) {
     setData((current) => (current ? { ...current, [name]: value } : current))
   }
 

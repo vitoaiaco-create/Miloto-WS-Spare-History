@@ -4,6 +4,7 @@ import {
   check,
   date,
   integer,
+  jsonb,
   numeric,
   pgEnum,
   pgTable,
@@ -584,3 +585,60 @@ export const tireIncidentsTable = pgTable("tire_incidents", {
   penaltyPoints: integer("penalty_points").notNull(),
   notes: text("notes"),
 });
+
+// Allowed `hr_disciplinary_cases.status` values. Enforced by Zod in the
+// Server Actions; the column itself is plain text.
+export const HR_DISCIPLINARY_STATUSES = [
+  "AWAITING_SIGNATURE",
+  "DISPUTED",
+  "CLOSED",
+] as const;
+
+export type HrDisciplinaryStatus = (typeof HR_DISCIPLINARY_STATUSES)[number];
+
+// Automated HR Charges: one row per disciplinary case generated from a
+// charge screenshot. Shared across all staff (admin-gated at the page level).
+// `documentPayload` stores the 7 docxtemplater template fields (driver_name,
+// employee_no, date, incident_details, formatted_charges, penalty_amount,
+// deduction_clause) so the .docx files can be re-generated and re-downloaded
+// later. `createdBy` is audit-only (Clerk user id).
+export const hrDisciplinaryCasesTable = pgTable("hr_disciplinary_cases", {
+  id: serial("id").primaryKey(),
+  caseRef: text("case_ref").notNull().unique(),
+  fleetId: text("fleet_id").notNull(),
+  employeeNo: text("employee_no").notNull(),
+  driverName: text("driver_name").notNull(),
+  status: text("status")
+    .$type<HrDisciplinaryStatus>()
+    .notNull()
+    .default("AWAITING_SIGNATURE"),
+  generatedAt: timestamp("generated_at").notNull().defaultNow(),
+  closedAt: timestamp("closed_at"),
+  disputeNote: text("dispute_note"),
+  documentPayload: jsonb("document_payload")
+    .$type<Record<string, string>>()
+    .notNull(),
+  createdBy: text("created_by"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Signed paperwork / dispute statements uploaded against a case. Files live
+// in blob storage; this table only keeps the pointers and metadata.
+export const hrDisciplinaryAttachmentsTable = pgTable(
+  "hr_disciplinary_attachments",
+  {
+    id: serial("id").primaryKey(),
+    caseId: integer("case_id")
+      .notNull()
+      .references(() => hrDisciplinaryCasesTable.id, { onDelete: "cascade" }),
+    fileName: text("file_name").notNull(),
+    // e.g. 'Signed Notice of Charge', 'Signed Notice of Penalty',
+    // 'Dispute Statement' or 'Other'.
+    docLabel: text("doc_label").notNull(),
+    blobPathname: text("blob_pathname").notNull(),
+    blobUrl: text("blob_url").notNull(),
+    contentType: text("content_type").notNull(),
+    fileSize: integer("file_size").notNull(),
+    uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
+  }
+);
