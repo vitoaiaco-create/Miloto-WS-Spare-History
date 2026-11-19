@@ -9,6 +9,7 @@ import {
 import { FileTextIcon, ImageUpIcon, Loader2Icon } from "lucide-react"
 
 import { generateDisciplinaryData } from "@/actions/hr-automation"
+import { logDisciplinaryCase } from "@/actions/hr-cases"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -151,6 +152,21 @@ export function DisciplinaryChargeGenerator() {
 
   async function handleGenerate(template: DisciplinaryTemplateKey) {
     if (!data) return
+
+    const caseRef = data.case_ref.trim()
+    const fleetId = data.fleet_id.trim()
+    if (!caseRef || !fleetId) {
+      const missing = [!caseRef && "Case Ref", !fleetId && "Fleet ID"]
+        .filter(Boolean)
+        .join(" and ")
+      toast.add({
+        title: "Missing case details",
+        description: `${missing} must be filled in before generating a document.`,
+        type: "error",
+      })
+      return
+    }
+
     setGenerating(template)
     try {
       await generateDisciplinaryDocx(template, data)
@@ -166,8 +182,49 @@ export function DisciplinaryChargeGenerator() {
           err instanceof Error ? err.message : "Something went wrong.",
         type: "error",
       })
+      return
     } finally {
       setGenerating(null)
+    }
+
+    // Log the case right after the download. A logging failure must never
+    // undo or block the file the admin already has.
+    try {
+      const result = await logDisciplinaryCase({
+        caseRef,
+        fleetId,
+        employeeNo: data.employee_no.trim(),
+        driverName: data.driver_name.trim(),
+        documentPayload: {
+          driver_name: data.driver_name,
+          employee_no: data.employee_no,
+          date: data.date,
+          incident_details: data.incident_details,
+          formatted_charges: data.formatted_charges,
+          penalty_amount: data.penalty_amount,
+          deduction_clause: data.deduction_clause,
+        },
+      })
+      if (result.success) {
+        toast.add({
+          title: "Case logged",
+          description: `${caseRef} was logged to the Kanban tracker.`,
+          type: "success",
+        })
+      } else {
+        toast.add({
+          title: "Could not log case",
+          description: result.error,
+          type: "error",
+        })
+      }
+    } catch (err) {
+      toast.add({
+        title: "Could not log case",
+        description:
+          err instanceof Error ? err.message : "Something went wrong.",
+        type: "error",
+      })
     }
   }
 
