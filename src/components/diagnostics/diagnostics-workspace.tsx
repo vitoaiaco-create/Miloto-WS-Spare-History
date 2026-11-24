@@ -2,18 +2,12 @@
 
 import { useRouter } from "next/navigation"
 import { useCallback, useMemo, useState } from "react"
-import { format } from "date-fns"
-import { X } from "lucide-react"
 
-import {
-  SeverityBadge,
-  WorkflowStatusBadge,
-} from "@/components/diagnostics/diagnostics-badges"
 import { FleetCoverageView } from "@/components/diagnostics/fleet-coverage-view"
 import { FleetFaultIntelligence } from "@/components/diagnostics/fleet-fault-intelligence"
 import { NewPttScanPanel } from "@/components/diagnostics/new-ptt-scan-panel"
+import { PttDirectiveModal } from "@/components/diagnostics/ptt-directive-modal"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -47,8 +41,16 @@ export function DiagnosticsWorkspace({
   const router = useRouter()
   const [tab, setTab] = useState<TabValue>("coverage")
   const [scanFleetId, setScanFleetId] = useState<string | null>(null)
-  // Ready for the Executive Directive modal: it will read this state.
-  const [selectedSession, setSelectedSession] =
+  // Bumped on every "Scan Truck" click so the panel re-applies the truck even
+  // when the same one is clicked twice.
+  const [scanToken, setScanToken] = useState(0)
+  // The modal tracks a session id (not the row) so it always shows the latest
+  // server data after `router.refresh()`.
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(
+    null
+  )
+  // A just-created scan, shown until the refreshed `sessions` prop includes it.
+  const [createdSession, setCreatedSession] =
     useState<PttSessionWithRelations | null>(null)
 
   const latestByFleet = useMemo(
@@ -82,29 +84,59 @@ export function DiagnosticsWorkspace({
     }
   }, [rosterFleetIds, latestByFleet])
 
+  const selectedSession = useMemo(() => {
+    if (selectedSessionId === null) return null
+    return (
+      sessions.find((session) => session.id === selectedSessionId) ??
+      (createdSession?.id === selectedSessionId ? createdSession : null)
+    )
+  }, [sessions, selectedSessionId, createdSession])
+
+  // Every scan of the selected truck, newest first, for the history selector.
+  const selectedFleetSessions = useMemo(() => {
+    if (!selectedSession) return []
+    const fleetId = normalizeFleetId(selectedSession.fleetId)
+    const all =
+      sessions.some((session) => session.id === selectedSession.id)
+        ? sessions
+        : [selectedSession, ...sessions]
+    return all.filter((session) => normalizeFleetId(session.fleetId) === fleetId)
+  }, [sessions, selectedSession])
+
   const openDirective = useCallback((session: PttSessionWithRelations) => {
-    setSelectedSession(session)
+    setSelectedSessionId(session.id)
   }, [])
 
   const openFleetDirective = useCallback(
     (fleetId: string) => {
       const latest = latestByFleet.get(normalizeFleetId(fleetId))
-      if (latest) setSelectedSession(latest)
+      if (latest) setSelectedSessionId(latest.id)
     },
     [latestByFleet]
   )
 
+  const closeDirective = useCallback(() => {
+    setSelectedSessionId(null)
+    setCreatedSession(null)
+  }, [])
+
   const startScan = useCallback((fleetId: string | null) => {
     setScanFleetId(fleetId)
+    setScanToken((token) => token + 1)
     setTab("scan")
   }, [])
 
-  const handleScanComplete = useCallback(() => {
-    setScanFleetId(null)
-    setTab("coverage")
-    // Re-run the server reads so the new scan shows up in coverage.
-    router.refresh()
-  }, [router])
+  const handleScanComplete = useCallback(
+    (session: PttSessionWithRelations) => {
+      setScanFleetId(null)
+      setCreatedSession(session)
+      setSelectedSessionId(session.id)
+      setTab("coverage")
+      // Re-run the server reads so the new scan shows up in coverage / KPIs.
+      router.refresh()
+    },
+    [router]
+  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -149,13 +181,6 @@ export function DiagnosticsWorkspace({
         <KpiCard label="Open Directives" value={kpis.openDirectives} />
       </div>
 
-      {selectedSession && (
-        <DirectivePreview
-          session={selectedSession}
-          onClose={() => setSelectedSession(null)}
-        />
-      )}
-
       <Tabs
         value={tab}
         onValueChange={(value) => setTab(value as TabValue)}
@@ -189,10 +214,12 @@ export function DiagnosticsWorkspace({
           />
         </TabsContent>
 
-        <TabsContent value="scan">
+        {/* Kept mounted so selected photos survive tab switches. */}
+        <TabsContent value="scan" keepMounted>
           <NewPttScanPanel
-            key={scanFleetId ?? "none"}
             initialFleetId={scanFleetId}
+            syncToken={scanToken}
+            rosterFleetIds={rosterFleetIds}
             onScanComplete={handleScanComplete}
           />
         </TabsContent>
@@ -204,6 +231,13 @@ export function DiagnosticsWorkspace({
           />
         </TabsContent>
       </Tabs>
+
+      <PttDirectiveModal
+        session={selectedSession}
+        fleetSessions={selectedFleetSessions}
+        onSelectSession={setSelectedSessionId}
+        onClose={closeDirective}
+      />
     </div>
   )
 }
@@ -241,54 +275,6 @@ function KpiCard({
         <span className="text-xs text-muted-foreground">
           {value === 1 ? "truck" : "trucks"}
         </span>
-      </CardContent>
-    </Card>
-  )
-}
-
-// Temporary preview shown for "View Directive" until the Executive Directive
-// modal is wired in.
-function DirectivePreview({
-  session,
-  onClose,
-}: {
-  session: PttSessionWithRelations
-  onClose: () => void
-}) {
-  return (
-    <Card size="sm">
-      <CardHeader>
-        <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="font-mono text-base">
-            {normalizeFleetId(session.fleetId)}
-          </CardTitle>
-          <SeverityBadge severity={session.overallSeverity} />
-          <WorkflowStatusBadge status={session.status} />
-          <span className="text-xs text-muted-foreground">
-            Scanned {format(session.scannedAt, "dd MMM yyyy")}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="ml-auto"
-            aria-label="Close directive preview"
-            onClick={onClose}
-          >
-            <X />
-          </Button>
-        </div>
-        <CardDescription>
-          Directive preview — the full Executive Directive view is coming soon.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-1">
-        <p className="text-xs font-medium text-muted-foreground uppercase">
-          True diagnosis
-        </p>
-        <p className="text-sm leading-relaxed">
-          {session.aiDirective?.true_diagnosis.trim() ||
-            "No directive was generated for this scan."}
-        </p>
       </CardContent>
     </Card>
   )
