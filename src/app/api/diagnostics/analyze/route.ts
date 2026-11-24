@@ -13,9 +13,12 @@ import {
 } from "@/db/schema"
 import { HrAuthError, requireAdmin } from "@/lib/hr-admin-auth"
 import {
+  PTT_CODE_FORMATS,
   PTT_FAULT_SEVERITIES,
+  PTT_FAULT_STATES,
   PTT_IMAGE_CONTENT_TYPES,
   PTT_IMAGE_MAX_BYTES,
+  PTT_OVERALL_SEVERITIES,
   PTT_TRUCK_GENERATIONS,
   normalizeFleetId,
   pttAnalysisResultSchema,
@@ -38,11 +41,12 @@ import {
 import { pttBlobPrefix } from "@/lib/ptt-files"
 
 // Two sequential OpenAI passes (vision OCR, then text-only reasoning) plus
-// blob reads and DB writes. Each pass is capped at OPENAI_TIMEOUT_MS so both
-// fit inside this limit.
+// blob reads and DB writes. Each pass has its own timeout; together they leave
+// ~6s of headroom inside this limit for blob reads and DB writes.
 export const maxDuration = 60
 
-const OPENAI_TIMEOUT_MS = 25_000
+const OCR_TIMEOUT_MS = 22_000
+const DIAGNOSTIC_TIMEOUT_MS = 32_000
 // Pass 1 only transcribes rows; Pass 2 returns one classified fault per row
 // plus the directive, so trucks with 30-40 faults need the larger cap.
 const OCR_MAX_COMPLETION_TOKENS = 4096
@@ -334,24 +338,110 @@ function formatPriorScansSummary(sessions: PriorSession[]) {
 
 type ChatParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
 
-// Runs one JSON-mode completion and validates it. Both passes use a hard
-// per-call timeout and no retries so two calls always fit in `maxDuration`.
+// Hand-written JSON Schema for Pass 2, used with OpenAI Structured Outputs
+// (`strict: true`). Deliberately NOT derived from Zod (no `zodResponseFormat`)
+// so a Zod v3/v4 SDK mismatch can never break it. Strict-mode rules: every
+// object has `additionalProperties: false` and lists ALL its keys in
+// `required`; optional values are expressed as nullable types; and the
+// unsupported keywords (pattern, min/maxLength, min/maxItems, minimum,
+// maximum) are not used. Enums mirror src/lib/ptt-diagnostics.ts. The Zod
+// `pttAnalysisResultSchema` still re-validates the parsed output.
+const stringArray = { type: "array", items: { type: "string" } } as const
+
+const PASS2_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "detected_generation",
+    "odometer_km",
+    "overall_severity",
+    "faults",
+    "directive",
+  ],
+  properties: {
+    detected_generation: { type: "string", enum: [...PTT_TRUCK_GENERATIONS] },
+    odometer_km: { type: ["number", "null"] },
+    overall_severity: { type: "string", enum: [...PTT_OVERALL_SEVERITIES] },
+    faults: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "source_row",
+          "fault_code",
+          "code_format",
+          "control_unit",
+          "component_description",
+          "fault_state",
+          "occurrence_count",
+          "severity",
+          "root_cause_summary",
+          "calibration_required",
+        ],
+        properties: {
+          source_row: { type: ["integer", "null"] },
+          fault_code: { type: "string" },
+          code_format: { type: "string", enum: [...PTT_CODE_FORMATS] },
+          control_unit: { type: "string" },
+          component_description: { type: "string" },
+          fault_state: { type: "string", enum: [...PTT_FAULT_STATES] },
+          occurrence_count: { type: ["number", "null"] },
+          severity: { type: "string", enum: [...PTT_FAULT_SEVERITIES] },
+          root_cause_summary: { type: "string" },
+          calibration_required: { type: "boolean" },
+        },
+      },
+    },
+    directive: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "evidence_analysis",
+        "parts_cannon_warning",
+        "true_diagnosis",
+        "physical_inspections",
+        "ptt_navigation_paths",
+        "verification_criteria",
+      ],
+      properties: {
+        evidence_analysis: { type: "string" },
+        parts_cannon_warning: { type: "string" },
+        true_diagnosis: { type: "string" },
+        physical_inspections: stringArray,
+        ptt_navigation_paths: stringArray,
+        verification_criteria: stringArray,
+      },
+    },
+  },
+} as const
+
+// "directive.true_diagnosis: Invalid input: expected string, received undefined"
+function formatZodIssues(issues: readonly z.core.$ZodIssue[]): string[] {
+  return issues.map(
+    (issue) => `${issue.path.map(String).join(".") || "(root)"}: ${issue.message}`
+  )
+}
+
+// Runs one JSON completion and validates it. Both passes use a hard per-call
+// timeout and no retries so two calls always fit in `maxDuration`.
 async function runJsonPass<S extends z.ZodType>(
   openai: OpenAI,
   label: string,
   schema: S,
-  params: ChatParams
+  params: ChatParams,
+  timeoutMs: number
 ): Promise<z.output<S>> {
   let response: OpenAI.Chat.Completions.ChatCompletion
   try {
     response = await openai.chat.completions.create(params, {
-      timeout: OPENAI_TIMEOUT_MS,
+      timeout: timeoutMs,
       maxRetries: 0,
     })
   } catch (error) {
     if (error instanceof OpenAI.APIConnectionTimeoutError) {
       throw new AnalyzeError(
-        `${label} timed out after ${OPENAI_TIMEOUT_MS / 1000}s. Try again, or upload fewer screenshots per scan.`,
+        `${label} timed out after ${timeoutMs / 1000}s. Try again, or upload fewer screenshots per scan.`,
         504
       )
     }
@@ -362,6 +452,13 @@ async function runJsonPass<S extends z.ZodType>(
   if (choice?.finish_reason === "length") {
     throw new AnalyzeError(
       `${label} output was too long and got cut off. Split the screenshots into smaller batches and scan again.`,
+      502
+    )
+  }
+  if (choice?.message?.refusal) {
+    console.error(`[ptt-analyze] ${label} refusal:`, choice.message.refusal)
+    throw new AnalyzeError(
+      `${label} was refused by the model: ${choice.message.refusal}`,
       502
     )
   }
@@ -376,9 +473,13 @@ async function runJsonPass<S extends z.ZodType>(
   }
   const validated = schema.safeParse(json)
   if (!validated.success) {
-    console.error(`[ptt-analyze] ${label} schema mismatch:`, validated.error.issues)
+    const issues = formatZodIssues(validated.error.issues)
+    console.error(
+      `[ptt-analyze] ${label} schema mismatch (${issues.length} issue(s)):\n${issues.join("\n")}`
+    )
+    // Admin-only route: surface the first 2 failing paths to avoid blind debugging.
     throw new AnalyzeError(
-      `${label} did not match the expected format. Please try again.`,
+      `${label} did not match the expected format (${issues.slice(0, 2).join("; ")}). Please try again.`,
       502
     )
   }
@@ -518,10 +619,10 @@ export async function POST(request: Request) {
       })
     )
 
-    // Each pass has its own 25s timeout (set per call) and no retries.
+    // Each pass has its own timeout (set per call) and no retries.
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
-      timeout: OPENAI_TIMEOUT_MS,
+      timeout: DIAGNOSTIC_TIMEOUT_MS,
       maxRetries: 0,
     })
 
@@ -543,16 +644,22 @@ export async function POST(request: Request) {
       )
     })
 
-    const ocr = await runJsonPass(openai, "Screenshot transcription", pttRawOcrSchema, {
-      model,
-      temperature: 0,
-      max_tokens: OCR_MAX_COMPLETION_TOKENS,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: OCR_SYSTEM_PROMPT },
-        { role: "user", content: ocrContent },
-      ],
-    })
+    const ocr = await runJsonPass(
+      openai,
+      "Screenshot transcription",
+      pttRawOcrSchema,
+      {
+        model,
+        temperature: 0,
+        max_tokens: OCR_MAX_COMPLETION_TOKENS,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: OCR_SYSTEM_PROMPT },
+          { role: "user", content: ocrContent },
+        ],
+      },
+      OCR_TIMEOUT_MS
+    )
 
     // Deterministic dedupe across overlapping scrolled screenshots, then
     // number the survivors #1..#N.
@@ -609,12 +716,20 @@ export async function POST(request: Request) {
         model,
         temperature: 0.1,
         max_tokens: DIAGNOSTIC_MAX_COMPLETION_TOKENS,
-        response_format: { type: "json_object" },
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "ptt_diagnostic_analysis",
+            strict: true,
+            schema: PASS2_JSON_SCHEMA,
+          },
+        },
         messages: [
           { role: "system", content: DIAGNOSTIC_SYSTEM_PROMPT },
           { role: "user", content: diagnosticText },
         ],
-      }
+      },
+      DIAGNOSTIC_TIMEOUT_MS
     )
 
     // Deterministic safety net: no extracted row or VCADS pop-up may silently
