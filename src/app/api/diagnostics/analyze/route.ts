@@ -101,13 +101,21 @@ PHOTO READING NOTES
 - Workshop photos are often taken of a laptop screen and may be overlapping, scrolled screens of the SAME "DTC List". A single screen can hold ~20 dense rows with small text, including the right-edge "Active" / "Inactive" state column.
 - Read EVERY visible row carefully, in every photo. On FH V3 read the full "MID / PID / PPID / SID / PSID + FMI" identifier of each row; on FH V4 read the full UDS hex code (e.g. U300054, P105F18).
 - Never guess or invent unreadable fields: if a code, state or count is blurry or cut off, use fault_state "UNKNOWN" / occurrence_count null (or skip the row if the code itself cannot be read) and mention the limitation in evidence_analysis.
+- VCADS POP-UPS: a screenshot may show a VCADS Pro operation / calibration error pop-up INSTEAD OF (or alongside) a DTC List, e.g. "VCADS Pro - Operations: 37 - Gearbox input shaft speed constant". Treat each such pop-up as ONE fault entry:
+  * fault_code = the operation / error code in the form "VCADS-OP-<number>" (e.g. "VCADS-OP-37"). Never leave it out and never invent a number that is not visible.
+  * code_format = "OTHER".
+  * control_unit = the target system the operation runs against, e.g. "TECU / Clutch Calibration" (I-Shift clutch / gearbox calibration), "APM / Air Leakage Test", "EMS / Injector Coding". Infer it from the operation title; use "VCADS" if it cannot be determined.
+  * component_description = the exact pop-up wording (operation number + title + any visible failure reason).
+  * fault_state = "ACTIVE" (the operation has just failed on screen), occurrence_count = null.
+  * severity = "CRITICAL" when the failure points to proven failed hardware or a safety / driveline-integrity risk (e.g. input shaft speed signal missing or implausible, clutch will not engage / disengage, leaking air supply that prevents calibration), otherwise "CALIBRATION_ONLY" when the pop-up only shows the calibration / initialisation could not be completed because a precondition was not met (engine speed, air pressure, gear / parking-brake state, wrong procedure order) with zero parts approved. Set calibration_required = true on these entries.
+  * root_cause_summary and directive.true_diagnosis MUST give the exact MECHANICAL vs. PNEUMATIC root-cause directive for that operation: state clearly whether the failure is mechanical (e.g. worn / glazed clutch disc, seized or damaged release bearing / clutch actuator, input shaft speed sensor or its gap / connector / harness pins, flywheel or clutch housing damage) or pneumatic (e.g. low or leaking air supply, APM / clutch actuator air leak, contaminated or wet air, blocked solenoid valve, pressure below the calibration threshold), what single cheap check separates the two (e.g. air-pressure and leakage test with PTT Live Data, sensor air-gap / resistance check, clutch actuator stroke), and which part is explicitly NOT to be replaced until that check is done. Put the corresponding PTT / VCADS navigation path in ptt_navigation_paths and the pass criteria for re-running the operation in verification_criteria.
 
 STRICT "COMPUTER-FIRST" SOP (fight the workshop "parts cannon" mentality)
 1. Never approve a physical teardown, or an expensive module / wiring harness / injector / APM (Air Processing Module) replacement, without PTT Live Data proof (e.g. measured values, injector balancing / compression test results, pressure build-up data, sensor readouts). If the screenshots do not contain such proof, say what PTT Live Data / test must be run FIRST and approve NO parts.
 2. Flag missing post-repair PTT software calibrations as CALIBRATION_ONLY with ZERO parts approved. Typical examples: clutch X1 wear / kiss-point calibration, APM air leakage initialisation, injector trim code (C3I / IMA) coding after injector or ECU work, actuator / gear-selector calibration. Set calibration_required = true on these faults.
 3. Cross-check every extracted fault against the supplied "90-DAY SPARES HISTORY" and "PRIOR PTT SCANS". Explicitly call out repeat part replacements (e.g. recently replaced injectors, solenoids, clutches, APMs, sensors) and recurring or unresolved codes. When a related part was already replaced, do NOT recommend replacing the same part again; instead suspect upstream root causes such as fuel contamination or poor fuel quality, intake / air leaks, skipped calibration, damaged harness pins / connectors / corrosion, or a wrong / non-genuine part. Reference the specific spares line (date, part number, job card) or prior scan in evidence_analysis and root_cause_summary.
 4. Deduplicate: a fault code that appears in several overlapping scrolled screenshots must be returned ONCE (keep the most informative occurrence count / state).
-5. Only report faults you can actually read in the screenshots. Never invent codes. If a screenshot is unreadable or contains no fault list, return an empty faults array and explain in evidence_analysis.
+5. Only report faults you can actually read in the screenshots (DTC rows or VCADS pop-ups). Never invent codes. If a screenshot is unreadable or contains neither a fault list nor a VCADS pop-up, return an empty faults array and explain in evidence_analysis.
 
 SEVERITY CATEGORIES - classify EVERY fault into exactly one of:
 - "CRITICAL": active fault that threatens safety, engine / driveline integrity, derate / limp mode, or has proven failed hardware.
@@ -123,7 +131,7 @@ Return ONLY one strict JSON object (no markdown) with exactly these keys:
   "overall_severity": "CRITICAL" | "CALIBRATION_ONLY" | "MONITOR" | "NEGLIGIBLE" | "CLEAR",  // worst fault tier, CLEAR if no faults
   "faults": [
     {
-      "fault_code": string,                // normalised uppercase, e.g. "U300054" or "MID 128 PSID 200 FMI 12"
+      "fault_code": string,                // normalised uppercase, e.g. "U300054", "MID 128 PSID 200 FMI 12" or "VCADS-OP-37"
       "code_format": "V3_MID_FMI" | "V4_UDS" | "OTHER",
       "control_unit": string,              // e.g. "EMS", "TECU", "APM", "VMCU", "MID 130"
       "component_description": string,

@@ -7,6 +7,7 @@ import { FleetCoverageView } from "@/components/diagnostics/fleet-coverage-view"
 import { FleetFaultIntelligence } from "@/components/diagnostics/fleet-fault-intelligence"
 import { NewPttScanPanel } from "@/components/diagnostics/new-ptt-scan-panel"
 import { PttDirectiveModal } from "@/components/diagnostics/ptt-directive-modal"
+import { PttVerificationSection } from "@/components/diagnostics/ptt-verification-section"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -31,7 +32,7 @@ type TabValue = "coverage" | "scan" | "intelligence"
 
 export function DiagnosticsWorkspace({
   rosterFleetIds,
-  sessions,
+  sessions: serverSessions,
   recurringFaults,
 }: {
   rosterFleetIds: string[]
@@ -52,6 +53,26 @@ export function DiagnosticsWorkspace({
   // A just-created scan, shown until the refreshed `sessions` prop includes it.
   const [createdSession, setCreatedSession] =
     useState<PttSessionWithRelations | null>(null)
+
+  // A just-verified session, shown until `router.refresh()` delivers a new
+  // `sessions` array (tracked by `base` identity so it can never go stale).
+  const [verifiedOverride, setVerifiedOverride] = useState<{
+    session: PttSessionWithRelations
+    base: PttSessionWithRelations[]
+  } | null>(null)
+
+  const effectiveSessions = useMemo(() => {
+    if (!verifiedOverride || verifiedOverride.base !== serverSessions) {
+      return serverSessions
+    }
+    return serverSessions.map((session) =>
+      session.id === verifiedOverride.session.id
+        ? verifiedOverride.session
+        : session
+    )
+  }, [serverSessions, verifiedOverride])
+
+  const sessions = effectiveSessions
 
   const latestByFleet = useMemo(
     () => latestSessionByFleet(sessions),
@@ -86,11 +107,13 @@ export function DiagnosticsWorkspace({
 
   const selectedSession = useMemo(() => {
     if (selectedSessionId === null) return null
-    return (
-      sessions.find((session) => session.id === selectedSessionId) ??
-      (createdSession?.id === selectedSessionId ? createdSession : null)
-    )
-  }, [sessions, selectedSessionId, createdSession])
+    const fromList = sessions.find((session) => session.id === selectedSessionId)
+    if (fromList) return fromList
+    if (createdSession?.id !== selectedSessionId) return null
+    return verifiedOverride?.session.id === createdSession.id
+      ? verifiedOverride.session
+      : createdSession
+  }, [sessions, selectedSessionId, createdSession, verifiedOverride])
 
   // Every scan of the selected truck, newest first, for the history selector.
   const selectedFleetSessions = useMemo(() => {
@@ -113,6 +136,13 @@ export function DiagnosticsWorkspace({
       if (latest) setSelectedSessionId(latest.id)
     },
     [latestByFleet]
+  )
+
+  const handleSessionVerified = useCallback(
+    (session: PttSessionWithRelations) => {
+      setVerifiedOverride({ session, base: serverSessions })
+    },
+    [serverSessions]
   )
 
   const closeDirective = useCallback(() => {
@@ -237,6 +267,15 @@ export function DiagnosticsWorkspace({
         fleetSessions={selectedFleetSessions}
         onSelectSession={setSelectedSessionId}
         onClose={closeDirective}
+        verificationSlot={
+          selectedSession ? (
+            <PttVerificationSection
+              key={selectedSession.id}
+              session={selectedSession}
+              onSessionUpdate={handleSessionVerified}
+            />
+          ) : undefined
+        }
       />
     </div>
   )

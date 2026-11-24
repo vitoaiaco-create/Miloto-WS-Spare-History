@@ -81,11 +81,13 @@ export type PttAnalysisResult = z.infer<typeof pttAnalysisResultSchema>
 // Before/After re-scan result stored in
 // `ptt_diagnostic_sessions.verification_summary`.
 export const pttVerificationSummarySchema = z.object({
-  verdict: z.enum(["RESOLVED", "PARTIALLY_RESOLVED", "NOT_RESOLVED"]),
-  resolved_fault_codes: z.array(z.string()),
-  remaining_fault_codes: z.array(z.string()),
-  new_fault_codes: z.array(z.string()),
+  verification_passed: z.boolean(),
   summary: z.string(),
+  resolved_fault_codes: z.array(z.string()),
+  still_active_fault_codes: z.array(z.string()),
+  newly_introduced_fault_codes: z.array(z.string()),
+  next_enforcement_action: z.string(),
+  verified_by_model: z.string().optional(),
 })
 
 export type PttVerificationSummary = z.infer<
@@ -359,6 +361,78 @@ export function formatPttDirectiveForWhatsApp(
     lines.push("")
     lines.push(`*Verification Criteria:*`)
     lines.push(bulletList(directive.verification_criteria))
+  }
+
+  return lines.join("\n")
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp verification verdict formatting
+// ---------------------------------------------------------------------------
+
+export type PttVerificationSessionInput = {
+  fleetId: string
+  verificationSummary: PttVerificationSummary | null
+}
+
+function codeSection(
+  lines: string[],
+  title: string,
+  tag: string,
+  codes: readonly string[]
+) {
+  if (codes.length === 0) return
+  lines.push("")
+  lines.push(`*${title}:*`)
+  for (const code of codes) lines.push(`${tag} \`${code.trim()}\``)
+}
+
+/**
+ * Formats a concise WhatsApp verdict for a Before/After re-scan: the
+ * pass / fail banner, resolved, still-active and newly introduced codes and
+ * the next enforcement order. Returns a "no verification yet" line when the
+ * session has not been verified.
+ */
+export function formatPttVerificationForWhatsApp(
+  session: PttVerificationSessionInput
+): string {
+  const verification = session.verificationSummary
+  if (!verification) {
+    return `*🔍 PTT RE-SCAN VERIFICATION*\n*Fleet ID:* ${session.fleetId}\nNo verification re-scan has been run yet.`
+  }
+
+  const lines: string[] = []
+  lines.push(`*🔍 PTT RE-SCAN VERIFICATION*`)
+  lines.push(`*Fleet ID:* ${session.fleetId}`)
+  lines.push(
+    verification.verification_passed
+      ? `*✅ VERIFIED PASSED*`
+      : `*⛔ VERIFICATION FAILED — REWORK REQUIRED*`
+  )
+
+  if (verification.summary.trim()) {
+    lines.push("")
+    lines.push(verification.summary.trim())
+  }
+
+  codeSection(lines, "Resolved Codes", "✅", verification.resolved_fault_codes)
+  codeSection(
+    lines,
+    "Still Active Codes",
+    "🔴",
+    verification.still_active_fault_codes
+  )
+  codeSection(
+    lines,
+    "Newly Introduced Codes",
+    "🟠",
+    verification.newly_introduced_fault_codes
+  )
+
+  if (verification.next_enforcement_action.trim()) {
+    lines.push("")
+    lines.push(`*Next Enforcement Order:*`)
+    lines.push(verification.next_enforcement_action.trim())
   }
 
   return lines.join("\n")

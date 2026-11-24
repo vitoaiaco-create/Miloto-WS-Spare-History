@@ -54,10 +54,10 @@ import { cn } from "@/lib/utils"
 const MAX_PHOTOS = 10
 // Images at or below this size are uploaded untouched so WhatsApp-compressed
 // photos stay razor sharp for OCR. Larger (raw smartphone) photos are shrunk.
-const COMPRESS_THRESHOLD_BYTES = 1.5 * 1024 * 1024
+export const COMPRESS_THRESHOLD_BYTES = 1.5 * 1024 * 1024
 const COMPRESS_MAX_DIMENSION = 2200
 const COMPRESS_QUALITY = 0.85
-const ACCEPT = PTT_IMAGE_CONTENT_TYPES.join(",")
+export const ACCEPT = PTT_IMAGE_CONTENT_TYPES.join(",")
 
 const EXTENSION_BY_TYPE: Record<string, string> = {
   "image/jpeg": ".jpg",
@@ -92,18 +92,18 @@ type Phase =
   | { kind: "uploading"; current: number; total: number }
   | { kind: "analyzing" }
 
-class ScanError extends Error {}
+export class ScanError extends Error {}
 
 function defaultBatchLabel() {
   return `${format(new Date(), "MMM yyyy")} Fleet Sweep`
 }
 
-function formatBytes(bytes: number) {
+export function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function newId() {
+export function newId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -117,7 +117,7 @@ function withExtension(name: string, extension: string) {
 
 // Pasted screenshots often arrive as `image.png` (or with no name at all) and
 // the upload route requires the extension to match the MIME type.
-function normalizeFile(file: File): File {
+export function normalizeFile(file: File): File {
   const extension = EXTENSION_BY_TYPE[file.type]
   const lower = file.name.toLowerCase()
   const extensionOk =
@@ -137,7 +137,7 @@ function normalizeFile(file: File): File {
 
 // Downscales (max 2200px longest side) and re-encodes as JPEG 0.85. Falls
 // back to the original file when decoding fails or nothing was saved.
-async function compressImage(file: File): Promise<File> {
+export async function compressImage(file: File): Promise<File> {
   try {
     const bitmap = await createImageBitmap(file)
     try {
@@ -177,7 +177,7 @@ async function compressImage(file: File): Promise<File> {
 
 // The analyze route answers with JSON, but gateway failures (413 / 504) can
 // come back as plain text.
-async function readApiResponse<T>(
+export async function readApiResponse<T>(
   response: Response,
   fallbackMessage: string
 ): Promise<T> {
@@ -211,7 +211,7 @@ function toDate(value: unknown): Date | null {
 }
 
 // JSON turns Date columns into ISO strings; the dashboard expects real Dates.
-function revivePttSession(data: unknown): PttSessionWithRelations {
+export function revivePttSession(data: unknown): PttSessionWithRelations {
   const raw = data as Record<string, unknown>
   if (
     typeof raw?.id !== "number" ||
