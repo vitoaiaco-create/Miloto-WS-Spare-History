@@ -132,6 +132,74 @@ export function normalizeFleetId(value: string): string {
   return value.trim().toUpperCase()
 }
 
+const FLEET_ID_COLLATOR = new Intl.Collator("en", {
+  numeric: true,
+  sensitivity: "base",
+})
+
+// Natural fleet-number comparator: `MTL2` < `MTL10` < `MTL140`.
+export function compareFleetIds(a: string, b: string): number {
+  return FLEET_ID_COLLATOR.compare(a, b)
+}
+
+// Higher = worse. Used to rank faults and pick a truck's/fault group's
+// highest severity.
+export const PTT_SEVERITY_RANK: Record<PttOverallSeverity, number> = {
+  CRITICAL: 4,
+  CALIBRATION_ONLY: 3,
+  MONITOR: 2,
+  NEGLIGIBLE: 1,
+  CLEAR: 0,
+}
+
+type PttLatestSessionKey = { id: number; fleetId: string; scannedAt: Date }
+
+// Picks each truck's most recent session (newest `scannedAt`, ties broken by
+// the higher `id`), keyed by normalized fleet id. Works on unsorted input.
+export function latestSessionByFleet<T extends PttLatestSessionKey>(
+  sessions: readonly T[]
+): Map<string, T> {
+  const latest = new Map<string, T>()
+  for (const session of sessions) {
+    const fleetId = normalizeFleetId(session.fleetId)
+    const current = latest.get(fleetId)
+    if (
+      !current ||
+      session.scannedAt.getTime() > current.scannedAt.getTime() ||
+      (session.scannedAt.getTime() === current.scannedAt.getTime() &&
+        session.id > current.id)
+    ) {
+      latest.set(fleetId, session)
+    }
+  }
+  return latest
+}
+
+// Total scans per truck, keyed by normalized fleet id.
+export function countSessionsByFleet(
+  sessions: ReadonlyArray<{ fleetId: string }>
+): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const session of sessions) {
+    const fleetId = normalizeFleetId(session.fleetId)
+    counts.set(fleetId, (counts.get(fleetId) ?? 0) + 1)
+  }
+  return counts
+}
+
+// A directive is "open" while the truck's latest scan still has something to
+// act on: not closed out, and not a clear / negligible-only result.
+export function isOpenDirective(session: {
+  status: string
+  overallSeverity: string
+}): boolean {
+  return (
+    session.status !== "VERIFIED_CLOSED" &&
+    session.overallSeverity !== "CLEAR" &&
+    session.overallSeverity !== "NEGLIGIBLE"
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Deterministic severity roll-up
 // ---------------------------------------------------------------------------

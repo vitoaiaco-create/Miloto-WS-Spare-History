@@ -6,6 +6,7 @@ import {
   Gavel,
   PackageSearch,
   ShieldCheck,
+  Stethoscope,
   TrendingUp,
   UploadCloud,
 } from "lucide-react";
@@ -211,6 +212,28 @@ export default async function Home() {
                     <CardDescription className="text-sm leading-relaxed">
                       Analyze a charge summary against the Disciplinary Code
                       and generate Notices of Charge and Penalty. Admins only.
+                    </CardDescription>
+                  </CardContent>
+                </Card>
+              </Link>
+            )}
+
+            {!isOilsOnly && isAdmin && (
+              <Link href="/diagnostics">
+                <Card className="h-full transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900">
+                  <CardHeader>
+                    <Stethoscope
+                      className="mb-2 size-6 text-foreground"
+                      strokeWidth={1.75}
+                    />
+                    <CardTitle className="text-lg">
+                      Fleet Diagnostics (PTT Intel)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription className="text-sm leading-relaxed">
+                      Volvo PTT fault triage, Computer-First SOP directives
+                      &amp; fleet scan coverage. Admins only.
                     </CardDescription>
                   </CardContent>
                 </Card>
