@@ -21,6 +21,25 @@ import {
   HR_DISCIPLINARY_STATUSES,
   type HrDisciplinaryStatus,
 } from "../lib/hr-disciplinary";
+import {
+  PTT_ATTACHMENT_ROLES,
+  PTT_CODE_FORMATS,
+  PTT_FAULT_SEVERITIES,
+  PTT_FAULT_STATES,
+  PTT_OVERALL_SEVERITIES,
+  PTT_SESSION_STATUSES,
+  PTT_TRUCK_GENERATIONS,
+  type PttAttachmentRole,
+  type PttCodeFormat,
+  type PttDirective,
+  type PttFaultSeverity,
+  type PttFaultState,
+  type PttOverallSeverity,
+  type PttSessionStatus,
+  type PttSparesContextItem,
+  type PttTruckGeneration,
+  type PttVerificationSummary,
+} from "../lib/ptt-diagnostics";
 
 // Heavy transport units (e.g. prime movers, trailers) in the fleet.
 export const assetsTable = pgTable("assets", {
@@ -644,3 +663,116 @@ export const hrDisciplinaryAttachmentsTable = pgTable(
     uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
   }
 );
+
+// Allowed Fleet Diagnostics (PTT Intel) enum-like values live in the
+// client-safe src/lib/ptt-diagnostics.ts so Client Components never import
+// this schema. Re-exported for server code. (Relative path: drizzle-kit
+// loads this file without the `@/` alias.)
+export {
+  PTT_ATTACHMENT_ROLES,
+  PTT_CODE_FORMATS,
+  PTT_FAULT_SEVERITIES,
+  PTT_FAULT_STATES,
+  PTT_OVERALL_SEVERITIES,
+  PTT_SESSION_STATUSES,
+  PTT_TRUCK_GENERATIONS,
+};
+export type {
+  PttAttachmentRole,
+  PttCodeFormat,
+  PttFaultSeverity,
+  PttFaultState,
+  PttOverallSeverity,
+  PttSessionStatus,
+  PttTruckGeneration,
+};
+
+// Fleet Diagnostics (PTT Intel): one row per Volvo PTT scan session for a
+// truck. Shared across all staff. `fleetId` is the canonical uppercase fleet
+// number (e.g. `MTL61`) — the same string stored in `assetsTable.assetName` —
+// kept as plain text (no FK), like `hr_disciplinary_cases.fleet_id`, so a scan
+// can be logged for a truck before it exists in the assets table.
+// `scannedBy` is audit-only (Clerk user id).
+export const pttDiagnosticSessionsTable = pgTable("ptt_diagnostic_sessions", {
+  id: serial("id").primaryKey(),
+  fleetId: text("fleet_id").notNull(),
+  truckGeneration: text("truck_generation")
+    .$type<PttTruckGeneration>()
+    .notNull()
+    .default("UNKNOWN"),
+  odometerKm: integer("odometer_km"),
+  // e.g. 'Nov 2026 Fleet Sweep'.
+  scanBatchLabel: text("scan_batch_label"),
+  // Optional driver complaint or what mechanics want to replace.
+  workshopContext: text("workshop_context"),
+  status: text("status")
+    .$type<PttSessionStatus>()
+    .notNull()
+    .default("SCANNED"),
+  overallSeverity: text("overall_severity")
+    .$type<PttOverallSeverity>()
+    .notNull()
+    .default("CLEAR"),
+  criticalCount: integer("critical_count").notNull().default(0),
+  calibrationCount: integer("calibration_count").notNull().default(0),
+  monitorCount: integer("monitor_count").notNull().default(0),
+  negligibleCount: integer("negligible_count").notNull().default(0),
+  // Snapshot of the 90-day spares issued that were passed to OpenAI.
+  sparesContextSnapshot: jsonb("spares_context_snapshot").$type<
+    PttSparesContextItem[]
+  >(),
+  // The structured 4-part directive object.
+  aiDirective: jsonb("ai_directive").$type<PttDirective>(),
+  // Before/After re-scan verification result.
+  verificationSummary: jsonb(
+    "verification_summary"
+  ).$type<PttVerificationSummary>(),
+  verifiedAt: timestamp("verified_at"),
+  scannedBy: text("scanned_by"),
+  scannedAt: timestamp("scanned_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Individual fault codes extracted from a PTT scan session.
+export const pttFaultCodesTable = pgTable("ptt_fault_codes", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id")
+    .notNull()
+    .references(() => pttDiagnosticSessionsTable.id, { onDelete: "cascade" }),
+  fleetId: text("fleet_id").notNull(),
+  // Normalized uppercase, e.g. `U300054` or `PSID 200 FMI 12`.
+  faultCode: text("fault_code").notNull(),
+  codeFormat: text("code_format").$type<PttCodeFormat>().notNull().default("OTHER"),
+  // e.g. `EMS`, `TECU`, `APM`, `MID 130`.
+  controlUnit: text("control_unit").notNull(),
+  componentDescription: text("component_description").notNull(),
+  faultState: text("fault_state")
+    .$type<PttFaultState>()
+    .notNull()
+    .default("UNKNOWN"),
+  occurrenceCount: integer("occurrence_count"),
+  severity: text("severity").$type<PttFaultSeverity>().notNull(),
+  rootCauseSummary: text("root_cause_summary").notNull(),
+  calibrationRequired: boolean("calibration_required").notNull().default(false),
+  resolvedOnRescan: boolean("resolved_on_rescan").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Scan screenshots / PDFs uploaded against a session. Files live in blob
+// storage; this table only keeps the pointers and metadata.
+export const pttSessionAttachmentsTable = pgTable("ptt_session_attachments", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id")
+    .notNull()
+    .references(() => pttDiagnosticSessionsTable.id, { onDelete: "cascade" }),
+  role: text("role")
+    .$type<PttAttachmentRole>()
+    .notNull()
+    .default("INITIAL_SCAN"),
+  fileName: text("file_name").notNull(),
+  blobPathname: text("blob_pathname").notNull(),
+  blobUrl: text("blob_url").notNull(),
+  contentType: text("content_type").notNull(),
+  fileSize: integer("file_size").notNull(),
+  uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
+});

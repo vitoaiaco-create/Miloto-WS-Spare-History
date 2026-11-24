@@ -207,6 +207,33 @@ export const relations = defineRelations(schema, (r) => ({
       optional: false,
     }),
   },
+  pttDiagnosticSessionsTable: {
+    faults: r.many.pttFaultCodesTable({
+      from: r.pttDiagnosticSessionsTable.id,
+      to: r.pttFaultCodesTable.sessionId,
+    }),
+    attachments: r.many.pttSessionAttachmentsTable({
+      from: r.pttDiagnosticSessionsTable.id,
+      to: r.pttSessionAttachmentsTable.sessionId,
+    }),
+  },
+  pttFaultCodesTable: {
+    // `sessionId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so a
+    // fault code can never exist without its session.
+    session: r.one.pttDiagnosticSessionsTable({
+      from: r.pttFaultCodesTable.sessionId,
+      to: r.pttDiagnosticSessionsTable.id,
+      optional: false,
+    }),
+  },
+  pttSessionAttachmentsTable: {
+    // Same cascade guarantee as faults above.
+    session: r.one.pttDiagnosticSessionsTable({
+      from: r.pttSessionAttachmentsTable.sessionId,
+      to: r.pttDiagnosticSessionsTable.id,
+      optional: false,
+    }),
+  },
   unmappedSparesStagingTable: {
     // `assetId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so a
     // staged row can never exist without its asset.
