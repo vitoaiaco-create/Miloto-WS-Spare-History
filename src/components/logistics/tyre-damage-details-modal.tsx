@@ -58,18 +58,31 @@ function driverLabel(incident: TyreDamageIncidentDetail) {
     : "No driver paired"
 }
 
+function splitByAssetType(incidents: TyreDamageIncidentDetail[]) {
+  const trailer = incidents.filter(
+    (incident) => incident.assetType === "Trailer"
+  ).length
+  return { truck: incidents.length - trailer, trailer }
+}
+
 export function formatTyreDamageWhatsAppMessage({
   title,
   year,
   incidents,
+  isDriver = false,
 }: {
   title: string
   year: number
   incidents: TyreDamageIncidentDetail[]
+  /** `title` is a driver name: combined Truck + Trailer summary. */
+  isDriver?: boolean
 }) {
+  const split = splitByAssetType(incidents)
   const lines = [
     `*MILOTO TYRE DAMAGES — ${title} (${year})*`,
-    `Total Operational Damages: ${incidents.length}`,
+    isDriver
+      ? `Combined Operational Damages: ${incidents.length} (Truck: ${split.truck}, Trailer: ${split.trailer})`
+      : `Total Operational Damages: ${incidents.length}`,
     "",
   ]
 
@@ -78,7 +91,8 @@ export function formatTyreDamageWhatsAppMessage({
       `*${formatIncidentDate(incident.date)}*`,
       incident.assetId === title ? null : incident.assetId,
       incident.reason,
-      `Driver: ${driverLabel(incident)}`,
+      // The driver is already the subject of a driver-mode message.
+      isDriver ? null : `Driver: ${driverLabel(incident)}`,
     ].filter((part): part is string => Boolean(part))
     lines.push(`• ${parts.join(" — ")}`)
   }
@@ -165,9 +179,41 @@ export function TyreDamageDetailsModal({
     [incidents]
   )
 
+  const isDriverMode = !assetId && Boolean(driverName)
+
+  const split = useMemo(() => splitByAssetType(incidents), [incidents])
+  const involvedTrucks = useMemo(
+    () =>
+      [
+        ...new Set(
+          incidents
+            .filter((incident) => incident.assetType === "Truck")
+            .map((incident) => incident.assetId)
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+    [incidents]
+  )
+  const involvedTrailers = useMemo(
+    () =>
+      [
+        ...new Set(
+          incidents
+            .filter((incident) => incident.assetType === "Trailer")
+            .map((incident) => incident.assetId)
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+    [incidents]
+  )
+
   const message = useMemo(
-    () => formatTyreDamageWhatsAppMessage({ title, year, incidents }),
-    [title, year, incidents]
+    () =>
+      formatTyreDamageWhatsAppMessage({
+        title,
+        year,
+        incidents,
+        isDriver: isDriverMode,
+      }),
+    [title, year, incidents, isDriverMode]
   )
   const canShare = !isLoading && incidents.length > 0
 
@@ -228,22 +274,49 @@ export function TyreDamageDetailsModal({
             Tyre Damages — {title} ({year})
           </DialogTitle>
           <DialogDescription>
-            Total operational tyre damages:{" "}
+            {isDriverMode ? "Total" : "Total operational tyre damages"}:{" "}
             <span className="font-medium text-foreground tabular-nums">
               {isLoading ? "…" : incidents.length}
             </span>
+            {isDriverMode && !isLoading ? (
+              <span className="tabular-nums">
+                {" "}
+                (Truck: {split.truck}, Trailer: {split.trailer})
+              </span>
+            ) : null}
           </DialogDescription>
           {!isLoading && incidents.length > 0 ? (
             <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-              <span>
-                Assigned driver(s):{" "}
-                <span className="text-foreground">
-                  {assignedDrivers.length > 0
-                    ? assignedDrivers.join(", ")
-                    : "None paired"}
+              {isDriverMode ? (
+                <>
+                  <span>
+                    Trucks involved:{" "}
+                    <span className="text-foreground">
+                      {involvedTrucks.length > 0
+                        ? involvedTrucks.join(", ")
+                        : "None"}
+                    </span>
+                  </span>
+                  <span>
+                    Trailers involved:{" "}
+                    <span className="text-foreground">
+                      {involvedTrailers.length > 0
+                        ? involvedTrailers.join(", ")
+                        : "None"}
+                    </span>
+                  </span>
+                </>
+              ) : (
+                <span>
+                  Assigned driver(s):{" "}
+                  <span className="text-foreground">
+                    {assignedDrivers.length > 0
+                      ? assignedDrivers.join(", ")
+                      : "None paired"}
+                  </span>
                 </span>
-              </span>
-              {pairedAssets.length > 0 ? (
+              )}
+              {!isDriverMode && pairedAssets.length > 0 ? (
                 <span>
                   Paired with:{" "}
                   <span className="text-foreground">

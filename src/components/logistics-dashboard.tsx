@@ -22,6 +22,7 @@ import {
 
 import {
   upsertMonthlyManualDistance,
+  type TireDamageDriverCount,
   type TireDamagesByFleetType,
 } from "@/actions/logistics"
 import { Badge } from "@/components/ui/badge"
@@ -1890,6 +1891,7 @@ export function LogisticsDashboard({
   motiveData,
   operatorData,
   tireDamages,
+  tireDamageDrivers,
   year,
   month,
 }: {
@@ -1898,6 +1900,7 @@ export function LogisticsDashboard({
   motiveData: MotiveUnitYieldScore[]
   operatorData: OperatorYieldScore[]
   tireDamages: TireDamagesByFleetType
+  tireDamageDrivers: TireDamageDriverCount[]
   year: number
   /** Latest completed calendar month (1-12); also the YTD end month. */
   month: number
@@ -1945,6 +1948,7 @@ export function LogisticsDashboard({
         <TireDamagesCharts
           trucks={tireDamages.trucks}
           trailers={tireDamages.trailers}
+          drivers={tireDamageDrivers}
           year={year}
         />
       </TabsContent>

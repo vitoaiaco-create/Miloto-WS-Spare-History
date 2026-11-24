@@ -281,11 +281,108 @@ function sortedValues(set: Set<string> | undefined) {
   return [...(set ?? [])].sort((a, b) => a.localeCompare(b))
 }
 
-// Full incident list behind a Tyre Damages bar, newest first. Drivers are
-// resolved from `monthly_pairings` (same join as src/lib/logistics-scoring.ts:
-// truck + trailer + driver for the incident's calendar month), since
-// `tire_penalties` doesn't store a driver itself. Returns plain JSON and
-// converts failures into `{ success: false }` rather than throwing.
+type YearTyreDamageData = {
+  /** Every operational tyre damage for the year, newest first. */
+  incidents: TyreDamageIncidentDetail[]
+  /** Unique driver names present in `monthly_pairings` for the year. */
+  pairedDriverNames: string[]
+}
+
+// Shared loader behind the per-asset and per-driver Tyre Damages views.
+// Drivers are resolved from `monthly_pairings` (same join as
+// src/lib/logistics-scoring.ts: truck + trailer + driver for the
+// incident's calendar month), since `tire_penalties` doesn't store a
+// driver itself. Cranes are excluded to match the Motive Units chart,
+// which never includes them.
+async function loadYearTyreDamageData(
+  year: number
+): Promise<YearTyreDamageData> {
+  const yearStart = `${year}-01-01`
+  const yearEnd = `${year}-12-31`
+
+  const [penaltyRows, pairings] = await Promise.all([
+    db
+      .select({
+        id: tirePenaltiesTable.id,
+        visualId: tirePenaltiesTable.visualId,
+        date: sql<string>`(${tirePenaltiesTable.date})::date::text`,
+        amount: tirePenaltiesTable.amount,
+        reason: tirePenaltiesTable.reason,
+        assetName: assetsTable.assetName,
+        assetType: assetsTable.assetType,
+      })
+      .from(tirePenaltiesTable)
+      .innerJoin(assetsTable, eq(tirePenaltiesTable.assetId, assetsTable.id))
+      .where(
+        and(
+          sql`(${tirePenaltiesTable.date})::date >= ${yearStart}::date`,
+          sql`(${tirePenaltiesTable.date})::date <= ${yearEnd}::date`,
+          ne(tirePenaltiesTable.amount, 0)
+        )
+      )
+      .orderBy(
+        desc(sql`(${tirePenaltiesTable.date})::date`),
+        desc(tirePenaltiesTable.id)
+      ),
+    db.query.monthlyPairingsTable.findMany({
+      where: { activeMonth: { gte: yearStart, lte: yearEnd } },
+      with: { truck: true, trailer: true, driver: true },
+    }),
+  ])
+
+  // Keyed by `<assetName>:<YYYY-MM>`.
+  const driversByAssetMonth = new Map<string, Set<string>>()
+  const pairedByAssetMonth = new Map<string, Set<string>>()
+  const pairedDriverNames = new Set<string>()
+  for (const pairing of pairings) {
+    const month = pairing.activeMonth.slice(0, 7)
+    const truckKey = `${pairing.truck.assetName}:${month}`
+    const trailerKey = `${pairing.trailer.assetName}:${month}`
+    const driver = pairing.driver.name
+    if (driver.trim().length > 0) {
+      pairedDriverNames.add(driver)
+      addToSetMap(driversByAssetMonth, truckKey, driver)
+      addToSetMap(driversByAssetMonth, trailerKey, driver)
+    }
+    addToSetMap(
+      pairedByAssetMonth,
+      truckKey,
+      toCanonicalFleetNumber(pairing.trailer.assetName)
+    )
+    addToSetMap(
+      pairedByAssetMonth,
+      trailerKey,
+      toCanonicalFleetNumber(pairing.truck.assetName)
+    )
+  }
+
+  const incidents: TyreDamageIncidentDetail[] = []
+  for (const row of penaltyRows) {
+    if (row.assetType === "Crane") continue
+
+    const key = `${row.assetName}:${row.date.slice(0, 7)}`
+    const isTrailer =
+      row.assetType === "Trailer" || /TRAILER/i.test(row.assetName)
+
+    incidents.push({
+      id: row.id,
+      visualId: row.visualId,
+      date: row.date,
+      assetId: toCanonicalFleetNumber(row.assetName),
+      assetName: row.assetName,
+      assetType: isTrailer ? "Trailer" : "Truck",
+      reason: row.reason,
+      penaltyPoints: row.amount,
+      drivers: sortedValues(driversByAssetMonth.get(key)),
+      pairedAssets: sortedValues(pairedByAssetMonth.get(key)),
+    })
+  }
+
+  return { incidents, pairedDriverNames: sortedValues(pairedDriverNames) }
+}
+
+// Full incident list behind a Tyre Damages bar, newest first. Returns plain
+// JSON and converts failures into `{ success: false }` rather than throwing.
 export async function getTyreDamageIncidentDetails(
   input: GetTyreDamageIncidentDetailsInput
 ): Promise<TyreDamageIncidentDetailsResult> {
@@ -301,96 +398,23 @@ export async function getTyreDamageIncidentDetails(
     }
 
     const { year, assetId, driverName } = parsed.data
-    const yearStart = `${year}-01-01`
-    const yearEnd = `${year}-12-31`
-
-    const [penaltyRows, pairings] = await Promise.all([
-      db
-        .select({
-          id: tirePenaltiesTable.id,
-          visualId: tirePenaltiesTable.visualId,
-          date: sql<string>`(${tirePenaltiesTable.date})::date::text`,
-          amount: tirePenaltiesTable.amount,
-          reason: tirePenaltiesTable.reason,
-          assetName: assetsTable.assetName,
-          assetType: assetsTable.assetType,
-        })
-        .from(tirePenaltiesTable)
-        .innerJoin(assetsTable, eq(tirePenaltiesTable.assetId, assetsTable.id))
-        .where(
-          and(
-            sql`(${tirePenaltiesTable.date})::date >= ${yearStart}::date`,
-            sql`(${tirePenaltiesTable.date})::date <= ${yearEnd}::date`,
-            ne(tirePenaltiesTable.amount, 0)
-          )
-        )
-        .orderBy(
-          desc(sql`(${tirePenaltiesTable.date})::date`),
-          desc(tirePenaltiesTable.id)
-        ),
-      db.query.monthlyPairingsTable.findMany({
-        where: { activeMonth: { gte: yearStart, lte: yearEnd } },
-        with: { truck: true, trailer: true, driver: true },
-      }),
-    ])
-
-    // Keyed by `<assetDbId>:<YYYY-MM>`.
-    const driversByAssetMonth = new Map<string, Set<string>>()
-    const pairedByAssetMonth = new Map<string, Set<string>>()
-    for (const pairing of pairings) {
-      const month = pairing.activeMonth.slice(0, 7)
-      const truckKey = `${pairing.truck.assetName}:${month}`
-      const trailerKey = `${pairing.trailer.assetName}:${month}`
-      const driver = pairing.driver.name
-      if (driver.trim().length > 0) {
-        addToSetMap(driversByAssetMonth, truckKey, driver)
-        addToSetMap(driversByAssetMonth, trailerKey, driver)
-      }
-      addToSetMap(
-        pairedByAssetMonth,
-        truckKey,
-        toCanonicalFleetNumber(pairing.trailer.assetName)
-      )
-      addToSetMap(
-        pairedByAssetMonth,
-        trailerKey,
-        toCanonicalFleetNumber(pairing.truck.assetName)
-      )
-    }
+    const { incidents } = await loadYearTyreDamageData(year)
 
     const wantedAsset = assetId ? toCanonicalFleetNumber(assetId) : null
     const wantedDriver = driverName?.trim().toLowerCase() ?? null
 
-    const data: TyreDamageIncidentDetail[] = []
-    for (const row of penaltyRows) {
-      const canonicalId = toCanonicalFleetNumber(row.assetName)
-      if (wantedAsset && canonicalId !== wantedAsset) continue
-
-      const key = `${row.assetName}:${row.date.slice(0, 7)}`
-      const drivers = sortedValues(driversByAssetMonth.get(key))
+    const data = incidents.filter((incident) => {
+      if (wantedAsset && incident.assetId !== wantedAsset) return false
       if (
         wantedDriver &&
-        !drivers.some((name) => name.trim().toLowerCase() === wantedDriver)
+        !incident.drivers.some(
+          (name) => name.trim().toLowerCase() === wantedDriver
+        )
       ) {
-        continue
+        return false
       }
-
-      const isTrailer =
-        row.assetType === "Trailer" || /TRAILER/i.test(row.assetName)
-
-      data.push({
-        id: row.id,
-        visualId: row.visualId,
-        date: row.date,
-        assetId: canonicalId,
-        assetName: row.assetName,
-        assetType: isTrailer ? "Trailer" : "Truck",
-        reason: row.reason,
-        penaltyPoints: row.amount,
-        drivers,
-        pairedAssets: sortedValues(pairedByAssetMonth.get(key)),
-      })
-    }
+      return true
+    })
 
     return { success: true, data }
   } catch (error) {
@@ -403,4 +427,87 @@ export async function getTyreDamageIncidentDetails(
           : "Could not load tyre damage incidents.",
     }
   }
+}
+
+export type TireDamageDriverCount = {
+  driverName: string
+  truckDamages: number
+  trailerDamages: number
+  /** `truckDamages + trailerDamages`. */
+  totalDamages: number
+  /** Unique canonical truck IDs (`MTL...`) involved. */
+  truckIds: string[]
+  /** Unique canonical trailer IDs (`MT...`) involved. */
+  trailerIds: string[]
+}
+
+// Combined Truck + Trailer operational tyre damages per driver for a year.
+// Each incident is credited to every driver paired to that asset in the
+// incident's month (identical to the modal's driver filter, so bar totals
+// always match the incident list). Every driver present in
+// `monthly_pairings` for the year is included, even with 0 damages, so
+// the driver filter can select any active driver.
+export async function getTireDamagesByDriver(
+  year: number
+): Promise<TireDamageDriverCount[]> {
+  await requireLogisticsAccess()
+
+  const data = getTireDamagesByAssetSchema.parse({ year })
+  const { incidents, pairedDriverNames } = await loadYearTyreDamageData(
+    data.year
+  )
+
+  type Accumulator = {
+    driverName: string
+    truckDamages: number
+    trailerDamages: number
+    truckIds: Set<string>
+    trailerIds: Set<string>
+  }
+
+  // Keyed by lower-cased trimmed name, matching the modal's driver match.
+  const byDriver = new Map<string, Accumulator>()
+  for (const name of pairedDriverNames) {
+    const key = name.trim().toLowerCase()
+    if (byDriver.has(key)) continue
+    byDriver.set(key, {
+      driverName: name.trim(),
+      truckDamages: 0,
+      trailerDamages: 0,
+      truckIds: new Set(),
+      trailerIds: new Set(),
+    })
+  }
+
+  for (const incident of incidents) {
+    const credited = new Set(
+      incident.drivers.map((name) => name.trim().toLowerCase())
+    )
+    for (const key of credited) {
+      const entry = byDriver.get(key)
+      if (!entry) continue
+      if (incident.assetType === "Trailer") {
+        entry.trailerDamages += 1
+        entry.trailerIds.add(incident.assetId)
+      } else {
+        entry.truckDamages += 1
+        entry.truckIds.add(incident.assetId)
+      }
+    }
+  }
+
+  return [...byDriver.values()]
+    .map((entry) => ({
+      driverName: entry.driverName,
+      truckDamages: entry.truckDamages,
+      trailerDamages: entry.trailerDamages,
+      totalDamages: entry.truckDamages + entry.trailerDamages,
+      truckIds: sortedValues(entry.truckIds),
+      trailerIds: sortedValues(entry.trailerIds),
+    }))
+    .sort(
+      (a, b) =>
+        b.totalDamages - a.totalDamages ||
+        a.driverName.localeCompare(b.driverName)
+    )
 }
