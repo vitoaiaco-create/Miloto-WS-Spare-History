@@ -39,6 +39,14 @@ import {
   ChartTooltip,
   type ChartConfig,
 } from "@/components/ui/chart"
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -81,6 +89,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import type {
+  DriverCombinedYieldScore,
   LogisticsEntityType,
   MatrixClass,
   MonthlyYieldScore,
@@ -187,14 +196,35 @@ const chartConfig = {
   classD: { label: "Class D", color: CLASS_FILL["Class D"] },
 } satisfies ChartConfig
 
-type EntityFilter = "all" | LogisticsEntityType
+type YieldPoint = MonthlyYieldScore | DriverCombinedYieldScore
+
+type EntityFilter = "all" | LogisticsEntityType | "DriverCombined"
 
 const ENTITY_FILTERS: { value: EntityFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "Truck", label: "Trucks" },
   { value: "Trailer", label: "Trailers" },
   { value: "Driver", label: "Drivers" },
+  { value: "DriverCombined", label: "Driver (Combined)" },
 ]
+
+const ALL_DRIVERS_LABEL = "All Drivers"
+
+// Toggle-pill styling per class: filled in the class color when active,
+// muted outline when switched off.
+const CLASS_PILL_ACTIVE: Record<MatrixClass, string> = {
+  "Class A": "border-green-600 bg-green-600 text-white hover:bg-green-600/90",
+  "Class B": "border-blue-600 bg-blue-600 text-white hover:bg-blue-600/90",
+  "Class C": "border-orange-500 bg-orange-500 text-white hover:bg-orange-500/90",
+  "Class D": "border-red-600 bg-red-600 text-white hover:bg-red-600/90",
+}
+
+const CLASS_PILL_INACTIVE: Record<MatrixClass, string> = {
+  "Class A": "border-green-600/40 bg-transparent text-green-700 dark:text-green-400",
+  "Class B": "border-blue-600/40 bg-transparent text-blue-700 dark:text-blue-400",
+  "Class C": "border-orange-500/40 bg-transparent text-orange-700 dark:text-orange-400",
+  "Class D": "border-red-600/40 bg-transparent text-red-700 dark:text-red-400",
+}
 
 const SCORING_RULES: {
   category: string
@@ -360,18 +390,24 @@ function isEntityFilter(value: string | null): value is EntityFilter {
     value === "all" ||
     value === "Truck" ||
     value === "Trailer" ||
-    value === "Driver"
+    value === "Driver" ||
+    value === "DriverCombined"
   )
 }
 
-function isYieldScore(value: unknown): value is MonthlyYieldScore {
+function isCombinedPoint(point: YieldPoint): point is DriverCombinedYieldScore {
+  return point.entityType === "DriverCombined"
+}
+
+function isYieldScore(value: unknown): value is YieldPoint {
   if (!value || typeof value !== "object") return false
 
-  const point = value as Partial<MonthlyYieldScore>
+  const point = value as Partial<YieldPoint>
   return (
     (point.entityType === "Truck" ||
       point.entityType === "Trailer" ||
-      point.entityType === "Driver") &&
+      point.entityType === "Driver" ||
+      point.entityType === "DriverCombined") &&
     typeof point.name === "string" &&
     typeof point.totalMileageKm === "number" &&
     typeof point.isEstimated === "boolean" &&
@@ -466,7 +502,7 @@ function YieldDot({
 }: {
   cx?: number
   cy?: number
-  payload?: MonthlyYieldScore
+  payload?: YieldPoint
 }) {
   if (typeof cx !== "number" || typeof cy !== "number" || !isYieldScore(payload)) {
     return <g />
@@ -494,19 +530,28 @@ function YieldTooltip({
   const point = payload?.[0]?.payload
   if (!active || !isYieldScore(point)) return null
 
-  const rows = [
-    [
-      "Mileage",
-      point.isEstimated
-        ? `${formatKm(point.totalMileageKm)} (Est.)`
-        : formatKm(point.totalMileageKm),
-    ],
+  const combined = isCombinedPoint(point)
+  const mileageLabel = point.isEstimated
+    ? `${formatKm(point.totalMileageKm)} (Est.)`
+    : formatKm(point.totalMileageKm)
+
+  const rows: Array<readonly [string, string]> = [
+    [combined ? "Mileage (truck)" : "Mileage", mileageLabel],
+    ...(combined
+      ? ([
+          [`Truck score (${point.truckName})`, formatPoints(point.truckScore)],
+          [
+            `Trailer score (${point.trailerName})`,
+            formatPoints(point.trailerScore),
+          ],
+        ] as const)
+      : []),
     ["Distance points", formatPoints(point.productivityPoints)],
     ["Safe driving", formatPoints(point.safeDrivingBonus)],
     ["Tire penalty", formatPoints(point.tirePenaltyPoints)],
     ["Suspension penalty", formatPoints(point.suspensionPenaltyPoints)],
-    ["Net score", formatPoints(point.netScore)],
-  ] as const
+    [combined ? "Combined net score" : "Net score", formatPoints(point.netScore)],
+  ]
 
   return (
     <div className="grid min-w-52 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs shadow-xl">
@@ -514,7 +559,13 @@ function YieldTooltip({
         <span className="font-medium">{point.name}</span>
         <ClassBadge matrixClass={point.matrixClass} />
       </div>
-      <p className="text-muted-foreground">{point.entityType}</p>
+      <p className="text-muted-foreground">
+        {combined
+          ? `Driver (Combined) — ${point.truckName} + ${point.trailerName}`
+          : point.entityType === "Driver" || point.driverName.length === 0
+            ? point.entityType
+            : `${point.entityType} — Driver: ${point.driverName}`}
+      </p>
       <dl className="grid gap-1">
         {rows.map(([label, value]) => (
           <div key={label} className="flex items-center justify-between gap-4">
@@ -531,30 +582,99 @@ function YieldTooltip({
 
 function YieldMatrix({
   data,
+  driverCombinedData,
   periodLabel,
 }: {
   data: MonthlyYieldScore[]
+  driverCombinedData: DriverCombinedYieldScore[]
   periodLabel: string
 }) {
   const [entityFilter, setEntityFilter] = useState<EntityFilter>("all")
-  const points = useMemo(
+  const [driverFilter, setDriverFilter] = useState<string>(ALL_DRIVERS_LABEL)
+  const [activeClasses, setActiveClasses] = useState<MatrixClass[]>([
+    ...MATRIX_CLASSES,
+  ])
+
+  const driverOptions = useMemo(() => {
+    const names = new Set<string>()
+    for (const row of driverCombinedData) names.add(row.driverName)
+    for (const row of data) {
+      for (const name of row.driverNames) names.add(name)
+    }
+    return [
+      ALL_DRIVERS_LABEL,
+      ...[...names]
+        .filter((name) => name.trim().length > 0)
+        .sort((a, b) => a.localeCompare(b)),
+    ]
+  }, [data, driverCombinedData])
+
+  const driverSelected = driverFilter !== ALL_DRIVERS_LABEL
+  const allClassesActive = activeClasses.length === MATRIX_CLASSES.length
+
+  const points = useMemo<YieldPoint[]>(() => {
+    let base: YieldPoint[]
+    if (entityFilter === "DriverCombined") {
+      base = driverCombinedData
+    } else if (entityFilter === "all") {
+      base = data
+    } else {
+      base = data.filter((score) => score.entityType === entityFilter)
+    }
+
+    return base.filter((point) => {
+      if (!activeClasses.includes(point.matrixClass)) return false
+      if (!driverSelected) return true
+      return isCombinedPoint(point)
+        ? point.driverName === driverFilter
+        : point.driverNames.includes(driverFilter)
+    })
+  }, [
+    activeClasses,
+    data,
+    driverCombinedData,
+    driverFilter,
+    driverSelected,
+    entityFilter,
+  ])
+
+  const driverRigs = useMemo(
     () =>
-      entityFilter === "all"
-        ? data
-        : data.filter((score) => score.entityType === entityFilter),
-    [data, entityFilter]
+      driverSelected
+        ? driverCombinedData.filter((rig) => rig.driverName === driverFilter)
+        : [],
+    [driverCombinedData, driverFilter, driverSelected]
   )
 
+  function handleDriverChange(value: string | null) {
+    const next = value && value.length > 0 ? value : ALL_DRIVERS_LABEL
+    setDriverFilter(next)
+    // Picking a specific driver shows their coupled truck + trailer rig.
+    if (next !== ALL_DRIVERS_LABEL && entityFilter === "all") {
+      setEntityFilter("DriverCombined")
+    }
+  }
+
+  function toggleClass(matrixClass: MatrixClass) {
+    setActiveClasses((current) =>
+      current.includes(matrixClass)
+        ? current.filter((entry) => entry !== matrixClass)
+        : MATRIX_CLASSES.filter(
+            (entry) => entry === matrixClass || current.includes(entry)
+          )
+    )
+  }
+
   return (
-    <Card>
+    <Card size="sm">
       <CardHeader>
         <CardTitle>Yield Matrix (Chart)</CardTitle>
         <CardDescription>
           Net score from −20 to +45 against total mileage for {periodLabel}.
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="logistics-entity-type">Entity type</Label>
             <Select
@@ -575,29 +695,94 @@ function YieldMatrix({
               </SelectContent>
             </Select>
           </div>
-          <ul className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
-            {MATRIX_CLASSES.map((matrixClass) => (
-              <li key={matrixClass} className="flex items-center gap-1.5">
-                <span
-                  className="size-2.5 rounded-full"
-                  style={{ backgroundColor: CLASS_FILL[matrixClass] }}
-                />
-                {matrixClass}
-              </li>
-            ))}
-          </ul>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="logistics-driver-filter">Driver</Label>
+            <Combobox
+              items={driverOptions}
+              value={driverFilter}
+              onValueChange={handleDriverChange}
+              autoHighlight
+            >
+              <ComboboxInput
+                id="logistics-driver-filter"
+                placeholder="Search drivers..."
+                className="w-[220px]"
+              />
+              <ComboboxContent>
+                <ComboboxEmpty>No drivers found.</ComboboxEmpty>
+                <ComboboxList>
+                  {(item: string) => (
+                    <ComboboxItem key={item} value={item}>
+                      {item}
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm leading-none font-medium">Class</span>
+            <div
+              role="group"
+              aria-label="Filter by class"
+              className="flex flex-wrap items-center gap-1.5"
+            >
+              {MATRIX_CLASSES.map((matrixClass) => {
+                const pressed = activeClasses.includes(matrixClass)
+                return (
+                  <Button
+                    key={matrixClass}
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    aria-pressed={pressed}
+                    className={`rounded-full ${
+                      pressed
+                        ? CLASS_PILL_ACTIVE[matrixClass]
+                        : CLASS_PILL_INACTIVE[matrixClass]
+                    }`}
+                    onClick={() => toggleClass(matrixClass)}
+                  >
+                    {matrixClass}
+                  </Button>
+                )
+              })}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={allClassesActive}
+                onClick={() => setActiveClasses([...MATRIX_CLASSES])}
+              >
+                Reset / All
+              </Button>
+            </div>
+          </div>
         </div>
 
+        {driverRigs.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {driverRigs.map((rig) => (
+              <Badge
+                key={`${rig.driverId}-${rig.truckId}-${rig.trailerId}`}
+                variant="outline"
+              >
+                {rig.driverName} — {rig.truckName} + {rig.trailerName}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
+
         {points.length === 0 ? (
-          <p className="py-16 text-center text-sm text-muted-foreground">
-            No yield scores for this entity type in {periodLabel}.
+          <p className="py-12 text-center text-sm text-muted-foreground">
+            No yield scores match the current filters in {periodLabel}.
           </p>
         ) : (
           <ChartContainer
             config={chartConfig}
-            className="aspect-auto h-[420px] w-full"
+            className="aspect-auto h-[380px] w-full lg:h-[430px]"
           >
-            <ScatterChart margin={{ top: 12, right: 16, bottom: 28, left: 20 }}>
+            <ScatterChart margin={{ top: 8, right: 12, bottom: 24, left: 12 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis
                 type="number"
@@ -606,6 +791,7 @@ function YieldMatrix({
                 domain={[-20, 45]}
                 allowDataOverflow
                 ticks={[-20, -10, 0, 10, 20, 30, 45]}
+                padding={{ left: 28, right: 28 }}
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
@@ -622,7 +808,8 @@ function YieldMatrix({
                 dataKey="totalMileageKm"
                 name="Total mileage"
                 domain={[0, "auto"]}
-                width={72}
+                padding={{ top: 16, bottom: 16 }}
+                width={68}
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
@@ -1699,6 +1886,7 @@ function ScoringRules() {
 
 export function LogisticsDashboard({
   data,
+  driverCombinedData,
   motiveData,
   operatorData,
   tireDamages,
@@ -1706,6 +1894,7 @@ export function LogisticsDashboard({
   month,
 }: {
   data: MonthlyYieldScore[]
+  driverCombinedData: DriverCombinedYieldScore[]
   motiveData: MotiveUnitYieldScore[]
   operatorData: OperatorYieldScore[]
   tireDamages: TireDamagesByFleetType
@@ -1737,7 +1926,11 @@ export function LogisticsDashboard({
         </TabsTrigger>
       </TabsList>
       <TabsContent value="matrix">
-        <YieldMatrix data={data} periodLabel={periodLabel} />
+        <YieldMatrix
+          data={data}
+          driverCombinedData={driverCombinedData}
+          periodLabel={periodLabel}
+        />
       </TabsContent>
       <TabsContent value="rankings">
         <AssetRankings

@@ -44,6 +44,33 @@ export type MonthlyYieldScore = {
   suspensionPenaltyPoints: number
   netScore: number
   matrixClass: MatrixClass
+  // Driver(s) paired to this entity in `monthly_pairings` for the month
+  // (comma-joined for display; `driverNames` is the exact list used for
+  // filtering). Driver rows carry their own name.
+  driverName: string
+  driverNames: string[]
+}
+
+// One coupled rig (driver + truck + trailer) for the month, scored as a
+// single unit. Mileage is the truck's (trailer only as a fallback) so the
+// coupled rig is never double-counted.
+export type DriverCombinedYieldScore = Omit<
+  MonthlyYieldScore,
+  "entityType" | "driverNames"
+> & {
+  entityType: "DriverCombined"
+  driverId: number
+  truckId: number
+  trailerId: number
+  truckName: string
+  trailerName: string
+  truckScore: number
+  trailerScore: number
+}
+
+export type MonthlyYieldMatrix = {
+  scores: MonthlyYieldScore[]
+  driverCombined: DriverCombinedYieldScore[]
 }
 
 export type PenaltyDetail = {
@@ -491,6 +518,7 @@ function finalize(draft: {
   productivityPoints: number
   tirePenaltyPoints: number
   suspensionPenaltyPoints: number
+  driverNames: string[]
 }): MonthlyYieldScore {
   const penalties = draft.tirePenaltyPoints + draft.suspensionPenaltyPoints
   const safeDrivingBonus = safeDrivingBonusFor(penalties)
@@ -502,13 +530,32 @@ function finalize(draft: {
     safeDrivingBonus,
     netScore,
     matrixClass: monthlyMatrixClassFor(netScore),
+    driverName: draft.driverNames.join(", "),
   }
+}
+
+// Chart score range: 0 penalties + 25 distance + 20 stipend = 45 at best.
+const MIN_MONTHLY_SCORE = -20
+const MAX_MONTHLY_SCORE = 45
+
+function clampMonthlyScore(score: number) {
+  return Math.min(MAX_MONTHLY_SCORE, Math.max(MIN_MONTHLY_SCORE, score))
 }
 
 export async function calculateMonthlyYield(
   year: number,
   month: number
 ): Promise<MonthlyYieldScore[]> {
+  const { scores } = await calculateMonthlyYieldMatrix(year, month)
+  return scores
+}
+
+// Yield Matrix payload: per-asset / per-driver rows plus driver-level
+// combined rig rows (truck + trailer scored together).
+export async function calculateMonthlyYieldMatrix(
+  year: number,
+  month: number
+): Promise<MonthlyYieldMatrix> {
   assertCalendarMonth(year, month)
 
   const { startOfMonth, endOfMonth } = monthBounds(year, month)
@@ -880,6 +927,18 @@ export async function calculateMonthlyYield(
 
   const emittedAssets = new Set<number>()
   const scores: MonthlyYieldScore[] = []
+  const scoreByAsset = new Map<number, MonthlyYieldScore>()
+
+  // Drivers paired to the asset in `monthly_pairings` this month. Drivers
+  // only known from tire incidents are deliberately not attributed here.
+  function pairedDriverNamesForAsset(assetId: number) {
+    const names = new Set<string>()
+    for (const driverId of driversByAsset.get(assetId) ?? []) {
+      const name = driverNames.get(driverId)
+      if (name && name.trim().length > 0) names.add(name)
+    }
+    return [...names].sort((a, b) => a.localeCompare(b))
+  }
 
   function pushAsset(
     entityType: "Truck" | "Trailer",
@@ -892,18 +951,19 @@ export async function calculateMonthlyYield(
     if (!asset) return
 
     emittedAssets.add(assetId)
-    scores.push(
-      finalize({
-        entityType,
-        entityId: assetId,
-        name: asset.name,
-        totalMileageKm: movement.km,
-        isEstimated: movement.isEstimated,
-        productivityPoints: movement.productivity,
-        tirePenaltyPoints: tireByAsset.get(assetId) ?? 0,
-        suspensionPenaltyPoints: suspensionByAsset.get(assetId) ?? 0,
-      })
-    )
+    const score = finalize({
+      entityType,
+      entityId: assetId,
+      name: asset.name,
+      totalMileageKm: movement.km,
+      isEstimated: movement.isEstimated,
+      productivityPoints: movement.productivity,
+      tirePenaltyPoints: tireByAsset.get(assetId) ?? 0,
+      suspensionPenaltyPoints: suspensionByAsset.get(assetId) ?? 0,
+      driverNames: pairedDriverNamesForAsset(assetId),
+    })
+    scoreByAsset.set(assetId, score)
+    scores.push(score)
   }
 
   for (const [assetId, movement] of truckMovement) {
@@ -949,16 +1009,18 @@ export async function calculateMonthlyYield(
       productivity: 0,
       isEstimated: false,
     }
+    const driverName = driverNames.get(driverId) ?? `Driver ${driverId}`
     scores.push(
       finalize({
         entityType: "Driver",
         entityId: driverId,
-        name: driverNames.get(driverId) ?? `Driver ${driverId}`,
+        name: driverName,
         totalMileageKm: movement.km,
         isEstimated: movement.isEstimated,
         productivityPoints: movement.productivity,
         tirePenaltyPoints: tireByDriver.get(driverId) ?? 0,
         suspensionPenaltyPoints: suspensionByDriver.get(driverId) ?? 0,
+        driverNames: [driverName],
       })
     )
   }
@@ -976,7 +1038,81 @@ export async function calculateMonthlyYield(
       a.entityId - b.entityId
   )
 
-  return scores
+  // Driver (Combined): one record per coupled rig (driver + truck + trailer).
+  // Penalties from both units are pooled, the stipend is judged on the pooled
+  // total, and mileage is the truck's — the trailer's only when the truck has
+  // none — so a coupled rig's distance is never counted twice.
+  const seenRigs = new Set<string>()
+  const driverCombined: DriverCombinedYieldScore[] = []
+
+  for (const pairing of pairings) {
+    const { truck, trailer, driver } = pairing
+    const rigKey = `${driver.id}:${truck.id}:${trailer.id}`
+    if (seenRigs.has(rigKey)) continue
+    seenRigs.add(rigKey)
+
+    const truckMovementEntry = truckMovement.get(truck.id)
+    const trailerMovementEntry = trailerMovement.get(trailer.id)
+    const truckKm = truckMovementEntry?.km ?? 0
+    const trailerKm = trailerMovementEntry?.km ?? 0
+    const usesTruckMileage = truckKm > 0
+    const mileageKm = usesTruckMileage ? truckKm : trailerKm
+    const isEstimated = usesTruckMileage
+      ? (truckMovementEntry?.isEstimated ?? false)
+      : (trailerMovementEntry?.isEstimated ?? false)
+    const productivityPoints = productivityPointsForKm(mileageKm)
+
+    const truckTire = tireByAsset.get(truck.id) ?? 0
+    const trailerTire = tireByAsset.get(trailer.id) ?? 0
+    const truckSuspension = suspensionByAsset.get(truck.id) ?? 0
+    const trailerSuspension = suspensionByAsset.get(trailer.id) ?? 0
+    const tirePenaltyPoints = truckTire + trailerTire
+    const suspensionPenaltyPoints = truckSuspension + trailerSuspension
+    const penalties = tirePenaltyPoints + suspensionPenaltyPoints
+    const safeDrivingBonus = safeDrivingBonusFor(penalties)
+    const netScore = clampMonthlyScore(
+      productivityPoints + safeDrivingBonus + penalties
+    )
+
+    // Individual unit scores shown in the tooltip; fall back to a derived
+    // score if the asset row was not emitted.
+    const unitScore = (assetId: number, unitPenalties: number) =>
+      scoreByAsset.get(assetId)?.netScore ??
+      productivityPoints +
+        safeDrivingBonusFor(unitPenalties) +
+        unitPenalties
+
+    driverCombined.push({
+      entityType: "DriverCombined",
+      entityId: driver.id,
+      driverId: driver.id,
+      name: driver.name,
+      driverName: driver.name,
+      truckId: truck.id,
+      trailerId: trailer.id,
+      truckName: truck.assetName,
+      trailerName: trailer.assetName,
+      truckScore: unitScore(truck.id, truckTire + truckSuspension),
+      trailerScore: unitScore(trailer.id, trailerTire + trailerSuspension),
+      totalMileageKm: roundKm(mileageKm),
+      isEstimated,
+      productivityPoints,
+      safeDrivingBonus,
+      tirePenaltyPoints,
+      suspensionPenaltyPoints,
+      netScore,
+      matrixClass: monthlyMatrixClassFor(netScore),
+    })
+  }
+
+  driverCombined.sort(
+    (a, b) =>
+      a.driverName.localeCompare(b.driverName) ||
+      a.truckName.localeCompare(b.truckName) ||
+      a.trailerName.localeCompare(b.trailerName)
+  )
+
+  return { scores, driverCombined }
 }
 
 async function loadYtdWindow(year: number, endMonth: number) {

@@ -5,7 +5,7 @@ import { getTireDamagesByAsset } from "@/actions/logistics"
 import { LogisticsDashboard } from "@/components/logistics-dashboard"
 import { getLatestCompletedMonth } from "@/lib/iso-date"
 import {
-  calculateMonthlyYield,
+  calculateMonthlyYieldMatrix,
   calculateMotiveUnitYield,
   calculateOperatorYield,
 } from "@/lib/logistics-scoring"
@@ -33,8 +33,8 @@ export default async function LogisticsAnalyticsPage() {
 
   const { year, month } = getLatestCompletedMonth()
 
-  const [yieldData, motiveData, operatorData, tireDamages] = await Promise.all([
-    calculateMonthlyYield(year, month),
+  const [yieldMatrix, motiveData, operatorData, tireDamages] = await Promise.all([
+    calculateMonthlyYieldMatrix(year, month),
     calculateMotiveUnitYield(year, month),
     calculateOperatorYield(year, month),
     getTireDamagesByAsset(year),
@@ -42,7 +42,8 @@ export default async function LogisticsAnalyticsPage() {
 
   return (
     <LogisticsDashboard
-      data={yieldData}
+      data={yieldMatrix.scores}
+      driverCombinedData={yieldMatrix.driverCombined}
       motiveData={motiveData}
       operatorData={operatorData}
       tireDamages={tireDamages}
