@@ -7,6 +7,7 @@ import { FleetCoverageView } from "@/components/diagnostics/fleet-coverage-view"
 import { FleetFaultIntelligence } from "@/components/diagnostics/fleet-fault-intelligence"
 import { NewPttScanPanel } from "@/components/diagnostics/new-ptt-scan-panel"
 import { PttDirectiveModal } from "@/components/diagnostics/ptt-directive-modal"
+import { PttExportDialogButton } from "@/components/diagnostics/ptt-export-dialog-button"
 import { PttVerificationSection } from "@/components/diagnostics/ptt-verification-section"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -61,16 +62,27 @@ export function DiagnosticsWorkspace({
     base: PttSessionWithRelations[]
   } | null>(null)
 
+  // Scans deleted in this browser session. Hidden immediately (before the
+  // server re-read lands) so the KPIs, coverage list and intelligence inputs
+  // update right away. Ids are never reused, so the set can safely linger.
+  const [deletedSessionIds, setDeletedSessionIds] = useState<
+    ReadonlySet<number>
+  >(() => new Set())
+
   const effectiveSessions = useMemo(() => {
+    const live =
+      deletedSessionIds.size === 0
+        ? serverSessions
+        : serverSessions.filter((session) => !deletedSessionIds.has(session.id))
     if (!verifiedOverride || verifiedOverride.base !== serverSessions) {
-      return serverSessions
+      return live
     }
-    return serverSessions.map((session) =>
+    return live.map((session) =>
       session.id === verifiedOverride.session.id
         ? verifiedOverride.session
         : session
     )
-  }, [serverSessions, verifiedOverride])
+  }, [serverSessions, verifiedOverride, deletedSessionIds])
 
   const sessions = effectiveSessions
 
@@ -150,6 +162,25 @@ export function DiagnosticsWorkspace({
     setCreatedSession(null)
   }, [])
 
+  // A scan was deleted from Fleet Coverage or the directive modal: drop every
+  // local reference to it, close the modal if it was open, and re-run the
+  // server reads so Sweep Progress, KPIs, coverage and Fleet Fault
+  // Intelligence all refresh.
+  const handleSessionDeleted = useCallback(
+    (sessionId: number) => {
+      setDeletedSessionIds((ids) => new Set(ids).add(sessionId))
+      setCreatedSession((current) => (current?.id === sessionId ? null : current))
+      setVerifiedOverride((current) =>
+        current?.session.id === sessionId ? null : current
+      )
+      setSelectedSessionId((current) =>
+        current === sessionId ? null : current
+      )
+      router.refresh()
+    },
+    [router]
+  )
+
   const startScan = useCallback((fleetId: string | null) => {
     setScanFleetId(fleetId)
     setScanToken((token) => token + 1)
@@ -170,6 +201,11 @@ export function DiagnosticsWorkspace({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Always accessible, whichever tab is open. */}
+      <div className="flex justify-end">
+        <PttExportDialogButton sessions={sessions} />
+      </div>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card size="sm" className="sm:col-span-2 lg:col-span-1">
           <CardHeader>
@@ -241,6 +277,7 @@ export function DiagnosticsWorkspace({
             sessions={sessions}
             onViewDirective={openDirective}
             onScanTruck={startScan}
+            onSessionDeleted={handleSessionDeleted}
           />
         </TabsContent>
 
@@ -257,6 +294,7 @@ export function DiagnosticsWorkspace({
         <TabsContent value="intelligence" keepMounted>
           <FleetFaultIntelligence
             recurringFaults={recurringFaults}
+            sessions={sessions}
             onOpenFleet={openFleetDirective}
           />
         </TabsContent>
@@ -267,6 +305,7 @@ export function DiagnosticsWorkspace({
         fleetSessions={selectedFleetSessions}
         onSelectSession={setSelectedSessionId}
         onClose={closeDirective}
+        onSessionDeleted={handleSessionDeleted}
         verificationSlot={
           selectedSession ? (
             <PttVerificationSection

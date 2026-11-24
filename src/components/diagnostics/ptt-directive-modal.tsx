@@ -28,15 +28,7 @@ import {
   SEVERITY_LABELS,
   SeverityBadge,
 } from "@/components/diagnostics/diagnostics-badges"
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { DeleteScanDialog } from "@/components/diagnostics/delete-scan-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -48,7 +40,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -68,10 +59,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { toast } from "@/components/ui/toast"
-import {
-  deletePttSession,
-  updatePttSessionStatus,
-} from "@/actions/ptt-diagnostics"
+import { updatePttSessionStatus } from "@/actions/ptt-diagnostics"
 import {
   PTT_SESSION_STATUSES,
   PTT_SEVERITY_RANK,
@@ -185,6 +173,7 @@ export function PttDirectiveModal({
   fleetSessions,
   onSelectSession,
   onClose,
+  onSessionDeleted,
   verificationSlot,
 }: {
   /** The scan to show. `null` keeps the modal closed. */
@@ -193,6 +182,8 @@ export function PttDirectiveModal({
   fleetSessions: PttSessionWithRelations[]
   onSelectSession: (sessionId: number) => void
   onClose: () => void
+  /** Called after a scan (the one shown) was deleted; the parent syncs state. */
+  onSessionDeleted: (sessionId: number) => void
   /** Slot for the Before/After Re-Scan Verification uploader and audit card. */
   verificationSlot?: ReactNode
 }) {
@@ -212,7 +203,7 @@ export function PttDirectiveModal({
             session={session}
             fleetSessions={fleetSessions}
             onSelectSession={onSelectSession}
-            onClose={onClose}
+            onSessionDeleted={onSessionDeleted}
             verificationSlot={verificationSlot}
           />
         )}
@@ -225,13 +216,13 @@ function ModalBody({
   session,
   fleetSessions,
   onSelectSession,
-  onClose,
+  onSessionDeleted,
   verificationSlot,
 }: {
   session: PttSessionWithRelations
   fleetSessions: PttSessionWithRelations[]
   onSelectSession: (sessionId: number) => void
-  onClose: () => void
+  onSessionDeleted: (sessionId: number) => void
   verificationSlot?: ReactNode
 }) {
   const router = useRouter()
@@ -248,7 +239,6 @@ function ModalBody({
 
   const [faultFilter, setFaultFilter] = useState<FaultFilter>("ALL")
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
 
   const whatsappMessage = useMemo(
     () => formatPttDirectiveForWhatsApp(session),
@@ -327,31 +317,6 @@ function ModalBody({
     }
   }
 
-  async function handleDelete() {
-    setIsDeleting(true)
-    try {
-      const result = await deletePttSession(session.id)
-      if (!result.success) {
-        toast.add({
-          title: "Could not delete scan",
-          description: result.error,
-          type: "error",
-        })
-        return
-      }
-      setConfirmDelete(false)
-      onClose()
-      toast.add({
-        title: "Scan deleted",
-        description: `The ${fleetId} scan and its screenshots were removed.`,
-        type: "success",
-      })
-      router.refresh()
-    } finally {
-      setIsDeleting(false)
-    }
-  }
-
   return (
     <>
       <DialogHeader className="gap-3 border-b p-4 pr-12">
@@ -426,24 +391,35 @@ function ModalBody({
         )}
       </DialogHeader>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-muted/40 p-3">
-          <span className="mr-auto text-sm font-medium">WhatsApp Dispatch</span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={copyForWhatsApp}
-          >
-            <CopyIcon data-icon="inline-start" />
-            Copy for WhatsApp
-          </Button>
-          <Button type="button" size="sm" onClick={shareOnWhatsApp}>
-            <MessageCircleIcon data-icon="inline-start" />
-            Share on WhatsApp
-          </Button>
-        </div>
+      {/* Pinned action bar: sits outside the scrolling body so WhatsApp
+          dispatch and Delete Scan are always on screen. */}
+      <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-4 py-2.5">
+        <span className="mr-auto text-sm font-medium">Actions</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={copyForWhatsApp}
+        >
+          <CopyIcon data-icon="inline-start" />
+          Copy for WhatsApp
+        </Button>
+        <Button type="button" size="sm" onClick={shareOnWhatsApp}>
+          <MessageCircleIcon data-icon="inline-start" />
+          Share on WhatsApp
+        </Button>
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          onClick={() => setConfirmDelete(true)}
+        >
+          <Trash2Icon data-icon="inline-start" />
+          Delete Scan
+        </Button>
+      </div>
 
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
         {session.workshopContext?.trim() && (
           <div className="rounded-xl border border-dashed p-3 text-sm">
             <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
@@ -743,50 +719,13 @@ function ModalBody({
         )}
       </div>
 
-      <DialogFooter className="m-0 rounded-b-xl sm:justify-between">
-        <Button
-          type="button"
-          variant="destructive"
-          onClick={() => setConfirmDelete(true)}
-        >
-          <Trash2Icon data-icon="inline-start" />
-          Delete Scan
-        </Button>
-        <Button type="button" variant="outline" onClick={onClose}>
-          Close
-        </Button>
-      </DialogFooter>
-
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this scan?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This permanently deletes the {fleetId} scan from{" "}
-              {formatScanDate(session.scannedAt)}, including its fault codes,
-              directive and archived screenshots. This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-            {/* Not an AlertDialogAction: that closes the dialog before the
-                delete has finished (and can fail). */}
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={isDeleting}
-              onClick={() => void handleDelete()}
-            >
-              {isDeleting ? (
-                <Loader2Icon data-icon="inline-start" className="animate-spin" />
-              ) : (
-                <Trash2Icon data-icon="inline-start" />
-              )}
-              Delete Scan
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Deletes the scan currently shown, whether it is the latest or an
+          older one picked from the scan-history dropdown. */}
+      <DeleteScanDialog
+        scan={confirmDelete ? session : null}
+        onOpenChange={setConfirmDelete}
+        onDeleted={onSessionDeleted}
+      />
     </>
   )
 }

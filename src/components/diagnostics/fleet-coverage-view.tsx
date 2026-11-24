@@ -1,9 +1,17 @@
 "use client"
 
 import { format } from "date-fns"
-import { ArrowDownAZ, FileText, ScanLine, Search, Layers } from "lucide-react"
+import {
+  ArrowDownAZ,
+  FileText,
+  Layers,
+  ScanLine,
+  Search,
+  Trash2Icon,
+} from "lucide-react"
 import { useMemo, useState } from "react"
 
+import { DeleteScanDialog } from "@/components/diagnostics/delete-scan-dialog"
 import {
   FaultCountPills,
   GenerationBadge,
@@ -92,11 +100,14 @@ export function FleetCoverageView({
   sessions,
   onViewDirective,
   onScanTruck,
+  onSessionDeleted,
 }: {
   rosterFleetIds: string[]
   sessions: PttSessionWithRelations[]
   onViewDirective: (session: PttSessionWithRelations) => void
   onScanTruck: (fleetId: string) => void
+  /** Called after a truck's latest scan was deleted; the parent syncs state. */
+  onSessionDeleted: (sessionId: number) => void
 }) {
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<FilterValue>("all")
@@ -206,6 +217,7 @@ export function FleetCoverageView({
               row={row}
               onViewDirective={onViewDirective}
               onScanTruck={onScanTruck}
+              onSessionDeleted={onSessionDeleted}
             />
           ))}
         </ul>
@@ -222,12 +234,15 @@ function CoverageRowItem({
   row,
   onViewDirective,
   onScanTruck,
+  onSessionDeleted,
 }: {
   row: CoverageRow
   onViewDirective: (session: PttSessionWithRelations) => void
   onScanTruck: (fleetId: string) => void
+  onSessionDeleted: (sessionId: number) => void
 }) {
   const { fleetId, latest, scanCount } = row
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   if (!latest) {
     return (
@@ -278,7 +293,22 @@ function CoverageRowItem({
           <ScanLine data-icon="inline-start" />
           New Scan
         </Button>
+        <Button
+          size="sm"
+          variant="destructive"
+          aria-label={`Delete latest ${fleetId} scan`}
+          onClick={() => setConfirmDelete(true)}
+        >
+          <Trash2Icon data-icon="inline-start" />
+          Delete
+        </Button>
       </div>
+
+      <DeleteScanDialog
+        scan={confirmDelete ? latest : null}
+        onOpenChange={setConfirmDelete}
+        onDeleted={onSessionDeleted}
+      />
     </li>
   )
 }

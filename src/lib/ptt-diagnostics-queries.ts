@@ -42,6 +42,10 @@ export type RecurringFault = {
   /** Distinct, naturally sorted fleet numbers (`MTL01`, `MTL02`, ...). */
   affectedFleetIds: string[]
   affectedTruckCount: number
+  /** Most recent scan date among the affected trucks' latest open scans. */
+  latestScannedAt: Date
+  /** AI root-cause summary from the most severe (then most recent) occurrence. */
+  sampleIntervention: string
 }
 
 export type PttDiagnosticsOverview = {
@@ -82,6 +86,11 @@ type FaultGroup = {
   highestSeverity: PttFaultSeverity
   calibrationRequired: boolean
   fleetIds: Set<string>
+  latestScannedAt: Date
+  sampleIntervention: string
+  // Scan time of the occurrence behind `sampleIntervention`, so equally severe
+  // occurrences resolve to the newer scan.
+  sampleScannedAt: Date
 }
 
 // Aggregates faults from each truck's latest session only. Sessions already
@@ -115,14 +124,38 @@ function buildRecurringFaults(
           highestSeverity: fault.severity,
           calibrationRequired: false,
           fleetIds: new Set(),
+          latestScannedAt: session.scannedAt,
+          sampleIntervention: fault.rootCauseSummary.trim(),
+          sampleScannedAt: session.scannedAt,
         }
         groups.set(key, group)
-      } else if (rank > group.highestRank) {
-        // Describe the group by its most severe occurrence.
-        group.highestRank = rank
-        group.highestSeverity = fault.severity
-        group.componentDescription =
-          fault.componentDescription.trim() || group.componentDescription
+      } else {
+        const moreSevere = rank > group.highestRank
+        if (moreSevere) {
+          // Describe the group by its most severe occurrence.
+          group.highestRank = rank
+          group.highestSeverity = fault.severity
+          group.componentDescription =
+            fault.componentDescription.trim() || group.componentDescription
+        }
+
+        // Most severe occurrence wins; equally severe ones resolve to the
+        // most recent scan.
+        const intervention = fault.rootCauseSummary.trim()
+        if (
+          intervention &&
+          (moreSevere ||
+            (rank === group.highestRank &&
+              session.scannedAt.getTime() > group.sampleScannedAt.getTime()) ||
+            !group.sampleIntervention)
+        ) {
+          group.sampleIntervention = intervention
+          group.sampleScannedAt = session.scannedAt
+        }
+
+        if (session.scannedAt.getTime() > group.latestScannedAt.getTime()) {
+          group.latestScannedAt = session.scannedAt
+        }
       }
 
       if (fault.calibrationRequired) group.calibrationRequired = true
@@ -141,6 +174,8 @@ function buildRecurringFaults(
         calibrationRequired: group.calibrationRequired,
         affectedFleetIds,
         affectedTruckCount: affectedFleetIds.length,
+        latestScannedAt: group.latestScannedAt,
+        sampleIntervention: group.sampleIntervention,
       }
     })
     .sort(

@@ -53,6 +53,10 @@ export const pttFaultSchema = z.object({
   severity: z.enum(PTT_FAULT_SEVERITIES),
   root_cause_summary: z.string(),
   calibration_required: z.boolean(),
+  // Pass 2 echoes the Pass 1 row number (`#n`) it classified, so the server
+  // can prove every extracted row was kept. `null` for VCADS pop-up entries.
+  // Never persisted.
+  source_row: z.number().int().nullish(),
 })
 
 export type PttFault = z.infer<typeof pttFaultSchema>
@@ -77,6 +81,38 @@ export const pttAnalysisResultSchema = z.object({
 })
 
 export type PttAnalysisResult = z.infer<typeof pttAnalysisResultSchema>
+
+// ---------------------------------------------------------------------------
+// Pass 1 (verbatim vision OCR) output
+// ---------------------------------------------------------------------------
+
+export const pttRawRowSchema = z.object({
+  control_unit_verbatim: z.string(),
+  fault_code_verbatim: z.string(),
+  code_format: z.enum(PTT_CODE_FORMATS),
+  description_verbatim: z.string(),
+  fault_state: z.enum(PTT_FAULT_STATES),
+  occurrence_count: z.number().nullable().default(null),
+})
+
+export const pttVcadsPopupSchema = z.object({
+  operation_code: z.string(),
+  target_system: z.string(),
+  message: z.string(),
+  background_context: z.string(),
+})
+
+export const pttRawOcrSchema = z.object({
+  detected_generation: z.enum(PTT_TRUCK_GENERATIONS),
+  odometer_km: z.number().nullable().default(null),
+  reported_dtc_list_count: z.number().nullable().default(null),
+  raw_rows: z.array(pttRawRowSchema),
+  vcads_popups: z.array(pttVcadsPopupSchema).default([]),
+})
+
+export type PttRawRow = z.infer<typeof pttRawRowSchema>
+export type PttVcadsPopup = z.infer<typeof pttVcadsPopupSchema>
+export type PttRawOcr = z.infer<typeof pttRawOcrSchema>
 
 // Before/After re-scan result stored in
 // `ptt_diagnostic_sessions.verification_summary`.
@@ -265,6 +301,12 @@ export type PttDirectiveSessionInput = {
       "faultCode" | "controlUnit" | "componentDescription" | "severity"
     >
   >
+  // Stored tier counts, used for the "Faults Extracted" line when the fault
+  // rows themselves are not supplied.
+  criticalCount?: number
+  calibrationCount?: number
+  monitorCount?: number
+  negligibleCount?: number
 }
 
 type PttFaultRow = {
@@ -282,10 +324,47 @@ const GENERATION_LABELS: Record<string, string> = {
 
 const SEVERITY_LABELS: Record<string, string> = {
   CRITICAL: "🔴 CRITICAL",
-  CALIBRATION_ONLY: "🟠 CALIBRATION ONLY",
-  MONITOR: "🟡 MONITOR",
+  CALIBRATION_ONLY: "🟣 CALIBRATION ONLY",
+  MONITOR: "🟠 MONITOR",
   NEGLIGIBLE: "⚪ NEGLIGIBLE",
   CLEAR: "🟢 CLEAR",
+}
+
+// "*Faults Extracted:* 20 total (🔴 6 Critical | 🟣 0 Calibration | 🟠 14
+// Monitor | ⚪ 0 Negligible)". Counts come from the fault rows when supplied,
+// else from the stored tier counts; `null` when neither is available.
+function faultBreakdownLine(session: PttDirectiveSessionInput): string | null {
+  let counts: Omit<PttFaultSummary, "overallSeverity"> | null = null
+  if (session.faults) {
+    const count = (tier: PttFaultSeverity) =>
+      session.faults!.filter((f) => f.severity === tier).length
+    counts = {
+      criticalCount: count("CRITICAL"),
+      calibrationCount: count("CALIBRATION_ONLY"),
+      monitorCount: count("MONITOR"),
+      negligibleCount: count("NEGLIGIBLE"),
+    }
+  } else if (
+    session.criticalCount != null &&
+    session.calibrationCount != null &&
+    session.monitorCount != null &&
+    session.negligibleCount != null
+  ) {
+    counts = {
+      criticalCount: session.criticalCount,
+      calibrationCount: session.calibrationCount,
+      monitorCount: session.monitorCount,
+      negligibleCount: session.negligibleCount,
+    }
+  }
+  if (!counts) return null
+
+  const total =
+    counts.criticalCount +
+    counts.calibrationCount +
+    counts.monitorCount +
+    counts.negligibleCount
+  return `*Faults Extracted:* ${total} total (🔴 ${counts.criticalCount} Critical | 🟣 ${counts.calibrationCount} Calibration | 🟠 ${counts.monitorCount} Monitor | ⚪ ${counts.negligibleCount} Negligible)`
 }
 
 function bulletList(items: readonly string[], numbered = false): string {
@@ -314,7 +393,11 @@ export function formatPttDirectiveForWhatsApp(
   lines.push(
     `*Overall Status:* ${SEVERITY_LABELS[session.overallSeverity] ?? session.overallSeverity}`
   )
+  const breakdown = faultBreakdownLine(session)
+  if (breakdown) lines.push(breakdown)
 
+  // Only the two actionable tiers are listed individually; the breakdown line
+  // above covers Monitor / Negligible so the message stays mobile-readable.
   const keyFaults = (session.faults ?? []).filter(
     (f) => f.severity === "CRITICAL" || f.severity === "CALIBRATION_ONLY"
   )
@@ -322,7 +405,7 @@ export function formatPttDirectiveForWhatsApp(
     lines.push("")
     lines.push(`*Critical & Calibration Faults:*`)
     for (const f of keyFaults) {
-      const tag = f.severity === "CRITICAL" ? "🔴" : "🟠"
+      const tag = f.severity === "CRITICAL" ? "🔴" : "🟣"
       lines.push(
         `${tag} \`${f.faultCode}\` – ${f.controlUnit}: ${f.componentDescription}`
       )

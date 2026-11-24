@@ -19,14 +19,34 @@ import {
   PTT_TRUCK_GENERATIONS,
   normalizeFleetId,
   pttAnalysisResultSchema,
+  pttRawOcrSchema,
   summarizePttFaults,
   type PttFault,
   type PttSparesContextItem,
 } from "@/lib/ptt-diagnostics"
+import {
+  clampCabClimateSeverity,
+  dedupeAndNumberRawRows,
+  dedupeVcadsPopups,
+  fallbackFaultFromPopup,
+  fallbackFaultFromRow,
+  findUncoveredPopups,
+  findUncoveredRows,
+  formatNumberedFaultList,
+  formatVcadsPopupList,
+} from "@/lib/ptt-ocr-pipeline"
 import { pttBlobPrefix } from "@/lib/ptt-files"
 
-// Vision analysis of several screenshots can take a while.
+// Two sequential OpenAI passes (vision OCR, then text-only reasoning) plus
+// blob reads and DB writes. Each pass is capped at OPENAI_TIMEOUT_MS so both
+// fit inside this limit.
 export const maxDuration = 60
+
+const OPENAI_TIMEOUT_MS = 25_000
+// Pass 1 only transcribes rows; Pass 2 returns one classified fault per row
+// plus the directive, so trucks with 30-40 faults need the larger cap.
+const OCR_MAX_COMPLETION_TOKENS = 4096
+const DIAGNOSTIC_MAX_COMPLETION_TOKENS = 8192
 
 const MAX_ATTACHMENTS = 10
 const SPARES_WINDOW_DAYS = 90
@@ -87,68 +107,121 @@ function fail(error: string, status: number) {
 }
 
 // ---------------------------------------------------------------------------
-// System prompt
+// Pass 1 system prompt: exhaustive verbatim vision OCR
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `You are an Elite Volvo Master Diagnostic Technician & Fleet Operations Strategist for Zambezi Portland Cement / Miloto Transport (Ndola, Zambia).
+const OCR_SYSTEM_PROMPT = `You are a pure verbatim OCR table transcriber for Volvo Premium Tech Tool (PTT) and VCADS Pro screens. Your ONLY job is to copy what is printed on screen into JSON. Do NOT diagnose, summarize, interpret, skip rows, or rename ECUs.
 
-FLEET YOU SUPPORT
-- Volvo FH V3: D13 engine, I-Shift gearbox AT2612D / AT2412C. Fault codes use the classic format "MID / PID / PPID / SID / PSID + FMI" (e.g. "MID 128 PID 94 FMI 1", "MID 128 PSID 200 FMI 12").
-- Volvo FH V4: D13 engine, I-Shift gearbox AT2612F. Fault codes are UDS hex codes such as U300054, P105F18, P008A00.
-You will receive one or more Volvo PTT (Premium Tech Tool) screenshots of the SAME truck. They may be scrolled captures that overlap, so the same fault code can appear in several screenshots.
+The screenshots show the SAME truck. They are often photos of a laptop screen and may be overlapping, scrolled captures of the same "DTC List", so the same row can appear in several images (transcribe it each time it is visible; duplicates are removed later).
 
-PHOTO READING NOTES
-- Workshop photos are often taken of a laptop screen and may be overlapping, scrolled screens of the SAME "DTC List". A single screen can hold ~20 dense rows with small text, including the right-edge "Active" / "Inactive" state column.
-- Read EVERY visible row carefully, in every photo. On FH V3 read the full "MID / PID / PPID / SID / PSID + FMI" identifier of each row; on FH V4 read the full UDS hex code (e.g. U300054, P105F18).
-- Never guess or invent unreadable fields: if a code, state or count is blurry or cut off, use fault_state "UNKNOWN" / occurrence_count null (or skip the row if the code itself cannot be read) and mention the limitation in evidence_analysis.
-- VCADS POP-UPS: a screenshot may show a VCADS Pro operation / calibration error pop-up INSTEAD OF (or alongside) a DTC List, e.g. "VCADS Pro - Operations: 37 - Gearbox input shaft speed constant". Treat each such pop-up as ONE fault entry:
-  * fault_code = the operation / error code in the form "VCADS-OP-<number>" (e.g. "VCADS-OP-37"). Never leave it out and never invent a number that is not visible.
-  * code_format = "OTHER".
-  * control_unit = the target system the operation runs against, e.g. "TECU / Clutch Calibration" (I-Shift clutch / gearbox calibration), "APM / Air Leakage Test", "EMS / Injector Coding". Infer it from the operation title; use "VCADS" if it cannot be determined.
-  * component_description = the exact pop-up wording (operation number + title + any visible failure reason).
-  * fault_state = "ACTIVE" (the operation has just failed on screen), occurrence_count = null.
-  * severity = "CRITICAL" when the failure points to proven failed hardware or a safety / driveline-integrity risk (e.g. input shaft speed signal missing or implausible, clutch will not engage / disengage, leaking air supply that prevents calibration), otherwise "CALIBRATION_ONLY" when the pop-up only shows the calibration / initialisation could not be completed because a precondition was not met (engine speed, air pressure, gear / parking-brake state, wrong procedure order) with zero parts approved. Set calibration_required = true on these entries.
-  * root_cause_summary and directive.true_diagnosis MUST give the exact MECHANICAL vs. PNEUMATIC root-cause directive for that operation: state clearly whether the failure is mechanical (e.g. worn / glazed clutch disc, seized or damaged release bearing / clutch actuator, input shaft speed sensor or its gap / connector / harness pins, flywheel or clutch housing damage) or pneumatic (e.g. low or leaking air supply, APM / clutch actuator air leak, contaminated or wet air, blocked solenoid valve, pressure below the calibration threshold), what single cheap check separates the two (e.g. air-pressure and leakage test with PTT Live Data, sensor air-gap / resistance check, clutch actuator stroke), and which part is explicitly NOT to be replaced until that check is done. Put the corresponding PTT / VCADS navigation path in ptt_navigation_paths and the pass criteria for re-running the operation in verification_criteria.
-
-STRICT "COMPUTER-FIRST" SOP (fight the workshop "parts cannon" mentality)
-1. Never approve a physical teardown, or an expensive module / wiring harness / injector / APM (Air Processing Module) replacement, without PTT Live Data proof (e.g. measured values, injector balancing / compression test results, pressure build-up data, sensor readouts). If the screenshots do not contain such proof, say what PTT Live Data / test must be run FIRST and approve NO parts.
-2. Flag missing post-repair PTT software calibrations as CALIBRATION_ONLY with ZERO parts approved. Typical examples: clutch X1 wear / kiss-point calibration, APM air leakage initialisation, injector trim code (C3I / IMA) coding after injector or ECU work, actuator / gear-selector calibration. Set calibration_required = true on these faults.
-3. Cross-check every extracted fault against the supplied "90-DAY SPARES HISTORY" and "PRIOR PTT SCANS". Explicitly call out repeat part replacements (e.g. recently replaced injectors, solenoids, clutches, APMs, sensors) and recurring or unresolved codes. When a related part was already replaced, do NOT recommend replacing the same part again; instead suspect upstream root causes such as fuel contamination or poor fuel quality, intake / air leaks, skipped calibration, damaged harness pins / connectors / corrosion, or a wrong / non-genuine part. Reference the specific spares line (date, part number, job card) or prior scan in evidence_analysis and root_cause_summary.
-4. Deduplicate: a fault code that appears in several overlapping scrolled screenshots must be returned ONCE (keep the most informative occurrence count / state).
-5. Only report faults you can actually read in the screenshots (DTC rows or VCADS pop-ups). Never invent codes. If a screenshot is unreadable or contains neither a fault list nor a VCADS pop-up, return an empty faults array and explain in evidence_analysis.
-
-SEVERITY CATEGORIES - classify EVERY fault into exactly one of:
-- "CRITICAL": active fault that threatens safety, engine / driveline integrity, derate / limp mode, or has proven failed hardware.
-- "CALIBRATION_ONLY": cleared by a missing / required PTT software calibration or initialisation; zero parts.
-- "MONITOR": intermittent, inactive-but-recurring, or low-impact fault to watch and re-scan.
-- "NEGLIGIBLE": historical / inactive / communication-noise codes with no action needed.
+STRICT RULES
+1. Scan EVERY uploaded image from the top row to the bottom row. If "DTC List (N items)" is visible at the top of a screen, make sure you transcribe every distinct visible row across all images and put N in reported_dtc_list_count. NEVER stop after 5 rows and NEVER take a "sample". A dense screen can hold 20+ rows of small text - read all of them.
+2. Copy control_unit_verbatim EXACTLY as printed on screen, preserving the MID number, e.g. "ECC ECU (MID 146)", "Engine ECU (MID 128)", "Gearbox ECU (MID 130)", "Retarder ECU (MID 222)", "Vehicle ECU (MID 144)". NEVER rewrite "ECC ECU" as "EECU" and NEVER invent "VMCU" on an FH V3 truck. If a unit heading is shared by several rows below it, repeat that heading on every row.
+3. Copy every fault code verbatim into fault_code_verbatim ("MID / PID / PPID / SID / PSID + FMI" on FH V3, e.g. "PID 37 FMI 1" or "SID 11 FMI 5" under its unit; UDS hex codes such as "U300054" on FH V4), plus description_verbatim exactly as printed, the right-edge status as fault_state ("ACTIVE" / "INACTIVE", or "UNKNOWN" when it is not visible or unreadable) and occurrence_count (number, or null if not visible).
+   code_format: "V3_MID_FMI" for MID/PID/SID/PSID + FMI codes, "V4_UDS" for UDS hex codes, "OTHER" for anything else.
+4. If a screenshot is a VCADS Pro operation / calibration pop-up (e.g. "VCADS Pro - Operations: 37 - Gearbox input shaft speed constant"), record it in vcads_popups: operation_code (the operation number as printed, e.g. "37"), target_system (the system the operation runs against, e.g. "Gearbox"; "VCADS" if unclear), message (the exact pop-up wording including any failure reason) and background_context (what is visible behind the pop-up, e.g. the operation list or DTC screen).
+5. Never guess or invent unreadable text. If a row's code cannot be read at all, skip that row; if only the state or count is unreadable use "UNKNOWN" / null.
+6. detected_generation: "FH_V3" when codes are MID/PID/SID/PSID + FMI, "FH_V4" when they are UDS hex codes, otherwise "UNKNOWN". odometer_km: only if an odometer / mileage value is visible on screen, else null.
 
 OUTPUT
 Return ONLY one strict JSON object (no markdown) with exactly these keys:
 {
   "detected_generation": "FH_V3" | "FH_V4" | "UNKNOWN",
-  "odometer_km": number | null,            // read from the screenshots if visible, else null
+  "odometer_km": number | null,
+  "reported_dtc_list_count": number | null,
+  "raw_rows": [
+    {
+      "control_unit_verbatim": string,
+      "fault_code_verbatim": string,
+      "code_format": "V3_MID_FMI" | "V4_UDS" | "OTHER",
+      "description_verbatim": string,
+      "fault_state": "ACTIVE" | "INACTIVE" | "UNKNOWN",
+      "occurrence_count": number | null
+    }
+  ],
+  "vcads_popups": [
+    { "operation_code": string, "target_system": string, "message": string, "background_context": string }
+  ]
+}`
+
+// ---------------------------------------------------------------------------
+// Pass 2 system prompt: Volvo master diagnostic & enforcement engine
+// ---------------------------------------------------------------------------
+
+const DIAGNOSTIC_SYSTEM_PROMPT = `You are the Volvo Master Diagnostic & Enforcement Engine: an Elite Volvo Master Diagnostic Technician & Fleet Operations Strategist for Zambezi Portland Cement / Miloto Transport (Ndola, Zambia).
+
+FLEET YOU SUPPORT
+- Volvo FH V3: D13 engine, I-Shift gearbox AT2612D / AT2412C. Fault codes use the classic "MID / PID / PPID / SID / PSID + FMI" format.
+- Volvo FH V4: D13 engine, I-Shift gearbox AT2612F. Fault codes are UDS hex codes such as U300054, P105F18, P008A00.
+
+YOUR INPUT
+You do NOT see screenshots. A vision OCR pass already transcribed them into a NUMBERED, deduplicated fault list (#1..#N), plus any VCADS pop-ups, truck metadata, optional workshop context, the 90-day spares history and the last prior PTT scans. Treat the numbered list as the complete, verbatim ground truth.
+
+HARD RULES
+
+1. ZERO DROPPED FAULTS. Your "faults" array MUST contain exactly one classified entry for EVERY SINGLE numbered row (#1..#N) - no row may be merged, skipped or summarised away - plus one "VCADS-OP-<n>" entry per VCADS pop-up. Echo the row number in source_row (e.g. 7 for "#7"; null for VCADS entries). Keep control_unit EXACTLY as given in the list (including the MID number) and copy fault_code from the row verbatim (uppercase). Never invent codes that are not in the list.
+
+2. EXACT VOLVO FH V3 MID IDENTIFICATION MAP - NEVER CONFUSE ECUs:
+- MID 128 = Engine ECU (EMS): D13 engine, injectors, fuel, air filter / crankcase sensors, EPG.
+- MID 130 = Gearbox ECU (TECU / I-Shift): transmission tank air pressure (PID 37), clutch actuator, solenoids, datalink (PSID 204).
+- MID 136 = Brake ECU (EBS / ABS): wheel speed sensors (SID 2), modulators, air brake circuits.
+- MID 140 = Information Display / Instrument Cluster (IC): gauges, steering wheel buttons (PSID 46).
+- MID 144 = Vehicle ECU (VECU): road speed (PID 84), air dryer regeneration (PSID 23), air compressor governor control (PSID 24), accelerator / PTO.
+- MID 146 = Electronic Climate Control (ECC): CAB AIR CONDITIONING ONLY. SID 11 is the cab A/C magnetic clutch, NOT the engine or brake air compressor. NEVER classify cab A/C faults as CRITICAL.
+- MID 185 = Air Production Modulator (APM): air drying, circuit pressures, air leakage calibration.
+- MID 216 = Light Control Module (LCM): exterior / interior lamps.
+- MID 222 = Retarder ECU (RECU): hydraulic retarder temperatures, air pressure, modulation valve.
+
+3. STRICT 4-TIER SEVERITY RUBRIC - classify EVERY fault into exactly one tier:
+- "CRITICAL": ACTIVE faults threatening safety, air supply / braking, transmission shifting, drivability, or major engine / gearbox damage. Examples: active transmission / brake air pressure (MID 130 PID 37, MID 144 PSID 23/24, APM pressure), active ABS / EBS (MID 136), active fuel / injector / oil / overheat (MID 128), active I-Shift actuator / clutch / solenoid or cross-ECU road-speed / datalink faults (PID 84, PSID 204), or a VCADS calibration failure indicating a mechanical / pneumatic fault (VCADS-OP-37).
+- "CALIBRATION_ONLY": missing software calibration / programming (U300054, clutch X1 wear, APM air leakage initialisation, injector trim coding). ZERO parts approved. Set calibration_required = true.
+- "MONITOR": non-immobilising ACTIVE faults or high-count INACTIVE faults. Examples: cab A/C (MID 146 ECC), exterior lamps (MID 216 LCM), steering buttons (MID 140), non-critical air-filter / crankcase sensors, or a bypassed / unplugged retarder cluster (MID 222) pending a harness check.
+- "NEGLIGIBLE": low-count INACTIVE codes, old battery / voltage blips, or historical noise.
+
+4. CLUSTERED ROOT-CAUSE & "PARTS CANNON" INTELLIGENCE:
+- Whenever 3+ components on the SAME ECU show FMI 5 (open circuit) or FMI 4 (shorted low) simultaneously (e.g. 4 MID 222 Retarder FMI 5 codes, 3+ MID 128 sensor FMI 5 codes, or multiple MID 216 rear lamps), explicitly diagnose a SHARED harness connector, chafed loom, dead power / ground feed, or bypassed unit, and explicitly ORDER the Workshop Manager NOT to replace individual sensors / valves until harness continuity and supply voltage are proven. Name the cluster in directive.parts_cannon_warning and directive.true_diagnosis.
+- Trace upstream cascade faults: e.g. a MID 136 ABS sensor fault + MID 130 PSID 204 Data Link MID 136 + MID 128 / MID 144 PID 84 Road Speed = ONE shared speed / ABS signal root cause, not dead Engine / Gearbox ECUs.
+- Cross-check every fault against the "90-DAY SPARES HISTORY" and "PRIOR PTT SCANS". Call out repeat part replacements and recurring / unresolved codes, referencing the exact spares line (date, part number, job card) or prior scan. When a related part was already replaced, do NOT recommend replacing it again: suspect upstream causes (fuel contamination, intake / air leaks, skipped calibration, damaged harness pins / connectors / corrosion, wrong or non-genuine part).
+- COMPUTER-FIRST SOP: never approve a physical teardown or an expensive module / harness / injector / APM replacement without PTT Live Data proof. If the data contains no such proof, state which PTT Live Data / test must be run FIRST and approve NO parts. Missing post-repair calibrations (clutch X1 wear / kiss-point, APM air leakage initialisation, injector trim code C3I / IMA coding, actuator / gear-selector calibration) are CALIBRATION_ONLY with zero parts.
+
+5. VCADS POP-UPS. Each pop-up becomes ONE fault entry: fault_code "VCADS-OP-<number>", code_format "OTHER", control_unit = the pop-up's target system (e.g. "TECU / Clutch Calibration", "APM / Air Leakage Test", "EMS / Injector Coding"; "VCADS" if unknown), component_description = the exact pop-up wording, fault_state "ACTIVE", occurrence_count null, source_row null. Severity is CRITICAL when the failure points to failed hardware or a driveline / safety risk (e.g. input shaft speed signal missing or implausible, clutch will not engage / disengage, air supply leaking), or CALIBRATION_ONLY when a precondition was not met (engine speed, air pressure, gear / parking-brake state, wrong procedure order) with zero parts approved. The entry's root_cause_summary and directive.true_diagnosis MUST state the exact MECHANICAL vs. PNEUMATIC root cause: mechanical (worn / glazed clutch disc, seized release bearing / clutch actuator, input shaft speed sensor gap / connector / harness pins, flywheel / housing damage) vs. pneumatic (low or leaking air supply, APM / actuator air leak, wet / contaminated air, blocked solenoid, pressure below calibration threshold), the single cheap check that separates the two, and which part is explicitly NOT to be replaced until that check is done.
+
+6. BANNED GENERIC PTT PATHS & VERIFICATION CRITERIA:
+- NEVER write generic paths like "PTT > Diagnostics > Fault Trace > View Fault Codes" or vague criteria like "confirm proper operation in live data".
+- Every entry in ptt_navigation_paths MUST name the exact ECU (MID 130, MID 144, MID 136, ...) and the exact Live Data parameter or Component Test, e.g. "PTT > Test/Live Data > Gearbox ECU (MID 130) > Monitor Transmission Tank Air Pressure (bar) while building air to 10+ bar".
+- Every entry in verification_criteria MUST name the exact fault codes that must turn Inactive / clear AND a measurable pass value (bar, volts, ohms, km/h or mm).
+
+BREVITY (your output is capped at about 4000 tokens - a truncated answer is a failed answer)
+- component_description: copy the OCR description, max ~12 words. root_cause_summary: ONE sentence, max ~25 words; for clustered faults say "Part of <cluster name> - see directive" instead of repeating the explanation.
+- directive.evidence_analysis max ~120 words; true_diagnosis max ~120 words; parts_cannon_warning max ~100 words; each list item one concise line; at most 6 items per list.
+
+OUTPUT
+Return ONLY one strict JSON object (no markdown) with exactly these keys:
+{
+  "detected_generation": "FH_V3" | "FH_V4" | "UNKNOWN",   // echo the OCR value
+  "odometer_km": number | null,                            // echo the OCR / user value
   "overall_severity": "CRITICAL" | "CALIBRATION_ONLY" | "MONITOR" | "NEGLIGIBLE" | "CLEAR",  // worst fault tier, CLEAR if no faults
   "faults": [
     {
-      "fault_code": string,                // normalised uppercase, e.g. "U300054", "MID 128 PSID 200 FMI 12" or "VCADS-OP-37"
+      "source_row": number | null,         // the "#n" row number; null for VCADS entries
+      "fault_code": string,                // verbatim from the row, uppercase (or "VCADS-OP-<n>")
       "code_format": "V3_MID_FMI" | "V4_UDS" | "OTHER",
-      "control_unit": string,              // e.g. "EMS", "TECU", "APM", "VMCU", "MID 130"
+      "control_unit": string,              // EXACT control unit from the row, incl. MID number
       "component_description": string,
       "fault_state": "ACTIVE" | "INACTIVE" | "UNKNOWN",
       "occurrence_count": number | null,
       "severity": "CRITICAL" | "CALIBRATION_ONLY" | "MONITOR" | "NEGLIGIBLE",
-      "root_cause_summary": string,        // most likely true root cause, citing spares / prior-scan evidence where relevant
+      "root_cause_summary": string,
       "calibration_required": boolean
     }
   ],
   "directive": {
-    "evidence_analysis": string,           // what the screenshots, spares history and prior scans show
+    "evidence_analysis": string,           // what the fault list, spares history and prior scans show
     "parts_cannon_warning": string,        // which parts must NOT be replaced yet and why ("" if none)
     "true_diagnosis": string,              // the single most likely true diagnosis for the Workshop Manager
-    "physical_inspections": string[],      // cheap physical checks to do first (harness pins, air leaks, fuel quality ...)
-    "ptt_navigation_paths": string[],      // exact PTT menu paths for live data / tests / calibrations
-    "verification_criteria": string[]      // measurable pass criteria for the re-scan
+    "physical_inspections": string[],      // cheap physical checks first (harness pins, connectors, air leaks, fuel quality ...)
+    "ptt_navigation_paths": string[],      // exact PTT paths naming the ECU and Live Data parameter / Component Test
+    "verification_criteria": string[]      // fault codes that must clear + measurable pass values
   }
 }`
 
@@ -243,6 +316,63 @@ function formatPriorScansSummary(sessions: PriorSession[]) {
 }
 
 // ---------------------------------------------------------------------------
+// OpenAI calls
+// ---------------------------------------------------------------------------
+
+type ChatParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
+
+// Runs one JSON-mode completion and validates it. Both passes use a hard
+// per-call timeout and no retries so two calls always fit in `maxDuration`.
+async function runJsonPass<S extends z.ZodType>(
+  openai: OpenAI,
+  label: string,
+  schema: S,
+  params: ChatParams
+): Promise<z.output<S>> {
+  let response: OpenAI.Chat.Completions.ChatCompletion
+  try {
+    response = await openai.chat.completions.create(params, {
+      timeout: OPENAI_TIMEOUT_MS,
+      maxRetries: 0,
+    })
+  } catch (error) {
+    if (error instanceof OpenAI.APIConnectionTimeoutError) {
+      throw new AnalyzeError(
+        `${label} timed out after ${OPENAI_TIMEOUT_MS / 1000}s. Try again, or upload fewer screenshots per scan.`,
+        504
+      )
+    }
+    throw error
+  }
+
+  const choice = response.choices[0]
+  if (choice?.finish_reason === "length") {
+    throw new AnalyzeError(
+      `${label} output was too long and got cut off. Split the screenshots into smaller batches and scan again.`,
+      502
+    )
+  }
+  const content = choice?.message?.content
+  if (!content) throw new AnalyzeError(`${label} returned an empty response.`, 502)
+
+  let json: unknown
+  try {
+    json = JSON.parse(content)
+  } catch {
+    throw new AnalyzeError(`${label} returned invalid JSON. Please try again.`, 502)
+  }
+  const validated = schema.safeParse(json)
+  if (!validated.success) {
+    console.error(`[ptt-analyze] ${label} schema mismatch:`, validated.error.issues)
+    throw new AnalyzeError(
+      `${label} did not match the expected format. Please try again.`,
+      502
+    )
+  }
+  return validated.data
+}
+
+// ---------------------------------------------------------------------------
 // Post-processing
 // ---------------------------------------------------------------------------
 
@@ -250,8 +380,8 @@ const SEVERITY_RANK = Object.fromEntries(
   PTT_FAULT_SEVERITIES.map((s, i) => [s, i])
 ) as Record<(typeof PTT_FAULT_SEVERITIES)[number], number>
 
-// Safety net behind the prompt's dedupe rule: one row per code + control
-// unit, keeping the worst severity and the highest occurrence count.
+// Safety net behind the prompt's one-entry-per-row rule: one row per code +
+// control unit, keeping the worst severity and the highest occurrence count.
 function dedupeFaults(faults: PttFault[]): PttFault[] {
   const byKey = new Map<string, PttFault>()
   for (const raw of faults) {
@@ -296,10 +426,12 @@ function toOdometer(value: number | null): number | null {
 // ---------------------------------------------------------------------------
 
 // Analyses a batch of already-uploaded PTT screenshots (see
-// `/api/diagnostics/upload`) with OpenAI Vision, cross-checked against the
-// truck's 90-day spares history and prior scans, and stores the result as a
-// new diagnostic session. Blob credentials come from the Vercel OIDC
-// environment (no manual `token`).
+// `/api/diagnostics/upload`) with a 2-pass OpenAI pipeline:
+//   Pass 1 - exhaustive verbatim vision OCR of every row on every screenshot.
+//   Pass 2 - text-only Volvo diagnostic reasoning over the deduplicated,
+//            numbered rows, the truck's 90-day spares history and prior scans.
+// The result is stored as a new diagnostic session. Blob credentials come
+// from the Vercel OIDC environment (no manual `token`).
 export async function POST(request: Request) {
   let userId: string
   try {
@@ -337,6 +469,7 @@ export async function POST(request: Request) {
     if (!process.env.OPENAI_API_KEY) {
       throw new AnalyzeError("OPENAI_API_KEY is not configured on the server.", 500)
     }
+    const model = process.env.OPENAI_DIAGNOSTICS_MODEL || "gpt-4o"
 
     // 1-2. Spares history + prior scans.
     const [spares, priorSessions] = await Promise.all([
@@ -372,13 +505,81 @@ export async function POST(request: Request) {
       })
     )
 
-    const userText = [
+    // Each pass has its own 25s timeout (set per call) and no retries.
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      timeout: OPENAI_TIMEOUT_MS,
+      maxRetries: 0,
+    })
+
+    // ---- PASS 1: exhaustive verbatim vision OCR ---------------------------
+    const ocrContent: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
+      {
+        type: "text",
+        text: [
+          `Fleet ID: ${input.fleetId}`,
+          `Truck generation (user-selected): ${input.truckGeneration}`,
+          `Screenshots attached: ${photos.length} (same truck, may overlap). Transcribe EVERY row of EVERY screenshot.`,
+        ].join("\n"),
+      },
+    ]
+    photos.forEach((p, index) => {
+      ocrContent.push(
+        { type: "text", text: `Screenshot ${index + 1} of ${photos.length}:` },
+        { type: "image_url", image_url: { url: p.dataUrl, detail: "high" } }
+      )
+    })
+
+    const ocr = await runJsonPass(openai, "Screenshot transcription", pttRawOcrSchema, {
+      model,
+      temperature: 0,
+      max_tokens: OCR_MAX_COMPLETION_TOKENS,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: OCR_SYSTEM_PROMPT },
+        { role: "user", content: ocrContent },
+      ],
+    })
+
+    // Deterministic dedupe across overlapping scrolled screenshots, then
+    // number the survivors #1..#N.
+    const numberedRows = dedupeAndNumberRawRows(ocr.raw_rows)
+    const popups = dedupeVcadsPopups(ocr.vcads_popups)
+    const reportedCount = ocr.reported_dtc_list_count
+    const incompleteTranscription =
+      reportedCount != null && numberedRows.length < reportedCount
+    if (incompleteTranscription) {
+      console.warn(
+        `[ptt-analyze] DTC List reports ${reportedCount} items but only ${numberedRows.length} distinct rows were transcribed`
+      )
+    }
+
+    // ---- PASS 2: Volvo master diagnostic & enforcement (text only) --------
+    const odometerForPrompt =
+      input.odometerKm ?? toOdometer(ocr.odometer_km)
+    const generationForPrompt =
+      input.truckGeneration !== "UNKNOWN"
+        ? input.truckGeneration
+        : ocr.detected_generation
+
+    const diagnosticText = [
       `Fleet ID: ${input.fleetId}`,
-      `Truck generation (user-selected): ${input.truckGeneration}`,
-      `Odometer (user-entered): ${input.odometerKm != null ? `${input.odometerKm} km` : "not provided"}`,
+      `Truck generation: ${generationForPrompt}`,
+      `Odometer: ${odometerForPrompt != null ? `${odometerForPrompt} km` : "not provided"}`,
       `Scan batch: ${input.scanBatchLabel ?? "n/a"}`,
       `Today: ${isoDate(new Date())}`,
-      `Screenshots attached: ${photos.length} (same truck, may overlap)`,
+      "",
+      `PASS 1 TRANSCRIBED FAULT LIST - ${numberedRows.length} distinct row(s) (#1..#${numberedRows.length}); you MUST return one classified fault per row:`,
+      formatNumberedFaultList(numberedRows),
+      ...(incompleteTranscription
+        ? [
+            "",
+            `TRANSCRIPTION WARNING: the PTT "DTC List" header reported ${reportedCount} items but only ${numberedRows.length} distinct rows could be read. Say so in evidence_analysis and tell the Workshop Manager to re-scan with overlapping screenshots.`,
+          ]
+        : []),
+      "",
+      `VCADS POP-UPS (${popups.length}); return one VCADS-OP-<n> fault per pop-up:`,
+      formatVcadsPopupList(popups),
       "",
       `WORKSHOP CONTEXT (driver complaint / what the mechanics want to replace):\n${input.workshopContext ?? "None provided."}`,
       "",
@@ -387,59 +588,79 @@ export async function POST(request: Request) {
       `PRIOR PTT SCANS (most recent first):\n${formatPriorScansSummary(priorSessions)}`,
     ].join("\n")
 
-    // Under maxDuration; fail fast rather than be killed mid-request.
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      timeout: 50_000,
-      maxRetries: 0,
-    })
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: userText },
-            ...photos.map((p) => ({
-              type: "image_url" as const,
-              image_url: { url: p.dataUrl, detail: "high" as const },
-            })),
-          ],
-        },
-      ],
-    })
+    const analysis = await runJsonPass(
+      openai,
+      "Diagnostic reasoning",
+      pttAnalysisResultSchema,
+      {
+        model,
+        temperature: 0.1,
+        max_tokens: DIAGNOSTIC_MAX_COMPLETION_TOKENS,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: DIAGNOSTIC_SYSTEM_PROMPT },
+          { role: "user", content: diagnosticText },
+        ],
+      }
+    )
 
-    const content = response.choices[0]?.message?.content
-    if (!content) throw new AnalyzeError("The AI returned an empty response.", 502)
-
-    let json: unknown
-    try {
-      json = JSON.parse(content)
-    } catch {
-      throw new AnalyzeError("The AI returned invalid JSON. Please try again.", 502)
-    }
-    const validated = pttAnalysisResultSchema.safeParse(json)
-    if (!validated.success) {
-      console.error("[ptt-analyze] schema mismatch:", validated.error.issues)
-      throw new AnalyzeError(
-        "The AI response did not match the expected format. Please try again.",
-        502
+    // Deterministic safety net: no extracted row or VCADS pop-up may silently
+    // disappear. Coverage is checked on Pass 2's raw output (before dedupe).
+    const uncoveredRows = findUncoveredRows(numberedRows, analysis.faults)
+    const uncoveredPopups = findUncoveredPopups(popups, analysis.faults)
+    if (uncoveredRows.length > 0 || uncoveredPopups.length > 0) {
+      console.warn(
+        `[ptt-analyze] Pass 2 omitted ${uncoveredRows.length} row(s) and ${uncoveredPopups.length} VCADS pop-up(s); appending fallback entries`
       )
     }
-    const analysis = validated.data
 
     // Counts and overall severity are derived here, not taken from the model.
-    const faults = dedupeFaults(analysis.faults)
+    // The cab A/C clamp runs first so a mis-tiered ECC / MID 146 fault can
+    // never inflate the counts or the truck's overall severity.
+    const faults = clampCabClimateSeverity([
+      ...dedupeFaults(analysis.faults),
+      ...uncoveredRows.map(fallbackFaultFromRow),
+      ...uncoveredPopups.map(fallbackFaultFromPopup),
+    ])
     const summary = summarizePttFaults(
       faults.map((f) => ({ severity: f.severity }))
     )
+
+    const notes: string[] = []
+    const appended = uncoveredRows.length + uncoveredPopups.length
+    if (appended > 0) {
+      notes.push(
+        `${appended} fault(s) were auto-appended because the diagnostic engine did not classify them (${[...uncoveredRows.map((r) => `#${r.n}`), ...uncoveredPopups.map((p) => `VCADS-OP-${p.opNumber ?? "?"}`)].join(", ")}); their tiers are conservative defaults - review them manually.`
+      )
+    }
+    if (incompleteTranscription) {
+      notes.push(
+        `PTT reported ${reportedCount} DTC List items but only ${numberedRows.length} distinct rows could be read from the screenshots - re-scan with overlapping screenshots to capture the rest.`
+      )
+    }
+    const directive =
+      notes.length > 0
+        ? {
+            ...analysis.directive,
+            evidence_analysis: [
+              analysis.directive.evidence_analysis.trim(),
+              ...notes.map((n) => `Note: ${n}`),
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          }
+        : analysis.directive
+
     const truckGeneration =
-      input.truckGeneration === "UNKNOWN"
-        ? analysis.detected_generation
-        : input.truckGeneration
-    const odometerKm = input.odometerKm ?? toOdometer(analysis.odometer_km)
+      input.truckGeneration !== "UNKNOWN"
+        ? input.truckGeneration
+        : ocr.detected_generation !== "UNKNOWN"
+          ? ocr.detected_generation
+          : analysis.detected_generation
+    const odometerKm =
+      input.odometerKm ??
+      toOdometer(ocr.odometer_km) ??
+      toOdometer(analysis.odometer_km)
 
     // neon-http has no interactive transactions, so: insert the session,
     // write children in one atomic batch, and on any failure delete the
@@ -455,7 +676,7 @@ export async function POST(request: Request) {
         status: "SCANNED",
         ...summary,
         sparesContextSnapshot: spares,
-        aiDirective: analysis.directive,
+        aiDirective: directive,
         scannedBy: userId,
       })
       .returning()
