@@ -338,15 +338,76 @@ function formatPriorScansSummary(sessions: PriorSession[]) {
 
 type ChatParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
 
-// Hand-written JSON Schema for Pass 2, used with OpenAI Structured Outputs
-// (`strict: true`). Deliberately NOT derived from Zod (no `zodResponseFormat`)
-// so a Zod v3/v4 SDK mismatch can never break it. Strict-mode rules: every
-// object has `additionalProperties: false` and lists ALL its keys in
-// `required`; optional values are expressed as nullable types; and the
-// unsupported keywords (pattern, min/maxLength, min/maxItems, minimum,
-// maximum) are not used. Enums mirror src/lib/ptt-diagnostics.ts. The Zod
-// `pttAnalysisResultSchema` still re-validates the parsed output.
+// Hand-written JSON Schemas for Pass 1 and Pass 2, used with OpenAI Structured
+// Outputs (`strict: true`). Deliberately NOT derived from Zod (no
+// `zodResponseFormat`) so a Zod v3/v4 SDK mismatch can never break them.
+// Strict-mode rules: every object has `additionalProperties: false` and lists
+// ALL its keys in `required`; optional values are expressed as nullable types;
+// and the unsupported keywords (pattern, min/maxLength, min/maxItems, minimum,
+// maximum, default) are not used. Enums mirror src/lib/ptt-diagnostics.ts. The
+// Zod schemas (`pttRawOcrSchema`, `pttAnalysisResultSchema`) still re-validate
+// the parsed output.
 const stringArray = { type: "array", items: { type: "string" } } as const
+
+// Pass 1: mirrors `pttRawOcrSchema`.
+const PASS1_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "detected_generation",
+    "odometer_km",
+    "reported_dtc_list_count",
+    "raw_rows",
+    "vcads_popups",
+  ],
+  properties: {
+    detected_generation: { type: "string", enum: [...PTT_TRUCK_GENERATIONS] },
+    odometer_km: { type: ["number", "null"] },
+    reported_dtc_list_count: { type: ["integer", "null"] },
+    raw_rows: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "control_unit_verbatim",
+          "fault_code_verbatim",
+          "code_format",
+          "description_verbatim",
+          "fault_state",
+          "occurrence_count",
+        ],
+        properties: {
+          control_unit_verbatim: { type: "string" },
+          fault_code_verbatim: { type: "string" },
+          code_format: { type: "string", enum: [...PTT_CODE_FORMATS] },
+          description_verbatim: { type: "string" },
+          fault_state: { type: "string", enum: [...PTT_FAULT_STATES] },
+          occurrence_count: { type: ["integer", "null"] },
+        },
+      },
+    },
+    vcads_popups: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "operation_code",
+          "target_system",
+          "message",
+          "background_context",
+        ],
+        properties: {
+          operation_code: { type: "string" },
+          target_system: { type: "string" },
+          message: { type: "string" },
+          background_context: { type: "string" },
+        },
+      },
+    },
+  },
+} as const
 
 const PASS2_JSON_SCHEMA = {
   type: "object",
@@ -652,7 +713,14 @@ export async function POST(request: Request) {
         model,
         temperature: 0,
         max_tokens: OCR_MAX_COMPLETION_TOKENS,
-        response_format: { type: "json_object" },
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "ptt_ocr_transcription",
+            strict: true,
+            schema: PASS1_JSON_SCHEMA,
+          },
+        },
         messages: [
           { role: "system", content: OCR_SYSTEM_PROMPT },
           { role: "user", content: ocrContent },

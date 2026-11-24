@@ -86,12 +86,30 @@ export type PttAnalysisResult = z.infer<typeof pttAnalysisResultSchema>
 // Pass 1 (verbatim vision OCR) output
 // ---------------------------------------------------------------------------
 
+// Defense-in-depth behind OpenAI Structured Outputs (which already pins the
+// exact enum values): normalises a model-produced enum string (trim, uppercase,
+// whitespace / hyphens -> "_") so Title Case values like "Active" still match,
+// and falls back to `fallback` for any other unexpected string. Non-string
+// values are passed through untouched so Zod still reports them.
+function caseInsensitiveEnum<const T extends readonly [string, ...string[]]>(
+  values: T,
+  fallback: T[number]
+) {
+  return z.preprocess((value) => {
+    if (typeof value !== "string") return value
+    const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "_")
+    return (values as readonly string[]).includes(normalized)
+      ? normalized
+      : fallback
+  }, z.enum(values))
+}
+
 export const pttRawRowSchema = z.object({
   control_unit_verbatim: z.string(),
   fault_code_verbatim: z.string(),
-  code_format: z.enum(PTT_CODE_FORMATS),
+  code_format: caseInsensitiveEnum(PTT_CODE_FORMATS, "OTHER"),
   description_verbatim: z.string(),
-  fault_state: z.enum(PTT_FAULT_STATES),
+  fault_state: caseInsensitiveEnum(PTT_FAULT_STATES, "UNKNOWN"),
   occurrence_count: z.number().nullable().default(null),
 })
 
@@ -103,7 +121,7 @@ export const pttVcadsPopupSchema = z.object({
 })
 
 export const pttRawOcrSchema = z.object({
-  detected_generation: z.enum(PTT_TRUCK_GENERATIONS),
+  detected_generation: caseInsensitiveEnum(PTT_TRUCK_GENERATIONS, "UNKNOWN"),
   odometer_km: z.number().nullable().default(null),
   reported_dtc_list_count: z.number().nullable().default(null),
   raw_rows: z.array(pttRawRowSchema),
