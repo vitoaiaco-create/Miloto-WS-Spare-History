@@ -235,3 +235,172 @@ export async function getTireDamagesByAsset(
 
   return { trucks, trailers }
 }
+
+const getTyreDamageIncidentDetailsSchema = z.object({
+  year: z.number({ error: "Year is required" }).int().min(2000).max(2100),
+  assetId: z.string().trim().min(1).max(100).optional(),
+  driverName: z.string().trim().min(1).max(255).optional(),
+})
+
+type GetTyreDamageIncidentDetailsInput = z.infer<
+  typeof getTyreDamageIncidentDetailsSchema
+>
+
+// One operational tyre damage (`tire_penalties` row with a non-zero amount).
+// `tire_penalties` only stores the date, reason, penalty amount and the
+// source `visualId`; tyre position / axle / brand / serial / size / cost /
+// mileage are not captured in the schema, so they are intentionally absent.
+export type TyreDamageIncidentDetail = {
+  id: number
+  visualId: string
+  /** ISO calendar date (YYYY-MM-DD). */
+  date: string
+  /** Canonical fleet number, e.g. `MTL106` or `MT124`. */
+  assetId: string
+  assetName: string
+  assetType: "Truck" | "Trailer"
+  reason: string
+  penaltyPoints: number
+  /** Driver(s) paired to the truck/trailer in `monthly_pairings` that month. */
+  drivers: string[]
+  /** The other half of the pairing (trailer for a truck, truck for a trailer). */
+  pairedAssets: string[]
+}
+
+export type TyreDamageIncidentDetailsResult =
+  | { success: true; data: TyreDamageIncidentDetail[] }
+  | { success: false; error: string }
+
+function addToSetMap(map: Map<string, Set<string>>, key: string, value: string) {
+  const set = map.get(key) ?? new Set<string>()
+  set.add(value)
+  map.set(key, set)
+}
+
+function sortedValues(set: Set<string> | undefined) {
+  return [...(set ?? [])].sort((a, b) => a.localeCompare(b))
+}
+
+// Full incident list behind a Tyre Damages bar, newest first. Drivers are
+// resolved from `monthly_pairings` (same join as src/lib/logistics-scoring.ts:
+// truck + trailer + driver for the incident's calendar month), since
+// `tire_penalties` doesn't store a driver itself. Returns plain JSON and
+// converts failures into `{ success: false }` rather than throwing.
+export async function getTyreDamageIncidentDetails(
+  input: GetTyreDamageIncidentDetailsInput
+): Promise<TyreDamageIncidentDetailsResult> {
+  try {
+    await requireLogisticsAccess()
+
+    const parsed = getTyreDamageIncidentDetailsSchema.safeParse(input)
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? "Invalid request",
+      }
+    }
+
+    const { year, assetId, driverName } = parsed.data
+    const yearStart = `${year}-01-01`
+    const yearEnd = `${year}-12-31`
+
+    const [penaltyRows, pairings] = await Promise.all([
+      db
+        .select({
+          id: tirePenaltiesTable.id,
+          visualId: tirePenaltiesTable.visualId,
+          date: sql<string>`(${tirePenaltiesTable.date})::date::text`,
+          amount: tirePenaltiesTable.amount,
+          reason: tirePenaltiesTable.reason,
+          assetName: assetsTable.assetName,
+          assetType: assetsTable.assetType,
+        })
+        .from(tirePenaltiesTable)
+        .innerJoin(assetsTable, eq(tirePenaltiesTable.assetId, assetsTable.id))
+        .where(
+          and(
+            sql`(${tirePenaltiesTable.date})::date >= ${yearStart}::date`,
+            sql`(${tirePenaltiesTable.date})::date <= ${yearEnd}::date`,
+            ne(tirePenaltiesTable.amount, 0)
+          )
+        )
+        .orderBy(
+          desc(sql`(${tirePenaltiesTable.date})::date`),
+          desc(tirePenaltiesTable.id)
+        ),
+      db.query.monthlyPairingsTable.findMany({
+        where: { activeMonth: { gte: yearStart, lte: yearEnd } },
+        with: { truck: true, trailer: true, driver: true },
+      }),
+    ])
+
+    // Keyed by `<assetDbId>:<YYYY-MM>`.
+    const driversByAssetMonth = new Map<string, Set<string>>()
+    const pairedByAssetMonth = new Map<string, Set<string>>()
+    for (const pairing of pairings) {
+      const month = pairing.activeMonth.slice(0, 7)
+      const truckKey = `${pairing.truck.assetName}:${month}`
+      const trailerKey = `${pairing.trailer.assetName}:${month}`
+      const driver = pairing.driver.name
+      if (driver.trim().length > 0) {
+        addToSetMap(driversByAssetMonth, truckKey, driver)
+        addToSetMap(driversByAssetMonth, trailerKey, driver)
+      }
+      addToSetMap(
+        pairedByAssetMonth,
+        truckKey,
+        toCanonicalFleetNumber(pairing.trailer.assetName)
+      )
+      addToSetMap(
+        pairedByAssetMonth,
+        trailerKey,
+        toCanonicalFleetNumber(pairing.truck.assetName)
+      )
+    }
+
+    const wantedAsset = assetId ? toCanonicalFleetNumber(assetId) : null
+    const wantedDriver = driverName?.trim().toLowerCase() ?? null
+
+    const data: TyreDamageIncidentDetail[] = []
+    for (const row of penaltyRows) {
+      const canonicalId = toCanonicalFleetNumber(row.assetName)
+      if (wantedAsset && canonicalId !== wantedAsset) continue
+
+      const key = `${row.assetName}:${row.date.slice(0, 7)}`
+      const drivers = sortedValues(driversByAssetMonth.get(key))
+      if (
+        wantedDriver &&
+        !drivers.some((name) => name.trim().toLowerCase() === wantedDriver)
+      ) {
+        continue
+      }
+
+      const isTrailer =
+        row.assetType === "Trailer" || /TRAILER/i.test(row.assetName)
+
+      data.push({
+        id: row.id,
+        visualId: row.visualId,
+        date: row.date,
+        assetId: canonicalId,
+        assetName: row.assetName,
+        assetType: isTrailer ? "Trailer" : "Truck",
+        reason: row.reason,
+        penaltyPoints: row.amount,
+        drivers,
+        pairedAssets: sortedValues(pairedByAssetMonth.get(key)),
+      })
+    }
+
+    return { success: true, data }
+  } catch (error) {
+    console.error("getTyreDamageIncidentDetails failed", error)
+    return {
+      success: false,
+      error:
+        error instanceof Error && error.message === "Unauthorized"
+          ? "You are not authorised to view tyre damage incidents."
+          : "Could not load tyre damage incidents.",
+    }
+  }
+}

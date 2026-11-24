@@ -1,8 +1,10 @@
 "use client"
 
+import { useState } from "react"
 import {
   Bar,
   BarChart,
+  Cell,
   CartesianGrid,
   Label as RechartsLabel,
   XAxis,
@@ -10,6 +12,7 @@ import {
 } from "recharts"
 
 import type { TireDamageAssetCount } from "@/actions/logistics"
+import { TyreDamageDetailsModal } from "@/components/logistics/tyre-damage-details-modal"
 import {
   Card,
   CardContent,
@@ -34,10 +37,14 @@ const chartConfig = {
 function TireDamageBarChart({
   data,
   emptyMessage,
+  onSelect,
 }: {
   data: TireDamageAssetCount[]
   emptyMessage: string
+  onSelect: (asset: TireDamageAssetCount) => void
 }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+
   if (data.length === 0) {
     return (
       <p className="py-8 text-center text-sm text-muted-foreground">
@@ -111,7 +118,26 @@ function TireDamageBarChart({
             fill="var(--color-damageCount)"
             radius={4}
             maxBarSize={48}
-          />
+            className="cursor-pointer"
+            onClick={(_, index) => {
+              const asset = data[index]
+              if (asset) onSelect(asset)
+            }}
+            onMouseEnter={(_, index) => setHoveredIndex(index)}
+            onMouseLeave={() => setHoveredIndex(null)}
+          >
+            {data.map((asset, index) => (
+              <Cell
+                key={asset.assetName}
+                className="cursor-pointer transition-colors"
+                fill={
+                  hoveredIndex === index
+                    ? "var(--primary)"
+                    : "var(--color-damageCount)"
+                }
+              />
+            ))}
+          </Bar>
         </BarChart>
       </ChartContainer>
     </div>
@@ -132,18 +158,34 @@ export function TireDamagesCharts({
   trailers: TireDamageAssetCount[]
   year: number
 }) {
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
+
+  function openDetails(asset: TireDamageAssetCount) {
+    setSelectedAssetId(asset.assetId)
+    setModalOpen(true)
+  }
+
   return (
     <div className="flex flex-col gap-6">
+      <TyreDamageDetailsModal
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        year={year}
+        assetId={selectedAssetId}
+      />
       <Card>
         <CardHeader>
           <CardTitle>Motive Units — Tyre Damages ({year})</CardTitle>
           <CardDescription>
-            Trucks with 2 or more operational tyre damages in {year}.
+            Trucks with 2 or more operational tyre damages in {year}. Click any
+            bar for incident details &amp; WhatsApp share.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <TireDamageBarChart
             data={trucks}
+            onSelect={openDetails}
             emptyMessage={`No trucks had 2 or more operational tyre damages in ${year}.`}
           />
         </CardContent>
@@ -153,12 +195,14 @@ export function TireDamagesCharts({
         <CardHeader>
           <CardTitle>Towed Units — Tyre Damages ({year})</CardTitle>
           <CardDescription>
-            Trailers with 2 or more operational tyre damages in {year}.
+            Trailers with 2 or more operational tyre damages in {year}. Click
+            any bar for incident details &amp; WhatsApp share.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <TireDamageBarChart
             data={trailers}
+            onSelect={openDetails}
             emptyMessage={`No trailers had 2 or more operational tyre damages in ${year}.`}
           />
         </CardContent>
