@@ -92,13 +92,89 @@ export type PttVerificationSummary = z.infer<
   typeof pttVerificationSummarySchema
 >
 
-// Snapshot of the 90-day spares history passed to OpenAI as context.
+// Snapshot of the 90-day spares history passed to OpenAI as context. Field
+// names mirror `mechanicalSparesTable` (src/db/schema.ts): `outwardDate`
+// (date -> 'YYYY-MM-DD'), `partNumber`, `materialName` (the ERP part
+// description), `quantity` (numeric -> string), `amountUsd` (the line's
+// "Amount ($)", null when the ERP left it blank) and `jobCardNo`. The truck
+// itself is implied by the session's `fleetId` (`assetsTable.assetName`).
 export type PttSparesContextItem = {
   outwardDate: string
   partNumber: string
   materialName: string
   quantity: string
+  amountUsd: string | null
   jobCardNo: string
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot upload rules (shared by the upload route and the client uploader)
+// ---------------------------------------------------------------------------
+
+export const PTT_IMAGE_MAX_BYTES = 4.5 * 1024 * 1024
+
+// Extension -> the only MIME types accepted for it.
+export const PTT_IMAGE_TYPES = {
+  ".jpg": ["image/jpeg"],
+  ".jpeg": ["image/jpeg"],
+  ".png": ["image/png"],
+  ".webp": ["image/webp"],
+} as const satisfies Record<string, readonly string[]>
+
+export const PTT_IMAGE_CONTENT_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const
+
+// Canonical fleet number: trimmed + uppercase (e.g. ` mtl61 ` -> `MTL61`).
+export function normalizeFleetId(value: string): string {
+  return value.trim().toUpperCase()
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic severity roll-up
+// ---------------------------------------------------------------------------
+
+export type PttFaultSummary = {
+  criticalCount: number
+  calibrationCount: number
+  monitorCount: number
+  negligibleCount: number
+  overallSeverity: PttOverallSeverity
+}
+
+// Counts per tier and the worst tier present (CRITICAL > CALIBRATION_ONLY >
+// MONITOR > NEGLIGIBLE > CLEAR), computed from the validated faults rather
+// than trusting the model's own arithmetic.
+export function summarizePttFaults(
+  faults: ReadonlyArray<{ severity: PttFaultSeverity }>
+): PttFaultSummary {
+  const count = (tier: PttFaultSeverity) =>
+    faults.filter((f) => f.severity === tier).length
+  const criticalCount = count("CRITICAL")
+  const calibrationCount = count("CALIBRATION_ONLY")
+  const monitorCount = count("MONITOR")
+  const negligibleCount = count("NEGLIGIBLE")
+
+  const overallSeverity: PttOverallSeverity =
+    criticalCount > 0
+      ? "CRITICAL"
+      : calibrationCount > 0
+        ? "CALIBRATION_ONLY"
+        : monitorCount > 0
+          ? "MONITOR"
+          : negligibleCount > 0
+            ? "NEGLIGIBLE"
+            : "CLEAR"
+
+  return {
+    criticalCount,
+    calibrationCount,
+    monitorCount,
+    negligibleCount,
+    overallSeverity,
+  }
 }
 
 // ---------------------------------------------------------------------------
