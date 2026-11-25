@@ -214,11 +214,11 @@ function inline(items: readonly string[]): string {
     .join("; ")
 }
 
-// "Parts-Cannon Warning: ...\nPhysical Inspections: a; b\nPTT Paths: ...".
+// "Parts Warning: ...\nPhysical Inspections: a; b\nPTT Paths: ...".
 function buildDirectiveSummary(directive: PttDirective | null): string {
   if (!directive) return ""
   const sections: [string, string][] = [
-    ["Parts-Cannon Warning", directive.parts_cannon_warning.trim()],
+    ["Parts Warning", directive.parts_cannon_warning.trim()],
     ["Physical Inspections", inline(directive.physical_inspections)],
     ["PTT Paths", inline(directive.ptt_navigation_paths)],
     ["Verification Criteria", inline(directive.verification_criteria)],
@@ -605,7 +605,7 @@ export async function generatePttDiagnosticsExcel(
       { header: "Monitor", key: "monitor", width: 10 },
       { header: "Negligible", key: "negligible", width: 11 },
       { header: "True Diagnosis", key: "diagnosis", width: 50 },
-      { header: "Parts-Cannon Warning", key: "warning", width: 50 },
+      { header: "Parts Warning", key: "warning", width: 50 },
       { header: "Physical Checks", key: "checks", width: 60 },
       { header: "PTT Paths", key: "paths", width: 50 },
       { header: "Verification Criteria", key: "criteria", width: 50 },
@@ -865,7 +865,7 @@ export function generatePttDiagnosticsPdf(
       [
         "Truck",
         "True Diagnosis",
-        "Parts-Cannon Warning",
+        "Parts Warning",
         "Physical Checks",
         "PTT Paths",
         "Verification Criteria",

@@ -394,7 +394,7 @@ function bulletList(items: readonly string[], numbered = false): string {
 /**
  * Formats a crisp WhatsApp-markdown directive for the Workshop Manager
  * (`*bold*`, `_italic_`). Includes Fleet ID, generation, overall status,
- * critical & calibration fault codes, the parts-cannon warning, physical
+ * critical & calibration fault codes, the parts warning, physical
  * checks, PTT navigation paths and verification criteria.
  */
 export function formatPttDirectiveForWhatsApp(
@@ -442,7 +442,7 @@ export function formatPttDirectiveForWhatsApp(
 
   if (directive.parts_cannon_warning.trim()) {
     lines.push("")
-    lines.push(`*⚠️ Parts-Cannon Warning:*`)
+    lines.push(`*⚠️ Parts Warning:*`)
     lines.push(directive.parts_cannon_warning.trim())
   }
 

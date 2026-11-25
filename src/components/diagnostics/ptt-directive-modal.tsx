@@ -444,14 +444,14 @@ function ModalBody({
             </SectionCard>
 
             <SectionCard
-              title="2. Parts-Cannon Warning — What NOT to Replace"
+              title="2. Parts Warning — What NOT to Replace"
               icon={<ShieldAlertIcon />}
               titleClassName="text-red-700 dark:text-red-300"
               className="border-2 border-red-400 bg-amber-50 dark:border-red-700 dark:bg-amber-950/40"
             >
               <DirectiveText
                 text={directive.parts_cannon_warning}
-                empty="No parts-cannon risk was flagged for this scan."
+                empty="No parts warning was flagged for this scan."
               />
             </SectionCard>
 
