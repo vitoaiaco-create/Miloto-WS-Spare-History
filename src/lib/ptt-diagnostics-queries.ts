@@ -1,11 +1,27 @@
 import "server-only"
 
-import { and, ilike, ne, not } from "drizzle-orm"
+import {
+  and,
+  count,
+  countDistinct,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  min,
+  ne,
+  not,
+} from "drizzle-orm"
 
 import { db } from "@/db"
-import { assetsTable } from "@/db/schema"
+import {
+  assetsTable,
+  pttDiagnosticSessionsTable,
+  pttScanFaultsTable,
+} from "@/db/schema"
 import { trailerIdentityFilter } from "@/lib/fleet-identity"
 import { requireAdmin } from "@/lib/hr-admin-auth"
+import { queryBaselineSessions } from "@/lib/ptt/session-query"
 import {
   PTT_SEVERITY_RANK,
   compareFleetIds,
@@ -18,18 +34,42 @@ import {
 // from the `/diagnostics` Server Component only; results are passed to Client
 // Components as props.
 
-function querySessions() {
-  return db.query.pttDiagnosticSessionsTable.findMany({
-    // `id` breaks ties so ordering is stable for same-instant scans.
-    orderBy: { scannedAt: "desc", id: "desc" },
-    with: { faults: true, attachments: true },
-  })
-}
-
-// A session with its fault codes and attachments, as returned by Drizzle.
+// A baseline session with its fault codes, attachments and post-work
+// verification scans, as returned by Drizzle. Verification scans are not
+// listed on their own: the truck's baseline scan carries them.
 export type PttSessionWithRelations = Awaited<
-  ReturnType<typeof querySessions>
+  ReturnType<typeof queryBaselineSessions>
 >[number]
+
+export type PttVerificationScanWithRelations =
+  PttSessionWithRelations["verificationScans"][number]
+
+export type PttScanFaultRow =
+  PttVerificationScanWithRelations["scanFaults"][number]
+
+export type PttLedgerRow = Awaited<ReturnType<typeof queryLedger>>[number]
+
+export type PttApprovedExceptionRow = Awaited<
+  ReturnType<typeof queryActiveExceptions>
+>[number]
+
+// Workshop accountability KPIs (all derived from SQL aggregates).
+export type PttWorkshopKpis = {
+  /** Verification scans on record (denominator of the regression rate). */
+  verificationScanCount: number
+  /** Actionable Critical / Calibration faults cleared on the first verification scan. */
+  firstTimeFixRate: number | null
+  firstTimeFixCleared: number
+  firstTimeFixTotal: number
+  /** Verification scans that introduced at least one NEW_REGRESSION fault. */
+  collateralRegressionRate: number | null
+  regressionScanCount: number
+  /** Faults that reappeared within 30 days of being marked cleared. */
+  bounceBackCount: number
+  bounceBackRate: number | null
+  /** Trucks whose latest case is open / blocked with a Critical or Calibration fault. */
+  openBlockingTrucks: number
+}
 
 // One fault code (grouped by code + ECU) aggregated across every truck's
 // latest open scan.
@@ -49,6 +89,11 @@ export type RecurringFault = {
 }
 
 export type PttDiagnosticsOverview = {
+  kpis: PttWorkshopKpis
+  /** Every truck's fault ledger rows. */
+  ledger: PttLedgerRow[]
+  /** Active approved exceptions (re-applied to baseline-only scans in exports). */
+  exceptions: PttApprovedExceptionRow[]
   /** Active `MTL` truck roster (plus any scanned-but-unsynced trucks). */
   rosterFleetIds: string[]
   /** Every session, newest `scannedAt` first. */
@@ -187,13 +232,141 @@ function buildRecurringFaults(
     )
 }
 
+function queryLedger() {
+  return db.query.pttTruckFaultLedgerTable.findMany({
+    orderBy: { fleetId: "asc", lastSeenAt: "desc", id: "desc" },
+  })
+}
+
+function queryActiveExceptions() {
+  return db.query.pttApprovedExceptionsTable.findMany({
+    where: { isActive: true },
+  })
+}
+
+const percent = (part: number, whole: number): number | null =>
+  whole === 0 ? null : Math.round((part / whole) * 1000) / 10
+
+const BLOCKING_SEVERITIES: PttFaultSeverity[] = ["CRITICAL", "CALIBRATION_ONLY"]
+
+async function queryWorkshopKpis(): Promise<PttWorkshopKpis> {
+  // Each case's FIRST verification scan (lowest id).
+  const firstScans = await db
+    .select({ id: min(pttDiagnosticSessionsTable.id) })
+    .from(pttDiagnosticSessionsTable)
+    .where(eq(pttDiagnosticSessionsTable.scanRole, "VERIFICATION"))
+    .groupBy(pttDiagnosticSessionsTable.caseId)
+  const firstScanIds = firstScans
+    .map((row) => row.id)
+    .filter((id): id is number => id !== null)
+
+  const [
+    verificationTotals,
+    regressionTotals,
+    firstFixRows,
+    bounceTotals,
+    clearedEventTotals,
+    latestBaselines,
+  ] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(pttDiagnosticSessionsTable)
+      .where(eq(pttDiagnosticSessionsTable.scanRole, "VERIFICATION")),
+    db
+      .select({ value: countDistinct(pttScanFaultsTable.scanId) })
+      .from(pttScanFaultsTable)
+      .where(eq(pttScanFaultsTable.reconciliationBucket, "NEW_REGRESSION")),
+    firstScanIds.length === 0
+      ? Promise.resolve([])
+      : db
+          .select({
+            bucket: pttScanFaultsTable.reconciliationBucket,
+            value: count(),
+          })
+          .from(pttScanFaultsTable)
+          .where(
+            and(
+              inArray(pttScanFaultsTable.scanId, firstScanIds),
+              inArray(pttScanFaultsTable.severity, BLOCKING_SEVERITIES),
+              eq(pttScanFaultsTable.isApprovedException, false),
+              inArray(pttScanFaultsTable.reconciliationBucket, [
+                "CLEARED",
+                "PERSISTING_OPEN",
+              ])
+            )
+          )
+          .groupBy(pttScanFaultsTable.reconciliationBucket),
+    db
+      .select({ value: count() })
+      .from(pttScanFaultsTable)
+      .where(eq(pttScanFaultsTable.isBounceBack, true)),
+    db
+      .select({ value: count() })
+      .from(pttScanFaultsTable)
+      .where(
+        and(
+          eq(pttScanFaultsTable.reconciliationBucket, "CLEARED"),
+          eq(pttScanFaultsTable.isApprovedException, false)
+        )
+      ),
+    // Latest baseline scan per truck.
+    db
+      .selectDistinctOn([pttDiagnosticSessionsTable.fleetId], {
+        caseStatus: pttDiagnosticSessionsTable.caseStatus,
+        overallSeverity: pttDiagnosticSessionsTable.overallSeverity,
+      })
+      .from(pttDiagnosticSessionsTable)
+      .where(eq(pttDiagnosticSessionsTable.scanRole, "BASELINE"))
+      .orderBy(
+        pttDiagnosticSessionsTable.fleetId,
+        desc(pttDiagnosticSessionsTable.scannedAt),
+        desc(pttDiagnosticSessionsTable.id)
+      ),
+  ])
+
+  const verificationScanCount = verificationTotals[0]?.value ?? 0
+  const regressionScanCount = regressionTotals[0]?.value ?? 0
+  const firstTimeFixCleared =
+    firstFixRows.find((row) => row.bucket === "CLEARED")?.value ?? 0
+  const firstTimeFixPersisting =
+    firstFixRows.find((row) => row.bucket === "PERSISTING_OPEN")?.value ?? 0
+  const firstTimeFixTotal = firstTimeFixCleared + firstTimeFixPersisting
+  const bounceBackCount = bounceTotals[0]?.value ?? 0
+  const clearedEvents = clearedEventTotals[0]?.value ?? 0
+
+  return {
+    verificationScanCount,
+    firstTimeFixRate: percent(firstTimeFixCleared, firstTimeFixTotal),
+    firstTimeFixCleared,
+    firstTimeFixTotal,
+    collateralRegressionRate: percent(regressionScanCount, verificationScanCount),
+    regressionScanCount,
+    bounceBackCount,
+    bounceBackRate: percent(Math.min(bounceBackCount, clearedEvents), clearedEvents),
+    openBlockingTrucks: latestBaselines.filter(
+      (truck) =>
+        (truck.caseStatus === "OPEN" ||
+          truck.caseStatus === "PARTIAL_BLOCKED" ||
+          truck.caseStatus === "REJECTED_NO_PROGRESS") &&
+        BLOCKING_SEVERITIES.includes(
+          truck.overallSeverity as PttFaultSeverity
+        )
+    ).length,
+  }
+}
+
 export async function getPttDiagnosticsOverview(): Promise<PttDiagnosticsOverview> {
   await requireAdmin()
 
-  const [mtlTruckNames, sessions] = await Promise.all([
-    queryMtlTruckNames(),
-    querySessions(),
-  ])
+  const [mtlTruckNames, sessions, kpis, ledger, exceptions] = await Promise.all(
+    [
+      queryMtlTruckNames(),
+      queryBaselineSessions(),
+      queryWorkshopKpis(),
+      queryLedger(),
+      queryActiveExceptions(),
+    ]
+  )
 
   // Union the synced roster with any truck already scanned (e.g. scanned
   // before `assets` was synced), deduplicated by canonical fleet id.
@@ -202,6 +375,9 @@ export async function getPttDiagnosticsOverview(): Promise<PttDiagnosticsOvervie
   for (const session of sessions) roster.add(normalizeFleetId(session.fleetId))
 
   return {
+    kpis,
+    ledger,
+    exceptions,
     rosterFleetIds: [...roster].filter(Boolean).sort(compareFleetIds),
     sessions,
     recurringFaults: buildRecurringFaults(sessions),

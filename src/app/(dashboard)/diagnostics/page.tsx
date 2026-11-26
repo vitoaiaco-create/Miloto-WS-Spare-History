@@ -48,6 +48,9 @@ export default async function FleetDiagnosticsPage() {
           rosterFleetIds={overview.rosterFleetIds}
           sessions={overview.sessions}
           recurringFaults={overview.recurringFaults}
+          ledger={overview.ledger}
+          exceptions={overview.exceptions}
+          workshopKpis={overview.kpis}
         />
       ) : (
         <Alert variant="destructive">

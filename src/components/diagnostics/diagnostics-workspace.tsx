@@ -9,6 +9,8 @@ import { NewPttScanPanel } from "@/components/diagnostics/new-ptt-scan-panel"
 import { PttDirectiveModal } from "@/components/diagnostics/ptt-directive-modal"
 import { PttExportDialogButton } from "@/components/diagnostics/ptt-export-dialog-button"
 import { PttVerificationSection } from "@/components/diagnostics/ptt-verification-section"
+import { TruckFaultLedger } from "@/components/diagnostics/truck-fault-ledger"
+import { WorkshopKpiBar } from "@/components/diagnostics/workshop-kpi-bar"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -24,21 +26,30 @@ import {
   normalizeFleetId,
 } from "@/lib/ptt-diagnostics"
 import type {
+  PttApprovedExceptionRow,
+  PttLedgerRow,
   PttSessionWithRelations,
+  PttWorkshopKpis,
   RecurringFault,
 } from "@/lib/ptt-diagnostics-queries"
 import { cn } from "@/lib/utils"
 
-type TabValue = "coverage" | "scan" | "intelligence"
+type TabValue = "coverage" | "scan" | "intelligence" | "ledger"
 
 export function DiagnosticsWorkspace({
   rosterFleetIds,
   sessions: serverSessions,
   recurringFaults,
+  ledger,
+  exceptions,
+  workshopKpis,
 }: {
   rosterFleetIds: string[]
   sessions: PttSessionWithRelations[]
   recurringFaults: RecurringFault[]
+  ledger: PttLedgerRow[]
+  exceptions: PttApprovedExceptionRow[]
+  workshopKpis: PttWorkshopKpis
 }) {
   const router = useRouter()
   const [tab, setTab] = useState<TabValue>("coverage")
@@ -116,6 +127,15 @@ export function DiagnosticsWorkspace({
       openDirectives,
     }
   }, [rosterFleetIds, latestByFleet])
+
+  const openLedgerCount = useMemo(
+    () =>
+      ledger.filter(
+        (entry) =>
+          entry.ledgerStatus === "OPEN" || entry.ledgerStatus === "REOPENED"
+      ).length,
+    [ledger]
+  )
 
   const selectedSession = useMemo(() => {
     if (selectedSessionId === null) return null
@@ -203,7 +223,11 @@ export function DiagnosticsWorkspace({
     <div className="flex flex-col gap-6">
       {/* Always accessible, whichever tab is open. */}
       <div className="flex justify-end">
-        <PttExportDialogButton sessions={sessions} />
+        <PttExportDialogButton
+          sessions={sessions}
+          ledger={ledger}
+          exceptions={exceptions}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -247,6 +271,8 @@ export function DiagnosticsWorkspace({
         <KpiCard label="Open Directives" value={kpis.openDirectives} />
       </div>
 
+      <WorkshopKpiBar kpis={workshopKpis} />
+
       <Tabs
         value={tab}
         onValueChange={(value) => setTab(value as TabValue)}
@@ -266,6 +292,12 @@ export function DiagnosticsWorkspace({
             Fleet Fault Intelligence
             <Badge variant="secondary" title="Recurring faults">
               {recurringFaults.length}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger className="px-3" value="ledger">
+            Truck Fault Ledger
+            <Badge variant="secondary" title="Open or re-opened faults">
+              {openLedgerCount}
             </Badge>
           </TabsTrigger>
         </TabsList>
@@ -295,8 +327,14 @@ export function DiagnosticsWorkspace({
           <FleetFaultIntelligence
             recurringFaults={recurringFaults}
             sessions={sessions}
+            ledger={ledger}
+            exceptions={exceptions}
             onOpenFleet={openFleetDirective}
           />
+        </TabsContent>
+
+        <TabsContent value="ledger" keepMounted>
+          <TruckFaultLedger ledger={ledger} onOpenFleet={openFleetDirective} />
         </TabsContent>
       </Tabs>
 

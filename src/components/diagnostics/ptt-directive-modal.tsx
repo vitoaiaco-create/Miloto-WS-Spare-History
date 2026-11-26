@@ -69,6 +69,10 @@ import {
   type PttSessionStatus,
 } from "@/lib/ptt-diagnostics"
 import type { PttSessionWithRelations } from "@/lib/ptt-diagnostics-queries"
+import {
+  MANUAL_CLOSE_HINT,
+  canManuallyMarkVerifiedClosed,
+} from "@/lib/ptt/closure-guard"
 import { cn } from "@/lib/utils"
 
 const STATUS_ITEMS: { value: PttSessionStatus; label: string }[] = [
@@ -237,6 +241,13 @@ function ModalBody({
   >(session.status, (_current, next) => next)
   const [isStatusPending, startStatusTransition] = useTransition()
 
+  // `Verified Closed` is only selectable once a verification scan passed.
+  const canClose = canManuallyMarkVerifiedClosed({
+    caseStatus: session.caseStatus,
+    latestVerificationCaseStatus:
+      session.verificationScans[0]?.caseStatus ?? null,
+  })
+
   const [faultFilter, setFaultFilter] = useState<FaultFilter>("ALL")
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -343,7 +354,11 @@ function ModalBody({
               </SelectTrigger>
               <SelectContent alignItemWithTrigger={false} align="end">
                 {PTT_SESSION_STATUSES.map((value) => (
-                  <SelectItem key={value} value={value}>
+                  <SelectItem
+                    key={value}
+                    value={value}
+                    disabled={value === "VERIFIED_CLOSED" && !canClose}
+                  >
                     {STATUS_ITEMS.find((item) => item.value === value)?.label}
                   </SelectItem>
                 ))}
@@ -351,6 +366,11 @@ function ModalBody({
             </Select>
           </div>
         </div>
+        {!canClose && (
+          <p className="text-right text-xs text-muted-foreground">
+            {MANUAL_CLOSE_HINT}
+          </p>
+        )}
         <DialogDescription className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
           <span>Scanned {formatScanDate(session.scannedAt)}</span>
           {session.odometerKm != null && (

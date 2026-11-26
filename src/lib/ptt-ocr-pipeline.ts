@@ -238,12 +238,34 @@ export function findUncoveredPopups(
 // here must never be silently downgraded when Pass 2 dropped the row.
 const SAFETY_MIDS = new Set(["128", "130", "136", "144", "185"])
 
-function fallbackSeverity(row: PttRawRow): PttFaultSeverity {
-  if (row.fault_state === "ACTIVE") {
-    const mid = midOf(row.control_unit_verbatim)
+/**
+ * Deterministic, conservative tier for a transcribed row that was NOT run
+ * through the AI diagnostic pass (e.g. a fault first seen on a post-work
+ * verification scan): ACTIVE faults on the safety ECUs are CRITICAL, other
+ * ACTIVE faults MONITOR, INACTIVE ones NEGLIGIBLE.
+ */
+export function provisionalSeverityForRow(row: PttRawRow): PttFaultSeverity {
+  return fallbackSeverity(row)
+}
+
+/**
+ * The deterministic fallback tier from just the printed control unit and the
+ * fault state (shared with `severity-and-patterns.ts` so the baseline and
+ * re-scan paths can never disagree on a code no locked rule covers).
+ */
+export function fallbackSeverityForUnit(
+  controlUnit: string,
+  faultState: PttRawRow["fault_state"]
+): PttFaultSeverity {
+  if (faultState === "ACTIVE") {
+    const mid = midOf(controlUnit)
     return mid && SAFETY_MIDS.has(mid) ? "CRITICAL" : "MONITOR"
   }
-  return row.fault_state === "INACTIVE" ? "NEGLIGIBLE" : "MONITOR"
+  return faultState === "INACTIVE" ? "NEGLIGIBLE" : "MONITOR"
+}
+
+function fallbackSeverity(row: PttRawRow): PttFaultSeverity {
+  return fallbackSeverityForUnit(row.control_unit_verbatim, row.fault_state)
 }
 
 // Cab air-conditioning ECU: Electronic Climate Control (ECC, MID 146). Comfort

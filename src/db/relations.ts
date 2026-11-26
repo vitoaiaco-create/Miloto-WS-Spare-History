@@ -216,6 +216,31 @@ export const relations = defineRelations(schema, (r) => ({
       from: r.pttDiagnosticSessionsTable.id,
       to: r.pttSessionAttachmentsTable.sessionId,
     }),
+    // Reconciliation snapshot rows (canonical keys + buckets).
+    scanFaults: r.many.pttScanFaultsTable({
+      from: r.pttDiagnosticSessionsTable.id,
+      to: r.pttScanFaultsTable.scanId,
+    }),
+    // Post-work verification scans whose `parentScanId` is this baseline.
+    verificationScans: r.many.pttDiagnosticSessionsTable({
+      from: r.pttDiagnosticSessionsTable.id,
+      to: r.pttDiagnosticSessionsTable.parentScanId,
+      alias: "ptt_case_verifications",
+    }),
+    // The case's baseline scan (verification scans only).
+    parentScan: r.one.pttDiagnosticSessionsTable({
+      from: r.pttDiagnosticSessionsTable.parentScanId,
+      to: r.pttDiagnosticSessionsTable.id,
+      alias: "ptt_case_verifications",
+    }),
+  },
+  pttScanFaultsTable: {
+    // `scanId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts.
+    scan: r.one.pttDiagnosticSessionsTable({
+      from: r.pttScanFaultsTable.scanId,
+      to: r.pttDiagnosticSessionsTable.id,
+      optional: false,
+    }),
   },
   pttFaultCodesTable: {
     // `sessionId` is `NOT NULL` with `onDelete: "cascade"` in schema.ts, so a

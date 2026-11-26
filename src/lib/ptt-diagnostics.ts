@@ -123,7 +123,15 @@ export const pttVcadsPopupSchema = z.object({
 export const pttRawOcrSchema = z.object({
   detected_generation: caseInsensitiveEnum(PTT_TRUCK_GENERATIONS, "UNKNOWN"),
   odometer_km: z.number().nullable().default(null),
+  // N from the "DTC List (N Items)" heading (`headerItemCount`).
   reported_dtc_list_count: z.number().nullable().default(null),
+  // PTT bottom status bar / top-right timestamp, as printed.
+  chassis_id_ocr: z.string().nullable().default(null),
+  work_order_ocr: z.string().nullable().default(null),
+  product_time_ocr: z.string().nullable().default(null),
+  // Bold fault title in the bottom-left panel above "View DTC information"
+  // (the selected row). Used to confirm row 1 is the true top of the list.
+  selected_footer_text: z.string().nullable().default(null),
   raw_rows: z.array(pttRawRowSchema),
   vcads_popups: z.array(pttVcadsPopupSchema).default([]),
 })

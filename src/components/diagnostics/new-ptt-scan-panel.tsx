@@ -210,6 +210,13 @@ function toDate(value: unknown): Date | null {
     : null
 }
 
+function reviveAttachments(attachments: Record<string, unknown>[]) {
+  return attachments.map((attachment) => ({
+    ...attachment,
+    uploadedAt: toDate(attachment.uploadedAt) ?? new Date(),
+  }))
+}
+
 // JSON turns Date columns into ISO strings; the dashboard expects real Dates.
 export function revivePttSession(data: unknown): PttSessionWithRelations {
   const raw = data as Record<string, unknown>
@@ -229,12 +236,33 @@ export function revivePttSession(data: unknown): PttSessionWithRelations {
       ...fault,
       createdAt: toDate(fault.createdAt) ?? new Date(),
     })),
-    attachments: (raw.attachments as Record<string, unknown>[]).map(
-      (attachment) => ({
-        ...attachment,
-        uploadedAt: toDate(attachment.uploadedAt) ?? new Date(),
-      })
-    ),
+    attachments: reviveAttachments(raw.attachments as Record<string, unknown>[]),
+    verificationScans: (
+      (Array.isArray(raw.verificationScans) ? raw.verificationScans : []) as Record<
+        string,
+        unknown
+      >[]
+    ).map((scan) => ({
+      ...scan,
+      scannedAt: toDate(scan.scannedAt) ?? new Date(),
+      updatedAt: toDate(scan.updatedAt) ?? new Date(),
+      verifiedAt: toDate(scan.verifiedAt),
+      scanFaults: (
+        (Array.isArray(scan.scanFaults) ? scan.scanFaults : []) as Record<
+          string,
+          unknown
+        >[]
+      ).map((fault) => ({
+        ...fault,
+        createdAt: toDate(fault.createdAt) ?? new Date(),
+      })),
+      attachments: reviveAttachments(
+        (Array.isArray(scan.attachments) ? scan.attachments : []) as Record<
+          string,
+          unknown
+        >[]
+      ),
+    })),
   } as unknown as PttSessionWithRelations
 }
 

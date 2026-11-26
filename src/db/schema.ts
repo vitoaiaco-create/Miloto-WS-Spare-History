@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   date,
+  index,
   integer,
   jsonb,
   numeric,
@@ -15,6 +16,7 @@ import {
   uniqueIndex,
   uuid,
   varchar,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 import {
@@ -40,6 +42,18 @@ import {
   type PttTruckGeneration,
   type PttVerificationSummary,
 } from "../lib/ptt-diagnostics";
+import type {
+  PttCaseStatus,
+  PttExceptionScope,
+  PttGateOverride,
+  PttKnownGeneration,
+  PttLedgerStatus,
+  PttReconciliationBucket,
+  PttReconciliationSummary,
+  PttScanFaultStatus,
+  PttScanRole,
+} from "../lib/ptt/constants";
+import type { PttVerificationAudit } from "../lib/ptt/verification-audit-schema";
 
 // Heavy transport units (e.g. prime movers, trailers) in the fleet.
 export const assetsTable = pgTable("assets", {
@@ -693,13 +707,60 @@ export type {
 // kept as plain text (no FK), like `hr_disciplinary_cases.fleet_id`, so a scan
 // can be logged for a truck before it exists in the assets table.
 // `scannedBy` is audit-only (Clerk user id).
-export const pttDiagnosticSessionsTable = pgTable("ptt_diagnostic_sessions", {
+//
+// Closed-loop Before/After reconciliation: a BASELINE session opens a "case"
+// (`caseId`); each post-work VERIFICATION session joins the same case and
+// points at the baseline through `parentScanId`. `createdBy` / `createdAt` of
+// the reconciliation spec are the pre-existing `scannedBy` / `scannedAt`.
+export const pttDiagnosticSessionsTable = pgTable(
+  "ptt_diagnostic_sessions",
+  {
   id: serial("id").primaryKey(),
   fleetId: text("fleet_id").notNull(),
+  // `generation` of the reconciliation spec.
   truckGeneration: text("truck_generation")
     .$type<PttTruckGeneration>()
     .notNull()
     .default("UNKNOWN"),
+  // Groups a baseline and its verification scan(s). Existing rows each get
+  // their own case id from the column default.
+  caseId: uuid("case_id").notNull().defaultRandom(),
+  scanRole: text("scan_role").$type<PttScanRole>().notNull().default("BASELINE"),
+  // The case's baseline scan (set on verification scans only). Verification
+  // scans are meaningless without it, so they go away with it.
+  parentScanId: integer("parent_scan_id").references(
+    (): AnyPgColumn => pttDiagnosticSessionsTable.id,
+    { onDelete: "cascade" }
+  ),
+  // "DTC List (N Items)" as printed in the PTT header; null when unreadable.
+  headerItemCount: integer("header_item_count"),
+  // Distinct DTC rows (unique canonical keys) extracted from the screenshots.
+  extractedItemCount: integer("extracted_item_count").notNull().default(0),
+  // headerItemCount === null || extractedItemCount >= headerItemCount.
+  isCompleteScan: boolean("is_complete_scan").notNull().default(true),
+  // OCR of the PTT bottom status bar (chassis / work order) and top-right
+  // product time.
+  chassisIdOcr: text("chassis_id_ocr"),
+  workOrderOcr: text("work_order_ocr"),
+  productTimeOcr: text("product_time_ocr"),
+  // SHA-256 (hex) of every uploaded image, to catch recycled screenshots.
+  imageHashes: text("image_hashes").array().notNull().default(sql`'{}'::text[]`),
+  // Case-level verdict. Kept equal on the baseline and its verification scans.
+  caseStatus: text("case_status")
+    .$type<PttCaseStatus>()
+    .notNull()
+    .default("OPEN"),
+  reconciliationSummary: jsonb(
+    "reconciliation_summary"
+  ).$type<PttReconciliationSummary>(),
+  // Forensic VERIFICATION_AUDIT (Pass 2, mode B) of a verification scan; null
+  // on baselines, on older scans and when the audit call failed.
+  verificationAudit: jsonb("verification_audit").$type<PttVerificationAudit>(),
+  // Audit log of integrity gates a manager overrode (with the reason given).
+  gateOverrides: jsonb("gate_overrides")
+    .$type<PttGateOverride[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
   odometerKm: integer("odometer_km"),
   // e.g. 'Nov 2026 Fleet Sweep'.
   scanBatchLabel: text("scan_batch_label"),
@@ -731,7 +792,18 @@ export const pttDiagnosticSessionsTable = pgTable("ptt_diagnostic_sessions", {
   scannedBy: text("scanned_by"),
   scannedAt: timestamp("scanned_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+  },
+  (table) => [
+    index("ptt_diagnostic_sessions_case_id_idx").on(table.caseId),
+    index("ptt_diagnostic_sessions_fleet_id_idx").on(table.fleetId),
+    index("ptt_diagnostic_sessions_parent_scan_id_idx").on(table.parentScanId),
+    // Serves the recycled-image lookup (`image_hashes && ARRAY[...]`).
+    index("ptt_diagnostic_sessions_image_hashes_idx").using(
+      "gin",
+      table.imageHashes
+    ),
+  ]
+);
 
 // Individual fault codes extracted from a PTT scan session.
 export const pttFaultCodesTable = pgTable("ptt_fault_codes", {
@@ -776,3 +848,126 @@ export const pttSessionAttachmentsTable = pgTable("ptt_session_attachments", {
   fileSize: integer("file_size").notNull(),
   uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
 });
+
+// Immutable per-scan snapshot of every fault extracted from a PTT scan, keyed
+// by the exact canonical key (src/lib/ptt/canonical-key.ts) so Before/After
+// diffs never depend on free-text descriptions. Verification scans also carry
+// the reconciliation bucket of every baseline fault: a baseline fault that is
+// no longer active is stored as a CLEARED row (`isExtracted = false` when it
+// was simply absent from the verification screenshots).
+export const pttScanFaultsTable = pgTable(
+  "ptt_scan_faults",
+  {
+    id: serial("id").primaryKey(),
+    scanId: integer("scan_id")
+      .notNull()
+      .references(() => pttDiagnosticSessionsTable.id, { onDelete: "cascade" }),
+    canonicalKey: text("canonical_key").notNull(),
+    ecuLabel: text("ecu_label").notNull(),
+    dtcRaw: text("dtc_raw").notNull(),
+    description: text("description").notNull().default(""),
+    pttStatus: text("ptt_status").$type<PttScanFaultStatus>().notNull(),
+    severity: text("severity").$type<PttFaultSeverity>().notNull(),
+    reconciliationBucket: text(
+      "reconciliation_bucket"
+    ).$type<PttReconciliationBucket>(),
+    isBounceBack: boolean("is_bounce_back").notNull().default(false),
+    // Matched an active approved exception when the scan was reconciled.
+    isApprovedException: boolean("is_approved_exception")
+      .notNull()
+      .default(false),
+    // False for a CLEARED baseline fault that was not on the verification
+    // screenshots at all.
+    isExtracted: boolean("is_extracted").notNull().default(true),
+    // The key could not be normalised (or looks like an OCR misread): shown
+    // for human review instead of silently breaking the diff.
+    keyNeedsReview: boolean("key_needs_review").notNull().default(false),
+    keyReviewReason: text("key_review_reason"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ptt_scan_faults_scan_id_canonical_key_idx").on(
+      table.scanId,
+      table.canonicalKey
+    ),
+    index("ptt_scan_faults_bucket_idx").on(table.reconciliationBucket),
+  ]
+);
+
+// Living, truck-level fault history. One row per (truck, canonical key),
+// updated on every baseline / verification commit. The scan ids are nullable
+// with `set null` so deleting a scan never blocks on the ledger.
+export const pttTruckFaultLedgerTable = pgTable(
+  "ptt_truck_fault_ledger",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: text("fleet_id").notNull(),
+    canonicalKey: text("canonical_key").notNull(),
+    ecuLabel: text("ecu_label").notNull(),
+    description: text("description").notNull().default(""),
+    latestSeverity: text("latest_severity").$type<PttFaultSeverity>().notNull(),
+    ledgerStatus: text("ledger_status").$type<PttLedgerStatus>().notNull(),
+    firstSeenScanId: integer("first_seen_scan_id").references(
+      () => pttDiagnosticSessionsTable.id,
+      { onDelete: "set null" }
+    ),
+    lastSeenScanId: integer("last_seen_scan_id").references(
+      () => pttDiagnosticSessionsTable.id,
+      { onDelete: "set null" }
+    ),
+    clearedScanId: integer("cleared_scan_id").references(
+      () => pttDiagnosticSessionsTable.id,
+      { onDelete: "set null" }
+    ),
+    firstSeenAt: timestamp("first_seen_at").notNull(),
+    lastSeenAt: timestamp("last_seen_at").notNull(),
+    clearedAt: timestamp("cleared_at"),
+    reopenCount: integer("reopen_count").notNull().default(0),
+    lastReopenedAt: timestamp("last_reopened_at"),
+  },
+  (table) => [
+    uniqueIndex("ptt_truck_fault_ledger_fleet_key_idx").on(
+      table.fleetId,
+      table.canonicalKey
+    ),
+    index("ptt_truck_fault_ledger_status_idx").on(table.ledgerStatus),
+  ]
+);
+
+// Approved exceptions: faults that are physically expected on a whole
+// generation (FLEET_GENERATION) or on one truck (TRUCK_SPECIFIC), e.g. codes
+// caused by a manual air-dryer conversion. Soft-deactivated via `isActive`.
+export const pttApprovedExceptionsTable = pgTable(
+  "ptt_approved_exceptions",
+  {
+    id: serial("id").primaryKey(),
+    scope: text("scope").$type<PttExceptionScope>().notNull(),
+    generation: text("generation").$type<PttKnownGeneration>(),
+    fleetId: text("fleet_id"),
+    canonicalKey: text("canonical_key").notNull(),
+    reasonCategory: text("reason_category").notNull(),
+    physicalProofNote: text("physical_proof_note").notNull(),
+    approvedBy: text("approved_by").notNull(),
+    approvedAt: timestamp("approved_at").notNull().defaultNow(),
+    isActive: boolean("is_active").notNull().default(true),
+  },
+  (table) => [
+    // At most one ACTIVE exception per key and scope target (re-approving
+    // after a deactivation inserts a fresh row).
+    uniqueIndex("ptt_approved_exceptions_generation_key_idx")
+      .on(table.generation, table.canonicalKey)
+      .where(sql`${table.scope} = 'FLEET_GENERATION' and ${table.isActive}`),
+    uniqueIndex("ptt_approved_exceptions_fleet_key_idx")
+      .on(table.fleetId, table.canonicalKey)
+      .where(sql`${table.scope} = 'TRUCK_SPECIFIC' and ${table.isActive}`),
+    index("ptt_approved_exceptions_key_idx").on(table.canonicalKey),
+    check(
+      "ptt_approved_exceptions_scope_target",
+      sql`(${table.scope} = 'FLEET_GENERATION' and ${table.generation} is not null and ${table.fleetId} is null) or (${table.scope} = 'TRUCK_SPECIFIC' and ${table.fleetId} is not null)`
+    ),
+    check(
+      "ptt_approved_exceptions_proof_note_not_blank",
+      sql`length(btrim(${table.physicalProofNote})) > 0`
+    ),
+  ]
+);

@@ -9,6 +9,7 @@ import {
 import { useMemo, useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -37,12 +38,17 @@ import {
 import {
   PTT_REPORT_SCOPE_LABELS,
   PTT_SEVERITY_FILTER_LABELS,
-  buildPttFaultReportRows,
-  generatePttDiagnosticsExcel,
-  generatePttDiagnosticsPdf,
   type PttReportScope,
-  type PttReportSession,
 } from "@/lib/ptt-diagnostics-report"
+import {
+  buildPttReportData,
+  type PttReportCase,
+  type PttReportDataOptions,
+  type PttReportExceptionRule,
+  type PttReportKind,
+  type PttReportLedgerRow,
+} from "@/lib/ptt/report-data"
+import { downloadPttReport } from "@/lib/ptt/report-download"
 import { cn } from "@/lib/utils"
 
 const SEVERITY_PILL_ACTIVE: Record<PttFaultSeverity, string> = {
@@ -61,15 +67,38 @@ const ACTIONABLE_SEVERITIES: PttFaultSeverity[] = [
   "CALIBRATION_ONLY",
 ]
 
-type Format = "excel" | "pdf"
+const DOWNLOAD_COPY: Record<
+  PttReportKind,
+  { label: string; success: string; failure: string }
+> = {
+  FAULT_PDF: {
+    label: "Export Fault Report (PDF)",
+    success: "Fault report downloaded",
+    failure: "Could not generate the fault report",
+  },
+  EXECUTIVE_PDF: {
+    label: "Export Executive Directives (PDF)",
+    success: "Executive directives downloaded",
+    failure: "Could not generate the executive directives",
+  },
+  EXCEL: {
+    label: "Export Excel Workbook (.xlsx)",
+    success: "Excel workbook downloaded",
+    failure: "Could not generate the Excel workbook",
+  },
+}
 
 export function PttExportDialogButton({
   sessions,
+  ledger,
+  exceptions,
   variant = "outline",
   size,
   className,
 }: {
-  sessions: readonly PttReportSession[]
+  sessions: readonly PttReportCase[]
+  ledger: readonly PttReportLedgerRow[]
+  exceptions: readonly PttReportExceptionRule[]
   variant?: "default" | "outline" | "secondary"
   size?: "default" | "sm"
   className?: string
@@ -82,7 +111,10 @@ export function PttExportDialogButton({
   const [fleetId, setFleetId] = useState("ALL")
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
-  const [generating, setGenerating] = useState<Format | null>(null)
+  // Checked by default: approved fleet exceptions are not workshop work.
+  const [excludeApprovedExceptions, setExcludeApprovedExceptions] =
+    useState(true)
+  const [generating, setGenerating] = useState<PttReportKind | null>(null)
 
   // Every truck that has at least one scan, naturally sorted.
   const truckItems = useMemo(() => {
@@ -98,23 +130,31 @@ export function PttExportDialogButton({
   // The selected truck can disappear (e.g. its only scan was deleted).
   const effectiveFleetId = fleetId in truckItems ? fleetId : "ALL"
 
-  const options = useMemo(
+  const options = useMemo<PttReportDataOptions>(
     () => ({
       scope,
       severities,
       fleetId: effectiveFleetId,
       fromDate: from || undefined,
       toDate: to || undefined,
+      excludeApprovedExceptions,
     }),
-    [scope, severities, effectiveFleetId, from, to]
+    [scope, severities, effectiveFleetId, from, to, excludeApprovedExceptions]
   )
 
+  const reportInput = useMemo(
+    () => ({ sessions, ledger, exceptions }),
+    [sessions, ledger, exceptions]
+  )
+
+  // The same data layer the PDFs and the workbook render, so the live
+  // counter always matches what gets exported.
   const matching = useMemo(
-    () => buildPttFaultReportRows(sessions, options),
-    [sessions, options]
+    () => buildPttReportData(reportInput, options),
+    [reportInput, options]
   )
   const rowCount = matching.faultRows.length
-  const truckCount = matching.truckCount
+  const truckCount = matching.trucks.length
 
   const allSelected = severities.length === PTT_FAULT_SEVERITIES.length
   const actionableOnly =
@@ -129,29 +169,22 @@ export function PttExportDialogButton({
     )
   }
 
-  async function handleDownload(kind: Format) {
-    if (rowCount === 0 || generating) return
+  async function handleDownload(kind: PttReportKind) {
+    if (truckCount === 0 || generating) return
     setGenerating(kind)
     try {
       // Let the spinner paint before the (synchronous) PDF build blocks.
       await new Promise((resolve) => setTimeout(resolve, 30))
-      if (kind === "excel") {
-        await generatePttDiagnosticsExcel(sessions, options)
-      } else {
-        generatePttDiagnosticsPdf(sessions, options)
-      }
+      const result = await downloadPttReport(kind, reportInput, options)
       toast.add({
-        title: kind === "excel" ? "Excel report downloaded" : "PDF report downloaded",
-        description: `${rowCount} ${rowCount === 1 ? "fault row" : "fault rows"} across ${truckCount} ${truckCount === 1 ? "truck" : "trucks"} exported.`,
+        title: DOWNLOAD_COPY[kind].success,
+        description: `${result.trucks} ${result.trucks === 1 ? "truck" : "trucks"}, ${result.faultRows} fault ${result.faultRows === 1 ? "row" : "rows"} exported.`,
         type: "success",
       })
       setOpen(false)
     } catch (error) {
       toast.add({
-        title:
-          kind === "excel"
-            ? "Could not generate Excel file"
-            : "Could not generate PDF",
+        title: DOWNLOAD_COPY[kind].failure,
         description:
           error instanceof Error ? error.message : "Something went wrong.",
         type: "error",
@@ -174,9 +207,9 @@ export function PttExportDialogButton({
         <DialogHeader>
           <DialogTitle>Export Report (Excel / PDF)</DialogTitle>
           <DialogDescription>
-            Choose which faults to include. The report is generated in your
-            browser: Excel as a two-sheet workbook, PDF as an A4 landscape
-            handover document.
+            Choose which faults to include. Reports are generated in your
+            browser: a technical Fault Report PDF, a standalone Executive
+            Directives PDF (both A4 landscape) and a 3-tab Excel workbook.
           </DialogDescription>
         </DialogHeader>
 
@@ -304,39 +337,62 @@ export function PttExportDialogButton({
             </div>
           </div>
           <p className="-mt-2 text-xs text-muted-foreground">
-            Dates filter on the scan date.
+            Dates filter on each truck&apos;s latest scan date.
           </p>
 
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="ptt-export-exclude-exceptions"
+              checked={excludeApprovedExceptions}
+              onCheckedChange={(checked) =>
+                setExcludeApprovedExceptions(checked === true)
+              }
+            />
+            <div className="grid gap-0.5">
+              <Label htmlFor="ptt-export-exclude-exceptions">
+                Exclude Approved Fleet Exceptions
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Hides approved-exception rows from the Fault Report PDF and the
+                Fault Register tab. Exception counts stay in the KPIs and are
+                never listed as outstanding.
+              </p>
+            </div>
+          </div>
+
           <p className="text-sm font-medium" aria-live="polite">
-            {rowCount} fault {rowCount === 1 ? "row" : "rows"} across{" "}
-            {truckCount} {truckCount === 1 ? "truck" : "trucks"} match
+            {truckCount} {truckCount === 1 ? "truck" : "trucks"}, {rowCount}{" "}
+            fault {rowCount === 1 ? "row" : "rows"} match
+            {excludeApprovedExceptions && matching.excludedExceptionRows > 0 && (
+              <span className="font-normal text-muted-foreground">
+                {" "}
+                (+{matching.excludedExceptionRows} approved{" "}
+                {matching.excludedExceptionRows === 1 ? "exception" : "exceptions"}{" "}
+                excluded)
+              </span>
+            )}
           </p>
         </div>
 
-        <DialogFooter>
-          <Button
-            variant="outline"
-            disabled={rowCount === 0 || generating !== null}
-            onClick={() => handleDownload("excel")}
-          >
-            {generating === "excel" ? (
-              <LoaderCircleIcon className="animate-spin" />
-            ) : (
-              <FileSpreadsheetIcon />
-            )}
-            Download Excel (.xlsx)
-          </Button>
-          <Button
-            disabled={rowCount === 0 || generating !== null}
-            onClick={() => handleDownload("pdf")}
-          >
-            {generating === "pdf" ? (
-              <LoaderCircleIcon className="animate-spin" />
-            ) : (
-              <FileDownIcon />
-            )}
-            Download PDF (.pdf)
-          </Button>
+        <DialogFooter className="flex-col-reverse sm:flex-col sm:items-stretch">
+          {(["FAULT_PDF", "EXECUTIVE_PDF", "EXCEL"] as const).map((kind) => (
+            <Button
+              key={kind}
+              variant={kind === "FAULT_PDF" ? "default" : "outline"}
+              className="w-full justify-start"
+              disabled={truckCount === 0 || generating !== null}
+              onClick={() => handleDownload(kind)}
+            >
+              {generating === kind ? (
+                <LoaderCircleIcon className="animate-spin" />
+              ) : kind === "EXCEL" ? (
+                <FileSpreadsheetIcon />
+              ) : (
+                <FileDownIcon />
+              )}
+              {DOWNLOAD_COPY[kind].label}
+            </Button>
+          ))}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -36,9 +36,18 @@ import {
   readApiResponse,
   revivePttSession,
 } from "@/components/diagnostics/new-ptt-scan-panel"
+import { ApproveExceptionDialog } from "@/components/diagnostics/approve-exception-dialog"
+import {
+  CaseStatusBanner,
+  EquationStrip,
+  ReconciliationBuckets,
+} from "@/components/diagnostics/reconciliation-view"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import {
   PTT_IMAGE_CONTENT_TYPES,
@@ -46,11 +55,54 @@ import {
   formatPttVerificationForWhatsApp,
   normalizeFleetId,
 } from "@/lib/ptt-diagnostics"
-import type { PttSessionWithRelations } from "@/lib/ptt-diagnostics-queries"
+import type {
+  PttScanFaultRow,
+  PttSessionWithRelations,
+} from "@/lib/ptt-diagnostics-queries"
+import { formatPttVerificationAuditForWhatsApp } from "@/lib/ptt/audit-format"
+import type { PttGateName } from "@/lib/ptt/constants"
+import type { PttVerificationAudit } from "@/lib/ptt/verification-audit-schema"
 import { cn } from "@/lib/utils"
 
-// Matches `MAX_VERIFICATION_ATTACHMENTS` in the verify route.
+// Matches `MAX_VERIFICATION_ATTACHMENTS` in the verification route.
 const MAX_PHOTOS = 10
+// A manager override must carry a real explanation (it is logged).
+const MIN_OVERRIDE_REASON_LENGTH = 10
+
+type UploadedAttachment = {
+  fileName: string
+  blobPathname: string
+  blobUrl: string
+  contentType: string
+  fileSize: number
+}
+
+// A verification request the server refused (gate failure, bad photos...).
+class VerificationError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | null
+  ) {
+    super(message)
+  }
+}
+
+type GateOverrideState = { enabled: boolean; reason: string }
+const EMPTY_OVERRIDE: GateOverrideState = { enabled: false, reason: "" }
+
+const GATE_OVERRIDE_COPY: Record<
+  PttGateName,
+  { label: string; hint: string }
+> = {
+  INCOMPLETE_SCAN: {
+    label: "Override: accept this scan as complete",
+    hint: "Only if the missing page(s) genuinely cannot be captured (e.g. the unit cannot scroll). The reason is logged against this scan.",
+  },
+  TRUCK_MISMATCH: {
+    label: "Override: these photos are for this truck",
+    hint: "Only if you have confirmed the Work Order / chassis on the unit belongs to this truck. The reason is logged against this scan.",
+  },
+}
 
 type PhotoItem = {
   id: string
@@ -64,6 +116,33 @@ type Phase =
   | { kind: "idle" }
   | { kind: "uploading"; current: number; total: number }
   | { kind: "verifying" }
+
+// The verification route answers { success, data } or
+// { success: false, error, code }; gateway failures may be plain text.
+async function readVerificationResponse(response: Response): Promise<unknown> {
+  let body: unknown = null
+  try {
+    body = await response.json()
+  } catch {
+    // handled below
+  }
+  const parsed = body as {
+    success?: boolean
+    data?: unknown
+    error?: string
+    code?: string | null
+  } | null
+  if (!response.ok || !parsed?.success || parsed.data === undefined) {
+    throw new VerificationError(
+      parsed?.error ??
+        (response.status === 504
+          ? "The verification timed out. Please try again."
+          : `Verification failed (HTTP ${response.status}).`),
+      parsed?.code ?? null
+    )
+  }
+  return parsed.data
+}
 
 function Panel({
   title,
@@ -257,9 +336,14 @@ function PostRepairScreenshots({
 }: {
   session: PttSessionWithRelations
 }) {
-  const shots = session.attachments.filter(
-    (attachment) => attachment.role === "VERIFICATION_SCAN"
-  )
+  // Re-scan photos live on each verification scan (legacy cases kept them on
+  // the baseline with the VERIFICATION_SCAN role).
+  const shots = [
+    ...session.verificationScans.flatMap((scan) => scan.attachments),
+    ...session.attachments.filter(
+      (attachment) => attachment.role === "VERIFICATION_SCAN"
+    ),
+  ].sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime())
 
   return (
     <Panel
@@ -322,9 +406,17 @@ function VerificationUploadForm({
   // read a stale list.
   const itemsRef = useRef<PhotoItem[]>([])
   const addQueueRef = useRef<Promise<void>>(Promise.resolve())
-  // Photo id -> attachment id of an already uploaded photo, so a retry after
-  // a failed verification doesn't upload (and archive) it twice.
-  const uploadedRef = useRef(new Map<string, number>())
+  // Photo id -> already uploaded blob, so a retry after a failed upload
+  // doesn't upload it twice. Cleared whenever the server rejects the request
+  // (it deletes its temporary uploads on every failure).
+  const uploadedRef = useRef(new Map<string, UploadedAttachment>())
+  // Integrity gates the server refused; each offers a manager override.
+  const [blockedGates, setBlockedGates] = useState<ReadonlySet<PttGateName>>(
+    () => new Set()
+  )
+  const [overrides, setOverrides] = useState<
+    Record<PttGateName, GateOverrideState>
+  >({ INCOMPLETE_SCAN: EMPTY_OVERRIDE, TRUCK_MISMATCH: EMPTY_OVERRIDE })
 
   const busy = phase.kind !== "idle"
   const fleetId = normalizeFleetId(session.fleetId)
@@ -450,25 +542,38 @@ function VerificationUploadForm({
     }
   }
 
-  async function uploadPhoto(item: PhotoItem): Promise<number> {
+  async function uploadPhoto(item: PhotoItem): Promise<UploadedAttachment> {
     const cached = uploadedRef.current.get(item.id)
-    if (cached !== undefined) return cached
+    if (cached) return cached
 
+    // No session id: the file is a temporary upload that the verification
+    // route either archives on success or deletes on failure.
     const formData = new FormData()
     formData.append("file", item.file)
     formData.append("fleetId", fleetId)
-    formData.append("sessionId", String(session.id))
-    formData.append("role", "VERIFICATION_SCAN")
     const response = await fetch("/api/diagnostics/upload", {
       method: "POST",
       body: formData,
     })
-    const attachment = await readApiResponse<{ id: number }>(
+    const attachment = await readApiResponse<UploadedAttachment>(
       response,
       `Could not upload "${item.file.name}"`
     )
-    uploadedRef.current.set(item.id, attachment.id)
-    return attachment.id
+    uploadedRef.current.set(item.id, attachment)
+    return attachment
+  }
+
+  function setOverride(gate: PttGateName, next: Partial<GateOverrideState>) {
+    setOverrides((current) => ({
+      ...current,
+      [gate]: { ...current[gate], ...next },
+    }))
+  }
+
+  // The reason to send for a gate, or null when that override is off.
+  function overrideReason(gate: PttGateName): string | null {
+    const state = overrides[gate]
+    return blockedGates.has(gate) && state.enabled ? state.reason.trim() : null
   }
 
   async function runVerification() {
@@ -479,44 +584,72 @@ function VerificationUploadForm({
       return
     }
 
+    // Enabled overrides must carry a real reason (it is logged server-side).
+    for (const gate of blockedGates) {
+      const reason = overrideReason(gate)
+      if (reason !== null && reason.length < MIN_OVERRIDE_REASON_LENGTH) {
+        setError(
+          `Enter a reason of at least ${MIN_OVERRIDE_REASON_LENGTH} characters for the override, or untick it.`
+        )
+        return
+      }
+    }
+
     setError(null)
-    let uploadedSome = false
     try {
-      const attachmentIds: number[] = []
+      const attachments: UploadedAttachment[] = []
       for (const [index, item] of photos.entries()) {
         setPhase({ kind: "uploading", current: index + 1, total: photos.length })
-        attachmentIds.push(await uploadPhoto(item))
-        uploadedSome = true
+        attachments.push(await uploadPhoto(item))
       }
 
       setPhase({ kind: "verifying" })
-      const response = await fetch(
-        `/api/diagnostics/sessions/${session.id}/verify`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ attachmentIds }),
+      let updated: PttSessionWithRelations
+      try {
+        const response = await fetch(
+          `/api/diagnostics/sessions/${session.id}/verification`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              attachments,
+              incompleteScanOverrideReason: overrideReason("INCOMPLETE_SCAN"),
+              truckMismatchOverrideReason: overrideReason("TRUCK_MISMATCH"),
+            }),
+          }
+        )
+        updated = revivePttSession(await readVerificationResponse(response))
+      } catch (verificationError) {
+        // The server deletes its temporary uploads on every failure, so they
+        // can't be reused. The local files stay selected for a retry.
+        uploadedRef.current.clear()
+        if (verificationError instanceof VerificationError) {
+          if (verificationError.code === "INCOMPLETE_SCAN") {
+            setBlockedGates((gates) => new Set(gates).add("INCOMPLETE_SCAN"))
+          } else if (verificationError.code === "TRUCK_MISMATCH") {
+            setBlockedGates((gates) => new Set(gates).add("TRUCK_MISMATCH"))
+          }
         }
-      )
-      const updated = revivePttSession(
-        await readApiResponse<unknown>(response, "Verification failed")
-      )
+        throw verificationError
+      }
 
-      // Success: clear the form and show the verdict straight away.
+      // Success: clear the form and show the reconciliation straight away.
       for (const item of itemsRef.current) URL.revokeObjectURL(item.previewUrl)
       uploadedRef.current.clear()
       commitItems([])
+      setBlockedGates(new Set())
+      setOverrides({ INCOMPLETE_SCAN: EMPTY_OVERRIDE, TRUCK_MISMATCH: EMPTY_OVERRIDE })
       onVerified(updated)
 
-      const passed = updated.verificationSummary?.verification_passed === true
+      const closed = updated.caseStatus === "VERIFIED_CLOSED"
       toast.add({
-        title: passed
-          ? `${fleetId} VERIFIED PASSED`
-          : `${fleetId} verification failed`,
-        description: passed
-          ? "All critical and calibration faults are cleared. The scan is closed."
-          : "Faults are still active — rework is required.",
-        type: passed ? "success" : "warning",
+        title: closed
+          ? `${fleetId} VERIFIED CLOSED`
+          : `${fleetId} re-scan reconciled`,
+        description: closed
+          ? "All actionable faults are cleared. The case is closed."
+          : "Faults are still open — see the reconciliation for what remains.",
+        type: closed ? "success" : "warning",
       })
       router.refresh()
     } catch (verifyError) {
@@ -527,11 +660,9 @@ function VerificationUploadForm({
       setError(message)
       toast.add({
         title: "Verification failed",
-        description: `${message} Your photos are still selected — click Run Before/After Verification to retry.`,
+        description: `${message} Your photos are still selected — fix the issue and run the verification again.`,
         type: "error",
       })
-      // Uploaded photos are archived on the session; surface them.
-      if (uploadedSome) router.refresh()
     } finally {
       setPhase({ kind: "idle" })
     }
@@ -541,7 +672,7 @@ function VerificationUploadForm({
     phase.kind === "uploading"
       ? `Uploading photo ${phase.current} of ${phase.total}...`
       : phase.kind === "verifying"
-        ? "Comparing Before vs. After with Volvo Master AI..."
+        ? "Reading the re-scan and reconciling Before vs. After..."
         : null
   const totalBytes = items.reduce((sum, item) => sum + item.file.size, 0)
 
@@ -555,9 +686,11 @@ function VerificationUploadForm({
         onPaste={handlePaste}
       >
         <p className="text-sm text-muted-foreground">
-          After the repair, re-scan {fleetId} and upload the new PTT DTC List
-          (or VCADS result) photos. The AI compares them with the original
-          fault list and verification criteria.
+          After the repair, re-scan {fleetId} and upload every scroll page of
+          the new PTT DTC List (or VCADS result). The faults are read from the
+          photos and diffed against the baseline fault list by exact fault
+          key. Recycled photos, incomplete scans and photos from another truck
+          are rejected.
         </p>
 
         <div className="flex items-center justify-between gap-2">
@@ -665,6 +798,45 @@ function VerificationUploadForm({
           </Alert>
         )}
 
+        {[...blockedGates].map((gate) => {
+          const state = overrides[gate]
+          const copy = GATE_OVERRIDE_COPY[gate]
+          return (
+            <div
+              key={gate}
+              className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30"
+            >
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  id={`override-${gate}`}
+                  checked={state.enabled}
+                  disabled={busy}
+                  onCheckedChange={(checked) =>
+                    setOverride(gate, { enabled: checked === true })
+                  }
+                />
+                <div className="grid gap-0.5">
+                  <Label htmlFor={`override-${gate}`}>{copy.label}</Label>
+                  <p className="text-xs text-muted-foreground">{copy.hint}</p>
+                </div>
+              </div>
+              {state.enabled && (
+                <Textarea
+                  aria-label={`${copy.label}: reason`}
+                  value={state.reason}
+                  onChange={(event) =>
+                    setOverride(gate, { reason: event.target.value })
+                  }
+                  placeholder="Reason for the override (required, logged)"
+                  rows={2}
+                  maxLength={1000}
+                  disabled={busy}
+                />
+              )}
+            </div>
+          )
+        })}
+
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"
@@ -693,24 +865,262 @@ function VerificationUploadForm({
   )
 }
 
+function AuditSection({
+  title,
+  className,
+  children,
+}: {
+  title: string
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <div className={cn("flex flex-col gap-1", className)}>
+      <h4 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        {title}
+      </h4>
+      {children}
+    </div>
+  )
+}
+
 /**
- * Before/After Re-Scan Verification for the directive modal's
- * `verificationSlot`: audit card, post-repair screenshots and the re-scan
- * upload form.
+ * Forensic VERIFICATION_AUDIT of the latest re-scan. Older scans (and scans
+ * whose audit call failed) have no audit: a muted note is shown instead.
+ */
+function ForensicAuditCard({ audit }: { audit: PttVerificationAudit | null }) {
+  if (!audit) {
+    return (
+      <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+        No forensic audit is available for this re-scan. The reconciliation
+        below is unaffected.
+      </p>
+    )
+  }
+
+  return (
+    <section
+      aria-label="Forensic verification audit"
+      className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-4"
+    >
+      <h4 className="flex items-center gap-2 text-sm font-semibold [&_svg]:size-4">
+        <ScanSearchIcon />
+        Forensic Audit
+      </h4>
+      <p className="text-sm leading-relaxed font-medium">
+        {audit.verdictHeadline}
+      </p>
+
+      {audit.collateralDamageAnalysis && (
+        <AuditSection
+          title="Collateral damage analysis"
+          className="rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30"
+        >
+          <p className="text-sm leading-relaxed whitespace-pre-line">
+            {audit.collateralDamageAnalysis}
+          </p>
+        </AuditSection>
+      )}
+
+      {audit.untouchedBlockersSummary && (
+        <AuditSection title="Untouched blockers">
+          <p className="text-sm leading-relaxed whitespace-pre-line">
+            {audit.untouchedBlockersSummary}
+          </p>
+        </AuditSection>
+      )}
+
+      {audit.repeatFaultEscalation && (
+        <AuditSection
+          title="Repeat fault escalation"
+          className="rounded-md border border-red-300 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950/30"
+        >
+          <p className="text-sm leading-relaxed whitespace-pre-line">
+            {audit.repeatFaultEscalation}
+          </p>
+        </AuditSection>
+      )}
+
+      {audit.nextFloorActions.length > 0 && (
+        <AuditSection title="Next floor actions">
+          <ol className="flex list-decimal flex-col gap-1 pl-5 text-sm leading-relaxed marker:text-muted-foreground">
+            {audit.nextFloorActions.map((action, index) => (
+              <li key={`${index}-${action}`}>{action}</li>
+            ))}
+          </ol>
+        </AuditSection>
+      )}
+    </section>
+  )
+}
+
+function ReconciliationPanel({
+  session,
+  onSessionUpdate,
+}: {
+  session: PttSessionWithRelations
+  onSessionUpdate: (session: PttSessionWithRelations) => void
+}) {
+  const latest = session.verificationScans[0]
+  const [approving, setApproving] = useState<PttScanFaultRow | null>(null)
+
+  const message = useMemo(
+    () =>
+      latest
+        ? formatPttVerificationAuditForWhatsApp({
+            fleetId: normalizeFleetId(session.fleetId),
+            caseStatus: session.caseStatus,
+            scannedAt: latest.scannedAt,
+            summary: latest.reconciliationSummary,
+            headerItemCount: latest.headerItemCount,
+            extractedItemCount: latest.extractedItemCount,
+            gateOverrides: latest.gateOverrides,
+            faults: latest.scanFaults,
+            verificationAudit: latest.verificationAudit,
+          })
+        : "",
+    [session.fleetId, session.caseStatus, latest]
+  )
+
+  if (!latest) return null
+  const summary = latest.reconciliationSummary
+
+  async function copyAudit() {
+    try {
+      await navigator.clipboard.writeText(message)
+      toast.add({
+        title: "Copied for WhatsApp",
+        description: "Paste the verification audit into any WhatsApp chat.",
+        type: "success",
+      })
+    } catch {
+      toast.add({
+        title: "Could not copy to clipboard",
+        description: "Your browser blocked clipboard access.",
+        type: "error",
+      })
+    }
+  }
+
+  function shareAudit() {
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(message)}`,
+      "_blank",
+      "noopener,noreferrer"
+    )
+  }
+
+  return (
+    <Panel
+      title="Before / After Reconciliation"
+      icon={<ScanSearchIcon />}
+      className="border-2"
+    >
+      <CaseStatusBanner status={session.caseStatus} summary={summary} />
+
+      {summary && <EquationStrip summary={summary} />}
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span>
+          Re-scan {format(latest.scannedAt, "dd MMM yyyy, HH:mm")}
+          {session.verificationScans.length > 1 &&
+            ` · latest of ${session.verificationScans.length} re-scans`}
+        </span>
+        {latest.headerItemCount !== null && (
+          <span className="tabular-nums">
+            Faults read: {latest.extractedItemCount ?? 0} of{" "}
+            {latest.headerItemCount} (PTT header count)
+          </span>
+        )}
+      </div>
+
+      {latest.gateOverrides.length > 0 && (
+        <Alert>
+          <TriangleAlertIcon />
+          <AlertTitle>Manager override logged</AlertTitle>
+          <AlertDescription>
+            <ul className="flex flex-col gap-1">
+              {latest.gateOverrides.map((override) => (
+                <li key={`${override.gate}-${override.at}`}>
+                  <strong>{override.gate}</strong>: {override.reason}{" "}
+                  <span className="text-muted-foreground">
+                    ({format(new Date(override.at), "dd MMM yyyy, HH:mm")})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <ForensicAuditCard audit={latest.verificationAudit} />
+
+      <ReconciliationBuckets
+        faults={latest.scanFaults}
+        onApproveException={setApproving}
+      />
+
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={copyAudit}>
+          <CopyIcon data-icon="inline-start" />
+          Copy Audit for WhatsApp
+        </Button>
+        <Button type="button" size="sm" onClick={shareAudit}>
+          <MessageCircleIcon data-icon="inline-start" />
+          Share Audit on WhatsApp
+        </Button>
+      </div>
+
+      <ApproveExceptionDialog
+        fault={approving}
+        baselineId={session.id}
+        fleetId={normalizeFleetId(session.fleetId)}
+        generation={session.truckGeneration}
+        onOpenChange={(open) => {
+          if (!open) setApproving(null)
+        }}
+        onApproved={onSessionUpdate}
+      />
+    </Panel>
+  )
+}
+
+/**
+ * Closed-loop Before/After verification for the directive modal's
+ * `verificationSlot`: the 5-bucket reconciliation (with exception approval),
+ * post-repair screenshots and the re-scan upload form.
  */
 export function PttVerificationSection({
   session,
   onSessionUpdate,
 }: {
   session: PttSessionWithRelations
-  /** Called with the freshly verified session so the UI updates immediately. */
+  /** Called with the refreshed session so the UI updates immediately. */
   onSessionUpdate: (session: PttSessionWithRelations) => void
 }) {
+  const hasReconciliation = session.verificationScans.length > 0
+  const closed = session.caseStatus === "VERIFIED_CLOSED"
+
   return (
     <div className="flex flex-col gap-4">
-      {session.verificationSummary && <VerificationAuditCard session={session} />}
+      {hasReconciliation ? (
+        <ReconciliationPanel
+          session={session}
+          onSessionUpdate={onSessionUpdate}
+        />
+      ) : session.verificationSummary ? (
+        // Cases verified by the earlier AI comparison keep their audit card.
+        <VerificationAuditCard session={session} />
+      ) : null}
       <PostRepairScreenshots session={session} />
-      <VerificationUploadForm session={session} onVerified={onSessionUpdate} />
+      {closed ? (
+        <p className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm dark:border-emerald-900 dark:bg-emerald-950/30">
+          This case is <strong>VERIFIED CLOSED</strong>. To track further work
+          on this truck, start a new baseline scan.
+        </p>
+      ) : (
+        <VerificationUploadForm session={session} onVerified={onSessionUpdate} />
+      )}
     </div>
   )
 }

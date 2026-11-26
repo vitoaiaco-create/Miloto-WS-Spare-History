@@ -33,10 +33,14 @@ import { PTT_SEVERITY_RANK } from "@/lib/ptt-diagnostics"
 import {
   buildPttFaultReportRows,
   type PttFaultReportRow,
-  type PttReportSession,
   type PttTruckSummaryRow,
 } from "@/lib/ptt-diagnostics-report"
-import type { RecurringFault } from "@/lib/ptt-diagnostics-queries"
+import type {
+  PttApprovedExceptionRow,
+  PttLedgerRow,
+  PttSessionWithRelations,
+  RecurringFault,
+} from "@/lib/ptt-diagnostics-queries"
 import { cn } from "@/lib/utils"
 
 const SEVERITY_FILTER_ITEMS = {
@@ -85,10 +89,14 @@ function compareBy(key: SortKey, a: RecurringFault, b: RecurringFault) {
 export function FleetFaultIntelligence({
   recurringFaults,
   sessions,
+  ledger,
+  exceptions,
   onOpenFleet,
 }: {
   recurringFaults: RecurringFault[]
-  sessions: readonly PttReportSession[]
+  sessions: readonly PttSessionWithRelations[]
+  ledger: readonly PttLedgerRow[]
+  exceptions: readonly PttApprovedExceptionRow[]
   onOpenFleet: (fleetId: string) => void
 }) {
   const [view, setView] = useState<ViewMode>("groups")
@@ -240,7 +248,12 @@ export function FleetFaultIntelligence({
           </SelectContent>
         </Select>
 
-        <PttExportDialogButton sessions={sessions} className="lg:ml-auto" />
+        <PttExportDialogButton
+          sessions={sessions}
+          ledger={ledger}
+          exceptions={exceptions}
+          className="lg:ml-auto"
+        />
       </div>
 
       {view === "groups" ? (

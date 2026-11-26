@@ -1,0 +1,1 @@
+ALTER TABLE "ptt_diagnostic_sessions" ADD COLUMN "verification_audit" jsonb;
