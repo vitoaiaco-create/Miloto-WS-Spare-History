@@ -28,6 +28,7 @@ import {
 import type {
   PttApprovedExceptionRow,
   PttLedgerRow,
+  PttRosterTruck,
   PttSessionWithRelations,
   PttWorkshopKpis,
   RecurringFault,
@@ -38,6 +39,7 @@ type TabValue = "coverage" | "scan" | "intelligence" | "ledger"
 
 export function DiagnosticsWorkspace({
   rosterFleetIds,
+  rosterTrucks,
   sessions: serverSessions,
   recurringFaults,
   ledger,
@@ -45,6 +47,7 @@ export function DiagnosticsWorkspace({
   workshopKpis,
 }: {
   rosterFleetIds: string[]
+  rosterTrucks: PttRosterTruck[]
   sessions: PttSessionWithRelations[]
   recurringFaults: RecurringFault[]
   ledger: PttLedgerRow[]
@@ -227,6 +230,7 @@ export function DiagnosticsWorkspace({
           sessions={sessions}
           ledger={ledger}
           exceptions={exceptions}
+          rosterTrucks={rosterTrucks}
         />
       </div>
 
@@ -329,6 +333,7 @@ export function DiagnosticsWorkspace({
             sessions={sessions}
             ledger={ledger}
             exceptions={exceptions}
+            rosterTrucks={rosterTrucks}
             onOpenFleet={openFleetDirective}
           />
         </TabsContent>

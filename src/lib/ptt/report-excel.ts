@@ -80,16 +80,16 @@ export const LEDGER_SHEET_HEADERS = [
   "Last Reopened Date",
 ] as const
 
-type CellValue = string | number | null
+export type CellValue = string | number | null
 
-type Column<Row> = {
+export type Column<Row> = {
   header: string
   width: number
   center?: boolean
   value: (row: Row) => CellValue
 }
 
-type Look = { fill: string; font: string; bold?: boolean }
+export type Look = { fill: string; font: string; bold?: boolean }
 
 const SEVERITY_LOOK: Record<PttOverallSeverity, Look> = {
   CRITICAL: { fill: "FFFECACA", font: "FF991B1B", bold: true },
@@ -99,12 +99,12 @@ const SEVERITY_LOOK: Record<PttOverallSeverity, Look> = {
   CLEAR: { fill: "FFD1FAE5", font: "FF065F46", bold: true },
 }
 
-const GREEN: Look = { fill: "FFD1FAE5", font: "FF065F46", bold: true }
-const SOFT_RED: Look = { fill: "FFFECACA", font: "FF991B1B", bold: true }
-const SOFT_AMBER: Look = { fill: "FFFDE68A", font: "FF92400E", bold: true }
-const STRONG_RED: Look = { fill: "FFDC2626", font: "FFFFFFFF", bold: true }
+export const GREEN: Look = { fill: "FFD1FAE5", font: "FF065F46", bold: true }
+export const SOFT_RED: Look = { fill: "FFFECACA", font: "FF991B1B", bold: true }
+export const SOFT_AMBER: Look = { fill: "FFFDE68A", font: "FF92400E", bold: true }
+export const STRONG_RED: Look = { fill: "FFDC2626", font: "FFFFFFFF", bold: true }
 const SLATE: Look = { fill: "FFE2E8F0", font: "FF475569", bold: true }
-const GREY: Look = { fill: "FFF3F4F6", font: "FF6B7280" }
+export const GREY: Look = { fill: "FFF3F4F6", font: "FF6B7280" }
 const ORANGE: Look = { fill: "FFFED7AA", font: "FF9A3412", bold: true }
 
 const CASE_STATUS_LOOK: Record<PttReportTruck["caseStatusLabel"], Look> = {
@@ -280,7 +280,7 @@ const MAX_ROW_HEIGHT = 409
 
 // Excel does not auto-fit rows that contain explicit line breaks, so estimate
 // the wrapped height from the text length and the column width.
-function estimateRowHeight(
+export function estimateRowHeight(
   values: readonly CellValue[],
   widths: readonly number[]
 ): number {
@@ -297,12 +297,12 @@ function estimateRowHeight(
   return Math.min(MAX_ROW_HEIGHT, Math.max(18, maxLines * ROW_LINE_HEIGHT + 4))
 }
 
-function applyLook(cell: Cell, look: Look): void {
+export function applyLook(cell: Cell, look: Look): void {
   cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: look.fill } }
   cell.font = { bold: look.bold ?? false, color: { argb: look.font } }
 }
 
-function addSheet<Row>(
+export function addSheet<Row>(
   workbook: Workbook,
   name: string,
   columns: readonly Column<Row>[],

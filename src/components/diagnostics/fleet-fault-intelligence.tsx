@@ -37,6 +37,7 @@ import {
 } from "@/lib/ptt-diagnostics-report"
 import type {
   PttApprovedExceptionRow,
+  PttRosterTruck,
   PttLedgerRow,
   PttSessionWithRelations,
   RecurringFault,
@@ -91,12 +92,14 @@ export function FleetFaultIntelligence({
   sessions,
   ledger,
   exceptions,
+  rosterTrucks,
   onOpenFleet,
 }: {
   recurringFaults: RecurringFault[]
   sessions: readonly PttSessionWithRelations[]
   ledger: readonly PttLedgerRow[]
   exceptions: readonly PttApprovedExceptionRow[]
+  rosterTrucks: readonly PttRosterTruck[]
   onOpenFleet: (fleetId: string) => void
 }) {
   const [view, setView] = useState<ViewMode>("groups")
@@ -252,6 +255,7 @@ export function FleetFaultIntelligence({
           sessions={sessions}
           ledger={ledger}
           exceptions={exceptions}
+          rosterTrucks={rosterTrucks}
           className="lg:ml-auto"
         />
       </div>

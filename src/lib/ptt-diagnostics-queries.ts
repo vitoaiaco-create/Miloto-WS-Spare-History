@@ -28,6 +28,7 @@ import {
   latestSessionByFleet,
   normalizeFleetId,
   type PttFaultSeverity,
+  type PttTruckGeneration,
 } from "@/lib/ptt-diagnostics"
 
 // Server-side reads for the Fleet Diagnostics (PTT Intel) dashboard. Called
@@ -88,6 +89,11 @@ export type RecurringFault = {
   sampleIntervention: string
 }
 
+export type PttRosterTruck = {
+  fleetId: string
+  generation: PttTruckGeneration
+}
+
 export type PttDiagnosticsOverview = {
   kpis: PttWorkshopKpis
   /** Every truck's fault ledger rows. */
@@ -96,6 +102,12 @@ export type PttDiagnosticsOverview = {
   exceptions: PttApprovedExceptionRow[]
   /** Active `MTL` truck roster (plus any scanned-but-unsynced trucks). */
   rosterFleetIds: string[]
+  /**
+   * `rosterFleetIds` with each truck's generation (from its newest scan that
+   * identified one; `UNKNOWN` for a truck never scanned). Feeds the Fleet
+   * Works Tracker export.
+   */
+  rosterTrucks: PttRosterTruck[]
   /** Every session, newest `scannedAt` first. */
   sessions: PttSessionWithRelations[]
   recurringFaults: RecurringFault[]
@@ -374,11 +386,29 @@ export async function getPttDiagnosticsOverview(): Promise<PttDiagnosticsOvervie
   for (const name of mtlTruckNames) roster.add(normalizeFleetId(name))
   for (const session of sessions) roster.add(normalizeFleetId(session.fleetId))
 
+  const rosterFleetIds = [...roster].filter(Boolean).sort(compareFleetIds)
+
+  // Newest scan that actually identified a generation wins per truck.
+  const generationByFleet = new Map<string, PttTruckGeneration>()
+  const newestFirst = [...sessions].sort(
+    (a, b) => b.scannedAt.getTime() - a.scannedAt.getTime() || b.id - a.id
+  )
+  for (const session of newestFirst) {
+    const fleetId = normalizeFleetId(session.fleetId)
+    if (session.truckGeneration !== "UNKNOWN" && !generationByFleet.has(fleetId)) {
+      generationByFleet.set(fleetId, session.truckGeneration)
+    }
+  }
+
   return {
     kpis,
     ledger,
     exceptions,
-    rosterFleetIds: [...roster].filter(Boolean).sort(compareFleetIds),
+    rosterFleetIds,
+    rosterTrucks: rosterFleetIds.map((fleetId) => ({
+      fleetId,
+      generation: generationByFleet.get(fleetId) ?? "UNKNOWN",
+    })),
     sessions,
     recurringFaults: buildRecurringFaults(sessions),
   }

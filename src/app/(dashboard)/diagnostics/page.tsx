@@ -46,6 +46,7 @@ export default async function FleetDiagnosticsPage() {
       {overview ? (
         <DiagnosticsWorkspace
           rosterFleetIds={overview.rosterFleetIds}
+          rosterTrucks={overview.rosterTrucks}
           sessions={overview.sessions}
           recurringFaults={overview.recurringFaults}
           ledger={overview.ledger}

@@ -37,11 +37,11 @@ export const PTT_FAULT_REPORT_TITLE =
   "Fleet Diagnostics (PTT Intel) \u2014 Fault & Intervention Report"
 export const PTT_EXECUTIVE_REPORT_TITLE = "Executive Truck Directives Summary"
 
-type Rgb = [number, number, number]
+export type Rgb = [number, number, number]
 
-const PAGE_MARGIN = 12
-const FOOTER_RESERVE = 16
-const PT_TO_MM = 0.3528
+export const PAGE_MARGIN = 12
+export const FOOTER_RESERVE = 16
+export const PT_TO_MM = 0.3528
 
 // jsPDF's built-in Helvetica only renders Latin-1 (+ a few Windows-1252
 // punctuation marks). Map the arrows / comparison signs the AI likes to use,
@@ -57,7 +57,7 @@ export function pdfText(value: string): string {
     .replace(/[^\n\u0020-\u00ff\u2013\u2014\u2018\u2019\u201c\u201d\u2022\u2026]/g, "")
 }
 
-const EMPTY_CELL = "\u2014"
+export const EMPTY_CELL = "\u2014"
 
 const SEVERITY_PDF_FILL: Record<PttOverallSeverity, Rgb> = {
   CRITICAL: [254, 202, 202],
@@ -102,7 +102,7 @@ function statusColors(item: PttReportFaultItem): { fill: Rgb; text: Rgb } {
   return { fill: STATUS_PDF_FILL[item.status], text: STATUS_PDF_TEXT[item.status] }
 }
 
-function newDoc(title: string): jsPDF {
+export function newDoc(title: string): jsPDF {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" })
   doc.setProperties({
     title: title.replace(/\u2014/g, "-"),
@@ -119,6 +119,21 @@ function drawHeader(
   title: string,
   extraLines: string[]
 ): number {
+  return drawHeaderBlock(
+    doc,
+    title,
+    [...describePttReportFilters(data.options), ...extraLines],
+    data.generatedAt
+  )
+}
+
+/** Company line, report title, subtitle lines and the generation timestamp. */
+export function drawHeaderBlock(
+  doc: jsPDF,
+  title: string,
+  subtitleLines: readonly string[],
+  generatedAt: Date
+): number {
   doc.setFont("helvetica", "bold")
   doc.setFontSize(9)
   doc.setTextColor(90, 90, 90)
@@ -132,24 +147,24 @@ function drawHeader(
   doc.setFontSize(10)
   doc.setTextColor(90, 90, 90)
   let y = 24
-  for (const line of [...describePttReportFilters(data.options), ...extraLines]) {
+  for (const line of subtitleLines) {
     doc.text(pdfText(line), PAGE_MARGIN, y)
     y += 5
   }
   doc.text(
-    `Generated: ${format(data.generatedAt, "dd MMM yyyy, HH:mm:ss")}`,
+    `Generated: ${format(generatedAt, "dd MMM yyyy, HH:mm:ss")}`,
     PAGE_MARGIN,
     y
   )
   return y
 }
 
-type Kpi = { label: string; value: string; fill?: Rgb; text?: Rgb }
+export type Kpi = { label: string; value: string; fill?: Rgb; text?: Rgb }
 
 const KPI_DEFAULT_FILL: Rgb = [247, 247, 247]
 const KPI_DEFAULT_TEXT: Rgb = [20, 20, 20]
 
-function drawKpiStrip(doc: jsPDF, top: number, kpis: readonly Kpi[]): number {
+export function drawKpiStrip(doc: jsPDF, top: number, kpis: readonly Kpi[]): number {
   const pageWidth = doc.internal.pageSize.getWidth()
   const height = 16
   const gap = 3
@@ -175,7 +190,7 @@ function drawKpiStrip(doc: jsPDF, top: number, kpis: readonly Kpi[]): number {
   return top + height
 }
 
-function drawFooters(doc: jsPDF, generatedAt: Date): void {
+export function drawFooters(doc: jsPDF, generatedAt: Date): void {
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   const total = doc.getNumberOfPages()
@@ -195,7 +210,7 @@ function drawFooters(doc: jsPDF, generatedAt: Date): void {
   }
 }
 
-function highlightedKpi(
+export function highlightedKpi(
   label: string,
   count: number,
   tone: PttOverallSeverity | "GREEN"
@@ -375,7 +390,7 @@ export function buildFaultReportPdf(data: PttReportData): PttPdfResult {
 
 type FontStyle = "normal" | "bold" | "italic" | "bolditalic"
 
-type RichLine = {
+export type RichLine = {
   text: string
   font: FontStyle
   /** Font size in pt. */
@@ -410,13 +425,13 @@ const EXECUTIVE_HEADERS = [
   "PTT Paths & Verification",
 ]
 
-const CELL_PAD_X = 1.8
-const CELL_PAD_Y = 1.8
-const HEADER_HEIGHT = 7
+export const CELL_PAD_X = 1.8
+export const CELL_PAD_Y = 1.8
+export const HEADER_HEIGHT = 7
 
 const lineHeightOf = (size: number) => size * PT_TO_MM * 1.28
 
-function heightOfLine(line: RichLine): number {
+export function heightOfLine(line: RichLine): number {
   return (
     (line.gapBefore ?? 0) +
     (line.padTop ?? 0) +
@@ -425,14 +440,14 @@ function heightOfLine(line: RichLine): number {
   )
 }
 
-function heightOfLines(lines: readonly RichLine[]): number {
+export function heightOfLines(lines: readonly RichLine[]): number {
   return lines.reduce((total, line) => total + heightOfLine(line), 0)
 }
 
-const INK: Rgb = [30, 41, 59]
-const MUTED: Rgb = [100, 116, 139]
-const GREEN_DARK: Rgb = [20, 83, 45]
-const RED_DARK: Rgb = [153, 27, 27]
+export const INK: Rgb = [30, 41, 59]
+export const MUTED: Rgb = [100, 116, 139]
+export const GREEN_DARK: Rgb = [20, 83, 45]
+export const RED_DARK: Rgb = [153, 27, 27]
 
 const CASE_BADGE_FILL: Record<PttCaseStatus, Rgb> = {
   VERIFIED_CLOSED: [22, 163, 74],
@@ -442,10 +457,10 @@ const CASE_BADGE_FILL: Record<PttCaseStatus, Rgb> = {
   OPEN: [217, 119, 6],
 }
 
-type StyleSpec = Omit<RichLine, "text">
+export type StyleSpec = Omit<RichLine, "text">
 
 /** Wraps `text` to `width` mm in the style's font and returns one line per row. */
-function wrapLines(
+export function wrapLines(
   doc: jsPDF,
   text: string,
   style: StyleSpec,
@@ -549,7 +564,7 @@ function listLines(
   return lines
 }
 
-function mutedLine(doc: jsPDF, text: string, width: number): RichLine[] {
+export function mutedLine(doc: jsPDF, text: string, width: number): RichLine[] {
   return wrapLines(
     doc,
     text,
@@ -807,7 +822,7 @@ function pathsCell(doc: jsPDF, truck: PttReportTruck, width: number): RichLine[]
   return lines.length > 0 ? lines : mutedLine(doc, EMPTY_CELL, width)
 }
 
-function drawLine(
+export function drawLine(
   doc: jsPDF,
   line: RichLine,
   x: number,
@@ -846,39 +861,39 @@ function drawLine(
   doc.text(line.text, textX, baseline)
 }
 
-export function buildExecutiveDirectivesPdf(data: PttReportData): PttPdfResult {
-  const title = PTT_EXECUTIVE_REPORT_TITLE
-  const doc = newDoc(title)
+export type RichTableSpec<Row> = {
+  /** Printed (small, grey) at the top of every continuation page. */
+  title: string
+  headers: readonly string[]
+  /** Column widths as % of the printable width (sums to 100). */
+  ratios: readonly number[]
+  /** Top of the table (mm). */
+  startY: number
+  rows: readonly Row[]
+  /** One list of styled lines per column; `inner` are the text widths (mm). */
+  buildCells: (row: Row, inner: readonly number[]) => RichLine[][]
+  /** Heads the first column of the tail when a tall row is split. */
+  continuationLabel: (row: Row) => string
+  emptyMessage: string
+}
+
+/**
+ * Purpose-built rich table on top of jsPDF: the row height is the tallest
+ * cell, a row never straddles a page when it fits on one, a row taller than a
+ * page is split line-by-line (its tail starts with `continuationLabel`), and
+ * the header repeats on every page.
+ */
+export function drawRichTable<Row>(doc: jsPDF, spec: RichTableSpec<Row>): void {
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
-  const { kpis, trucks, options } = data
-
-  const subtitleY = drawHeader(doc, data, title, [
-    `${trucks.length} ${trucks.length === 1 ? "truck" : "trucks"} \u2014 workshop handover: what was cleared, what is still outstanding, what to check and how to prove the fix.`,
-  ])
-
-  const kpiBottom = drawKpiStrip(doc, subtitleY + 5, [
-    { label: "Trucks", value: String(kpis.trucksCount) },
-    highlightedKpi("Open / Blocked", kpis.openOrBlockedCount, "MONITOR"),
-    highlightedKpi("Verified Closed", kpis.verifiedClosedCount, "GREEN"),
-    highlightedKpi("Faults Cleared", kpis.verifiedClearedCount, "GREEN"),
-    highlightedKpi("Outstanding Actionable", kpis.outstandingActionableCount, "CRITICAL"),
-    highlightedKpi("New Regressions", kpis.newRegressionsCount, "CRITICAL"),
-    {
-      label: "First-Time Fix Rate %",
-      value:
-        kpis.firstTimeFixRatePct === null ? "N/A" : `${kpis.firstTimeFixRatePct}%`,
-    },
-  ])
-
   const printable = pageWidth - PAGE_MARGIN * 2
-  const widths = EXECUTIVE_COLUMN_RATIOS.map((ratio) => (printable * ratio) / 100)
+  const widths = spec.ratios.map((ratio) => (printable * ratio) / 100)
   const columnX = widths.map((_, index) =>
     widths.slice(0, index).reduce((sum, w) => sum + w, PAGE_MARGIN)
   )
   const pageBottom = pageHeight - FOOTER_RESERVE
 
-  let y = kpiBottom + 6
+  let y = spec.startY
   let tableStart = y
 
   const drawTableHeader = () => {
@@ -887,7 +902,7 @@ export function buildExecutiveDirectivesPdf(data: PttReportData): PttPdfResult {
     doc.setFont("helvetica", "bold")
     doc.setFontSize(7.6)
     doc.setTextColor(255, 255, 255)
-    EXECUTIVE_HEADERS.forEach((label, index) => {
+    spec.headers.forEach((label, index) => {
       doc.text(label, columnX[index] + CELL_PAD_X, y + 4.6)
     })
     y += HEADER_HEIGHT
@@ -899,7 +914,7 @@ export function buildExecutiveDirectivesPdf(data: PttReportData): PttPdfResult {
     doc.setFont("helvetica", "bold")
     doc.setFontSize(8)
     doc.setTextColor(90, 90, 90)
-    doc.text(`${title} (continued)`, PAGE_MARGIN, 9)
+    doc.text(`${spec.title} (continued)`, PAGE_MARGIN, 9)
     y = 12
     drawTableHeader()
   }
@@ -932,25 +947,18 @@ export function buildExecutiveDirectivesPdf(data: PttReportData): PttPdfResult {
     y += height
   }
 
-  if (trucks.length === 0) {
+  if (spec.rows.length === 0) {
     doc.setFont("helvetica", "italic")
     doc.setFontSize(10)
     doc.setTextColor(120, 120, 120)
-    doc.text("No trucks match the selected filters.", PAGE_MARGIN, y + 6)
+    doc.text(spec.emptyMessage, PAGE_MARGIN, y + 6)
   } else {
     drawTableHeader()
   }
 
-  trucks.forEach((truck, rowIndex) => {
+  spec.rows.forEach((row, rowIndex) => {
     const inner = widths.map((w) => w - CELL_PAD_X * 2)
-    let remaining: RichLine[][] = [
-      truckCell(doc, truck, inner[0]),
-      clearedCell(doc, truck, inner[1]),
-      outstandingCell(doc, truck, inner[2]),
-      diagnosisCell(doc, truck, inner[3]),
-      checksCell(doc, truck, inner[4]),
-      pathsCell(doc, truck, inner[5]),
-    ]
+    let remaining: RichLine[][] = spec.buildCells(row, inner)
     const stripe = rowIndex % 2 === 1
 
     for (;;) {
@@ -1000,7 +1008,7 @@ export function buildExecutiveDirectivesPdf(data: PttReportData): PttPdfResult {
       tails[0] = [
         ...wrapLines(
           doc,
-          `${truck.fleetId} (cont.)`,
+          spec.continuationLabel(row),
           { font: "bold", size: 7.5, color: [71, 85, 105] },
           inner[0]
         ),
@@ -1009,6 +1017,48 @@ export function buildExecutiveDirectivesPdf(data: PttReportData): PttPdfResult {
       remaining = tails
       newPage()
     }
+  })
+}
+
+export function buildExecutiveDirectivesPdf(data: PttReportData): PttPdfResult {
+  const title = PTT_EXECUTIVE_REPORT_TITLE
+  const doc = newDoc(title)
+  const { kpis, trucks, options } = data
+
+  const subtitleY = drawHeader(doc, data, title, [
+    `${trucks.length} ${trucks.length === 1 ? "truck" : "trucks"} \u2014 workshop handover: what was cleared, what is still outstanding, what to check and how to prove the fix.`,
+  ])
+
+  const kpiBottom = drawKpiStrip(doc, subtitleY + 5, [
+    { label: "Trucks", value: String(kpis.trucksCount) },
+    highlightedKpi("Open / Blocked", kpis.openOrBlockedCount, "MONITOR"),
+    highlightedKpi("Verified Closed", kpis.verifiedClosedCount, "GREEN"),
+    highlightedKpi("Faults Cleared", kpis.verifiedClearedCount, "GREEN"),
+    highlightedKpi("Outstanding Actionable", kpis.outstandingActionableCount, "CRITICAL"),
+    highlightedKpi("New Regressions", kpis.newRegressionsCount, "CRITICAL"),
+    {
+      label: "First-Time Fix Rate %",
+      value:
+        kpis.firstTimeFixRatePct === null ? "N/A" : `${kpis.firstTimeFixRatePct}%`,
+    },
+  ])
+
+  drawRichTable(doc, {
+    title,
+    headers: EXECUTIVE_HEADERS,
+    ratios: EXECUTIVE_COLUMN_RATIOS,
+    startY: kpiBottom + 6,
+    rows: trucks,
+    buildCells: (truck, inner) => [
+      truckCell(doc, truck, inner[0]),
+      clearedCell(doc, truck, inner[1]),
+      outstandingCell(doc, truck, inner[2]),
+      diagnosisCell(doc, truck, inner[3]),
+      checksCell(doc, truck, inner[4]),
+      pathsCell(doc, truck, inner[5]),
+    ],
+    continuationLabel: (truck) => `${truck.fleetId} (cont.)`,
+    emptyMessage: "No trucks match the selected filters.",
   })
 
   drawFooters(doc, data.generatedAt)

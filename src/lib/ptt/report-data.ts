@@ -481,7 +481,7 @@ function findExceptionRule(
   )
 }
 
-function newestVerificationFirst(
+export function newestVerificationFirst(
   scans: readonly PttReportVerificationScan[]
 ): PttReportVerificationScan[] {
   return [...scans].sort(
@@ -498,7 +498,7 @@ function effectiveCaseStatus(session: PttReportCase): PttCaseStatus {
   return session.caseStatus
 }
 
-function latestScanAt(session: PttReportCase): Date {
+export function latestScanAt(session: PttReportCase): Date {
   return (
     newestVerificationFirst(session.verificationScans)[0]?.scannedAt ??
     session.scannedAt
@@ -923,9 +923,9 @@ function buildLedgerRows(
 // ---------------------------------------------------------------------------
 
 // `YYYY-MM-DD` -> local-time day boundaries (same as the HR report).
-const startOfDay = (value?: string): number | null =>
+export const startOfDay = (value?: string): number | null =>
   value ? new Date(`${value}T00:00:00`).getTime() : null
-const endOfDay = (value?: string): number | null =>
+export const endOfDay = (value?: string): number | null =>
   value ? new Date(`${value}T23:59:59.999`).getTime() : null
 
 const percent = (part: number, whole: number): number | null =>

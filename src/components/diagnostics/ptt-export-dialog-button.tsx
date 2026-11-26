@@ -48,7 +48,15 @@ import {
   type PttReportKind,
   type PttReportLedgerRow,
 } from "@/lib/ptt/report-data"
-import { downloadPttReport } from "@/lib/ptt/report-download"
+import {
+  downloadPttReport,
+  downloadPttWorksTracker,
+  type PttWorksTrackerFormat,
+} from "@/lib/ptt/report-download"
+import {
+  buildWorksTrackerData,
+  type PttWorksTrackerRosterTruck,
+} from "@/lib/ptt/works-tracker-data"
 import { cn } from "@/lib/utils"
 
 const SEVERITY_PILL_ACTIVE: Record<PttFaultSeverity, string> = {
@@ -88,10 +96,27 @@ const DOWNLOAD_COPY: Record<
   },
 }
 
+const TRACKER_COPY: Record<
+  PttWorksTrackerFormat,
+  { label: string; success: string; failure: string }
+> = {
+  PDF: {
+    label: "Export Works Tracker (PDF)",
+    success: "Works tracker PDF downloaded",
+    failure: "Could not generate the works tracker PDF",
+  },
+  EXCEL: {
+    label: "Export Works Tracker (Excel)",
+    success: "Works tracker workbook downloaded",
+    failure: "Could not generate the works tracker workbook",
+  },
+}
+
 export function PttExportDialogButton({
   sessions,
   ledger,
   exceptions,
+  rosterTrucks,
   variant = "outline",
   size,
   className,
@@ -99,6 +124,8 @@ export function PttExportDialogButton({
   sessions: readonly PttReportCase[]
   ledger: readonly PttReportLedgerRow[]
   exceptions: readonly PttReportExceptionRule[]
+  /** Full active fleet (with generation) for the Fleet Works Tracker. */
+  rosterTrucks: readonly PttWorksTrackerRosterTruck[]
   variant?: "default" | "outline" | "secondary"
   size?: "default" | "sm"
   className?: string
@@ -114,18 +141,22 @@ export function PttExportDialogButton({
   // Checked by default: approved fleet exceptions are not workshop work.
   const [excludeApprovedExceptions, setExcludeApprovedExceptions] =
     useState(true)
-  const [generating, setGenerating] = useState<PttReportKind | null>(null)
+  const [generating, setGenerating] = useState<
+    PttReportKind | `TRACKER_${PttWorksTrackerFormat}` | null
+  >(null)
 
-  // Every truck that has at least one scan, naturally sorted.
+  // Every active truck plus every truck that has a scan, naturally sorted.
+  // (Unscanned trucks only show up in the Works Tracker, as PENDING.)
   const truckItems = useMemo(() => {
     const ids = new Set<string>()
+    for (const truck of rosterTrucks) ids.add(normalizeFleetId(truck.fleetId))
     for (const session of sessions) ids.add(normalizeFleetId(session.fleetId))
     const items: Record<string, string> = { ALL: "All Trucks" }
     for (const id of [...ids].filter(Boolean).sort(compareFleetIds)) {
       items[id] = id
     }
     return items
-  }, [sessions])
+  }, [sessions, rosterTrucks])
 
   // The selected truck can disappear (e.g. its only scan was deleted).
   const effectiveFleetId = fleetId in truckItems ? fleetId : "ALL"
@@ -146,6 +177,10 @@ export function PttExportDialogButton({
     () => ({ sessions, ledger, exceptions }),
     [sessions, ledger, exceptions]
   )
+  const trackerInput = useMemo(
+    () => ({ sessions, ledger, exceptions, roster: rosterTrucks }),
+    [sessions, ledger, exceptions, rosterTrucks]
+  )
 
   // The same data layer the PDFs and the workbook render, so the live
   // counter always matches what gets exported.
@@ -155,6 +190,13 @@ export function PttExportDialogButton({
   )
   const rowCount = matching.faultRows.length
   const truckCount = matching.trucks.length
+
+  // Same builder the tracker PDF / workbook render. Ignores the severity
+  // filter on purpose: PENDING trucks have no faults yet.
+  const tracker = useMemo(
+    () => buildWorksTrackerData(trackerInput, options).kpis,
+    [trackerInput, options]
+  )
 
   const allSelected = severities.length === PTT_FAULT_SEVERITIES.length
   const actionableOnly =
@@ -185,6 +227,35 @@ export function PttExportDialogButton({
     } catch (error) {
       toast.add({
         title: DOWNLOAD_COPY[kind].failure,
+        description:
+          error instanceof Error ? error.message : "Something went wrong.",
+        type: "error",
+      })
+    } finally {
+      setGenerating(null)
+    }
+  }
+
+  async function handleTrackerDownload(format: PttWorksTrackerFormat) {
+    if (tracker.totalFleet === 0 || generating) return
+    setGenerating(`TRACKER_${format}`)
+    try {
+      // Let the spinner paint before the (synchronous) PDF build blocks.
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      const result = await downloadPttWorksTracker(
+        format,
+        trackerInput,
+        options
+      )
+      toast.add({
+        title: TRACKER_COPY[format].success,
+        description: `${result.totalFleet} ${result.totalFleet === 1 ? "truck" : "trucks"}: ${result.completeCount} complete, ${result.partialCount} partial, ${result.pendingCount} pending.`,
+        type: "success",
+      })
+      setOpen(false)
+    } catch (error) {
+      toast.add({
+        title: TRACKER_COPY[format].failure,
         description:
           error instanceof Error ? error.message : "Something went wrong.",
         type: "error",
@@ -393,6 +464,41 @@ export function PttExportDialogButton({
               {DOWNLOAD_COPY[kind].label}
             </Button>
           ))}
+
+          <div className="mt-1 flex flex-col gap-2 border-t pt-3">
+            <div className="flex flex-col gap-0.5">
+              <p className="text-sm font-medium">Fleet Works Tracker</p>
+              <p
+                className="text-xs text-muted-foreground"
+                aria-live="polite"
+              >
+                Sweep completion across the whole active fleet:{" "}
+                {tracker.completeCount} complete, {tracker.partialCount}{" "}
+                partial, {tracker.pendingCount} pending (
+                {tracker.totalFleet} {tracker.totalFleet === 1 ? "truck" : "trucks"}
+                ). Uses the Truck, date and exception options above; the
+                severity filter does not apply.
+              </p>
+            </div>
+            {(["PDF", "EXCEL"] as const).map((format) => (
+              <Button
+                key={format}
+                variant="outline"
+                className="w-full justify-start"
+                disabled={tracker.totalFleet === 0 || generating !== null}
+                onClick={() => handleTrackerDownload(format)}
+              >
+                {generating === `TRACKER_${format}` ? (
+                  <LoaderCircleIcon className="animate-spin" />
+                ) : format === "EXCEL" ? (
+                  <FileSpreadsheetIcon />
+                ) : (
+                  <FileDownIcon />
+                )}
+                {TRACKER_COPY[format].label}
+              </Button>
+            ))}
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
