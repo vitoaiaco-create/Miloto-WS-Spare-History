@@ -391,8 +391,31 @@ export type CanonicalKeyInput = {
   controlUnit: string
   /** Fault code as printed, e.g. `PID 175 FMI 5` or `P111D00`. */
   faultCode: string
-  /** Truck generation if known; used only to break ties between formats. */
+  /**
+   * Truck generation if known; breaks ties between formats and gates the
+   * generation-specific OCR rescues (`FH_V3` / `FH_V4` only).
+   */
   generation?: PttKnownGeneration | "UNKNOWN"
+  /**
+   * The fault description as printed. Only used by the description-guarded OCR
+   * rescues (a rescue never fires on a code alone).
+   */
+  description?: string
+  /** Facts about the rest of the same scan (see `buildKeyScanContext`). */
+  scanContext?: CanonicalKeyScanContext
+}
+
+/**
+ * What one scan tells us about its other rows. Used by the cross-row rescue of
+ * a cropped `Engine ECU` label on `PID 110 FMI 5`, which is really the
+ * Retarder ECU when the same scan also holds other Retarder faults.
+ */
+export type CanonicalKeyScanContext = {
+  hasRetarderFault: boolean
+}
+
+export const EMPTY_SCAN_CONTEXT: CanonicalKeyScanContext = {
+  hasRetarderFault: false,
 }
 
 export type CanonicalKeyResult =
@@ -429,6 +452,251 @@ function failure(input: CanonicalKeyInput, reason: string): CanonicalKeyResult {
 const V3_CODE_REGEX = /(PPID|PSID|PID|SID)(\d+)/g
 const V4_CODE_REGEX = /^[PCBU][0-9A-F]{6}$/
 
+// ---------------------------------------------------------------------------
+// FH V3 / FH V4 OCR rescues
+//
+// Surgical, DESCRIPTION-GUARDED repairs for OCR glitches seen on real fleet
+// scans (hallucinated / cropped ECU labels, dropped or inserted digits). A
+// rescue only fires for the exact generation it was written for, only on a
+// code + description combination that is known to be wrong, and never on a
+// row that is already correct. Pure and deterministic.
+// ---------------------------------------------------------------------------
+
+type V3CodeType = "PID" | "PPID" | "SID" | "PSID"
+/** `RID` is never a valid type; it is only an OCR misread of `PID` (rescue B.5). */
+type V3ParsedType = V3CodeType | "RID"
+
+type V3ParsedCode = { type: V3ParsedType; num: number; fmi: number }
+
+/** Lenient parse of a stripped V3 fault code (`PSID10FMI2`), or null. */
+function parseV3Code(code: string): V3ParsedCode | null {
+  const matches = [...code.matchAll(V3_CODE_REGEX)]
+  let type: V3ParsedType
+  let digits: string
+  if (matches.length === 1) {
+    type = matches[0][1] as V3CodeType
+    digits = matches[0][2]
+  } else if (matches.length === 0) {
+    const rid = /RID(\d+)/.exec(code)
+    if (!rid) return null
+    type = "RID"
+    digits = rid[1]
+  } else {
+    return null
+  }
+  const fmiDigits = /FMI(\d+)/.exec(code)?.[1]
+  if (!fmiDigits) return null
+  const num = parseNumber(digits)
+  const fmi = parseNumber(fmiDigits)
+  return num === null || fmi === null ? null : { type, num, fmi }
+}
+
+// Lamp ECU names the vision model has been seen inventing from the fault
+// description (see the Pass 1 prompt); compared on the alphanumerics only.
+const HALLUCINATED_LAMP_ECUS: ReadonlySet<string> = new Set([
+  "BRAKELAMPECU",
+  "FOGLAMPECU",
+  "CAMPAIGNLIGHTSECU",
+  "CAMPAIGNLIGHTECU",
+  "REVERSELIGHTSECU",
+  "REVERSELIGHTECU",
+  "UNKNOWNECU",
+  "LIGHTECU",
+])
+const HALLUCINATED_VECU_ECUS: ReadonlySet<string> = new Set([
+  "REGENERATIONCONTROLECU",
+  "COMPRESSORCONTROLECU",
+  "REARLOADSENSORECU",
+])
+
+/** Empty / "unit not readable" label: nothing printed that could be verified. */
+function isBlankEcuLabel(label: string): boolean {
+  return alnum(label).replace(/UNIT|NOTREADABLE|UNREADABLE|UNKNOWN|NA/g, "") === ""
+}
+
+const LIGHTING_PSIDS: ReadonlySet<number> = new Set([
+  3, 5, 8, 10, 11, 15, 16, 19, 20, 23, 26, 42, 67, 68, 82,
+])
+const LIGHTING_DESCRIPTION =
+  /brake\s*lamp|fog\s*lamp|campaign\s*lights?|reverse\s*lights?|turn\s*signal|high\s*beam|parking\s*light|wiping\s*relay|dimmer|background\s*lighting/
+// PSID 68 is often printed with no usable text ("null") or as a circuit fault.
+const PSID68_DESCRIPTION = /^null$|circuit\s*open|open\s*circuit/
+
+const VECU_DESCRIPTIONS: Readonly<Record<number, RegExp>> = {
+  23: /regeneration\s*control/,
+  24: /compressor\s*control/,
+  39: /rear\s*load\s*sensor/,
+}
+
+type V3RescueInput = {
+  /** MID read from the label / code, or null when none could be read. */
+  mid: number | null
+  controlUnit: string
+  code: V3ParsedCode
+  description: string
+  scanContext: CanonicalKeyScanContext
+}
+
+type V3Rescue = {
+  mid: number
+  type: V3CodeType
+  num: number
+  fmi: number
+}
+
+/** The ECU a MID-less (blank / cropped / hallucinated) label really is, or null. */
+function resolveMissingMid(input: V3RescueInput): number | null {
+  const { controlUnit, code, description, scanContext } = input
+  const label = alnum(controlUnit)
+  const blank = isBlankEcuLabel(controlUnit)
+
+  // A.3 Retarder ECU printed without "(MID 222)".
+  if (/RETARDERECU/.test(label)) return 222
+
+  if (code.type === "PSID") {
+    // A.1 Lighting / LCM.
+    if (
+      (blank || HALLUCINATED_LAMP_ECUS.has(label)) &&
+      LIGHTING_PSIDS.has(code.num) &&
+      (LIGHTING_DESCRIPTION.test(description) ||
+        (code.num === 68 && PSID68_DESCRIPTION.test(description)))
+    ) {
+      return 216
+    }
+    // A.2 Vehicle ECU.
+    const vecuDescription = VECU_DESCRIPTIONS[code.num]
+    if (
+      (blank || HALLUCINATED_VECU_ECUS.has(label)) &&
+      vecuDescription?.test(description)
+    ) {
+      return 144
+    }
+  }
+
+  // A.5 Cross-row context: a bare "Engine ECU" (its "(MID 128)" cropped off) on
+  // PID 110 FMI 5 is the Retarder when the same scan holds other Retarder faults.
+  if (
+    label === "ENGINEECU" &&
+    code.type === "PID" &&
+    code.num === 110 &&
+    code.fmi === 5 &&
+    scanContext.hasRetarderFault
+  ) {
+    return 222
+  }
+  return null
+}
+
+/**
+ * Applies every FH V3 rescue to one row. Returns null when nothing applies
+ * (the row is then built exactly as printed).
+ */
+function rescueV3(input: V3RescueInput): V3Rescue | null {
+  const { description, code } = input
+  let mid = input.mid
+  let { type, num } = code
+  const { fmi } = code
+  let changed = false
+
+  if (mid === null) {
+    const resolved = resolveMissingMid(input)
+    if (resolved !== null) {
+      mid = resolved
+      changed = true
+    }
+  }
+
+  // A.4 "MID 179" reporting itself: PSID 236 on MID 179 is really raised by the
+  // instrument cluster (MID 140) about the missing MID 179 gateway.
+  if (
+    mid === 179 &&
+    type === "PSID" &&
+    num === 236 &&
+    (fmi === 12 || /data\s*link,?\s*mid\s*179|faulty\s*device\s*or\s*component/.test(description))
+  ) {
+    mid = 140
+    changed = true
+  }
+
+  // B. Code / prefix / ECU drift.
+  const retype = (nextType: V3CodeType, nextNum: number) => {
+    type = nextType
+    num = nextNum
+    changed = true
+  }
+  const move = (nextMid: number, nextType: V3CodeType, nextNum: number) => {
+    mid = nextMid
+    retype(nextType, nextNum)
+  }
+
+  if (mid === 144 && type === "PID" && num === 3 && /starter\s*output/.test(description)) {
+    retype("PPID", 3)
+  } else if (
+    mid === 144 &&
+    type === "PSID" &&
+    (num === 223 || num === 232) &&
+    /regeneration\s*control/.test(description)
+  ) {
+    retype("PSID", 23)
+  } else if (
+    mid === 144 &&
+    type === "PSID" &&
+    num === 230 &&
+    /rear\s*load\s*sensor/.test(description)
+  ) {
+    retype("PSID", 39)
+  } else if (
+    mid === 130 &&
+    type === "PSID" &&
+    num === 37 &&
+    /transmission\s*tank\s*air\s*pressure/.test(description)
+  ) {
+    retype("PID", 37)
+  } else if (
+    mid === 140 &&
+    (type === "RID" || type === "PID") &&
+    num === 116 &&
+    /brake\s*secondary\s*pressure/.test(description)
+  ) {
+    retype("PID", 118)
+  } else if (
+    (mid === 140 || mid === 144 || mid === null) &&
+    type === "PSID" &&
+    num === 10 &&
+    /\bcd\b/.test(description)
+  ) {
+    move(206, "PSID", 10)
+  } else if (mid === 206 && type === "PSID") {
+    const dropped: Readonly<Record<number, readonly [RegExp, number]>> = {
+      1: [/audio\s*microphone/, 11],
+      2: [/audio\s*output\s*left\s*front/, 12],
+      4: [/audio\s*output\s*left\s*rear/, 14],
+      5: [/audio\s*output\s*right\s*rear/, 15],
+    }
+    const entry = dropped[num]
+    if (entry && entry[0].test(description)) retype("PSID", entry[1])
+  } else if (
+    mid === 130 &&
+    (type === "PSID" || type === "PID") &&
+    num === 171 &&
+    fmi === 5 &&
+    /ambient\s*air\s*temperature/.test(description)
+  ) {
+    move(140, "PID", 171)
+  } else if (
+    mid === 144 &&
+    type === "SID" &&
+    num === 11 &&
+    /magnetic\s*clutch/.test(description)
+  ) {
+    move(146, "SID", 11)
+  }
+
+  // "RID" is only valid as an input to the rescues above.
+  if (!changed || mid === null || type === "RID") return null
+  return { mid, type, num, fmi }
+}
+
 function buildV3(input: CanonicalKeyInput): CanonicalKeyResult {
   const unit = strip(input.controlUnit)
   const code = strip(input.faultCode)
@@ -442,6 +710,36 @@ function buildV3(input: CanonicalKeyInput): CanonicalKeyResult {
     )
   }
   const midDigits = midFromUnit ?? midFromCode
+
+  // FH V3 OCR rescues (description-guarded); FH V3 trucks only.
+  if (input.generation === "FH_V3") {
+    const parsed = parseV3Code(code)
+    const printedMid = midDigits ? parseNumber(midDigits) : null
+    if (parsed && (!midDigits || printedMid !== null)) {
+      const rescue = rescueV3({
+        mid: printedMid,
+        controlUnit: input.controlUnit,
+        code: parsed,
+        description: (input.description ?? "").toLowerCase().trim(),
+        scanContext: input.scanContext ?? EMPTY_SCAN_CONTEXT,
+      })
+      if (rescue) {
+        const key = `MID${rescue.mid}|${rescue.type}${rescue.num}|FMI${rescue.fmi}`
+        if (V3_KEY_REGEX.test(key)) {
+          return {
+            ok: true,
+            key,
+            generation: "FH_V3",
+            warnings: validateCanonicalKey(key).issues,
+            ...(printedMid !== rescue.mid
+              ? { ecuRescuedFrom: input.controlUnit.trim() || "(blank)" }
+              : {}),
+          }
+        }
+      }
+    }
+  }
+
   if (!midDigits) {
     return failure(input, "No MID number could be read for the control unit")
   }
@@ -491,6 +789,31 @@ function buildV3(input: CanonicalKeyInput): CanonicalKeyResult {
   return { ok: true, key, generation: "FH_V3", warnings }
 }
 
+/**
+ * FH V4 single-character hex OCR drift, repaired only when the row's own
+ * description confirms which DTC it is. `description` is null for a truck that
+ * is not registered as FH V4 (no rescue).
+ */
+function rescueV4Dtc(
+  ecu: V4EcuAcronym,
+  dtc: string,
+  description: string | null
+): string {
+  if (description === null) return dtc
+  const text = description.toLowerCase()
+  if (ecu === "CCIOM" && dtc === "U114B87" && /lin\s*11/.test(text)) {
+    return "U114187"
+  }
+  if (
+    ecu === "HMIIOM" &&
+    dtc === "U115109" &&
+    /lane\s*position\s*object/.test(text)
+  ) {
+    return "U115100"
+  }
+  return dtc
+}
+
 function buildV4(input: CanonicalKeyInput): CanonicalKeyResult {
   const dtc = strip(input.faultCode)
   // DTC-owner rescue applies to FH V4 data only (never a V3-registered truck).
@@ -516,7 +839,11 @@ function buildV4(input: CanonicalKeyInput): CanonicalKeyResult {
     )
   }
 
-  const key = `${ecu}|${dtc}`
+  const key = `${ecu}|${rescueV4Dtc(
+    ecu,
+    dtc,
+    input.generation === "FH_V4" ? (input.description ?? "") : null
+  )}`
   if (!V4_KEY_REGEX.test(key)) {
     return failure(input, "Built key does not match the FH V4 format")
   }

@@ -175,8 +175,10 @@ describe("works tracker: Closed (Accepted Residuals)", () => {
     const source = pdfSource(buildWorksTrackerPdf(data).buffer)
     expect(source).toContain("Closed \\(Accepted Residuals\\)")
     // The closure context is a muted footer under the residual faults.
-    expect(source).toContain(`Note: Closure: ${REASON}`)
-    expect(source).toContain(NOTE)
+    expect(source).toContain(`Note: ${REASON}`)
+    expect(source).not.toContain("Note: Closure:")
+    // The long `Reason - note` footer wraps inside its cell, so match a fragment.
+    expect(source).toContain("Hydraulic pump sensor")
     expect(source).toContain("MID128 PID26 FMI3")
     expect(source.toLowerCase()).not.toContain("approved exception")
   })

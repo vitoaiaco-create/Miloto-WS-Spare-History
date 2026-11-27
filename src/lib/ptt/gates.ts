@@ -92,18 +92,48 @@ export type CompletenessCheck = {
   /** Faults still missing (0 when complete or the header was unreadable). */
   missingCount: number
   message: string | null
+  /**
+   * The PTT footer title (selected row) when it is NOT among the extracted rows,
+   * i.e. the top of the list was scrolled past; null when unknown / not hidden.
+   */
+  hiddenFooterText: string | null
+}
+
+/** Where the missing rows were most likely scrolled off, from the PTT footer. */
+export type ScrollEvidence = {
+  /** Bold fault title of the selected row (`selected_footer_text`). */
+  selectedFooterText: string | null
+  /** Descriptions of the rows that WERE extracted from the photos. */
+  rowDescriptions: readonly string[]
+}
+
+/** The footer title when it matches none of the extracted rows, else null. */
+function hiddenFooterTitle(evidence: ScrollEvidence | undefined): string | null {
+  if (!evidence) return null
+  const footer = (evidence.selectedFooterText ?? "").trim()
+  if (footer === "") return null
+  return checkSelectedFooterCoverage(footer, evidence.rowDescriptions).matched ===
+    false
+    ? footer
+    : null
 }
 
 /**
  * `DTC List (N Items)` vs the number of distinct rows extracted. Complete when
  * the header could not be read (nothing to compare) or every item was read.
+ *
+ * With `evidence`, an incomplete scan whose selected-row footer title is not
+ * among the extracted rows says WHY rows are missing (the top of the list is
+ * scrolled past) instead of the generic "upload the missing page(s)".
  */
 export function checkScanCompleteness(
   headerItemCount: number | null,
-  extractedItemCount: number
+  extractedItemCount: number,
+  evidence?: ScrollEvidence
 ): CompletenessCheck {
   const isComplete =
     headerItemCount === null || extractedItemCount >= headerItemCount
+  const hiddenFooterText = isComplete ? null : hiddenFooterTitle(evidence)
   return {
     isComplete,
     headerItemCount,
@@ -112,10 +142,36 @@ export function checkScanCompleteness(
       headerItemCount === null
         ? 0
         : Math.max(0, headerItemCount - extractedItemCount),
+    hiddenFooterText,
     message: isComplete
       ? null
-      : `INCOMPLETE_SCAN: Captured ${extractedItemCount} of ${headerItemCount} faults — upload the missing scroll page(s)`,
+      : hiddenFooterText !== null
+        ? `INCOMPLETE_SCAN: Captured ${extractedItemCount} of ${headerItemCount} faults — the top of the PTT list appears scrolled past ("${hiddenFooterText}" is hidden above row 1). Scroll to the top of PTT and upload the missing page(s), or tick Override below to proceed.`
+        : `INCOMPLETE_SCAN: Captured ${extractedItemCount} of ${headerItemCount} faults — upload the missing scroll page(s)`,
   }
+}
+
+/**
+ * Non-blocking note for a BASELINE scan that captured fewer rows than the DTC
+ * List header reports; `null` when the header was unreadable or nothing is
+ * missing. Never gates a baseline upload - it only makes a missing scroll page
+ * visible straight away.
+ */
+export function buildBaselineCompletenessWarning(
+  headerItemCount: number | null,
+  extractedItemCount: number,
+  evidence?: ScrollEvidence
+): string | null {
+  if (headerItemCount === null || extractedItemCount >= headerItemCount) {
+    return null
+  }
+  const missing = headerItemCount - extractedItemCount
+  const rows = `${missing} ${missing === 1 ? "row" : "rows"}`
+  const verb = missing === 1 ? "appears" : "appear"
+  const hidden = hiddenFooterTitle(evidence)
+  return hidden !== null
+    ? `Baseline photo captured ${extractedItemCount} of ${headerItemCount} items — ${rows} (including '${hidden}') ${verb} scrolled off the top`
+    : `Baseline photo captured ${extractedItemCount} of ${headerItemCount} items — ${rows} ${verb} to be missing (scroll page not captured)`
 }
 
 // ---------------------------------------------------------------------------

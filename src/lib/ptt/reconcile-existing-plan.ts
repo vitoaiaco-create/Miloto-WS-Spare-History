@@ -26,7 +26,12 @@ import {
   type ApprovedExceptionRule,
   type ReconcileResult,
 } from "./reconcile"
-import { rekeyScanFaultRecord, type ScanFaultRecord } from "./scan-faults"
+import {
+  buildScanKeyContext,
+  rekeyScanFaultRecord,
+  scanRowTextOf,
+  type ScanFaultRecord,
+} from "./scan-faults"
 import {
   classifyFaultSeverity,
   resolveSeverity,
@@ -171,9 +176,15 @@ function rekeyAndMerge(
   rows: readonly StoredFaultRow[],
   generation: PttTruckGeneration
 ): MergedRecord[] {
+  // Scan-level context (e.g. "this scan has Retarder faults") comes from EVERY
+  // row of the scan, before any single row is re-keyed.
+  const scanContext = buildScanKeyContext(
+    rows.map((row) => scanRowTextOf(toRecord(row))),
+    generation
+  )
   const groups = new Map<string, KeyedRow[]>()
   for (const row of rows) {
-    const record = rekeyScanFaultRecord(toRecord(row), generation)
+    const record = rekeyScanFaultRecord(toRecord(row), generation, scanContext)
     const group = groups.get(record.canonicalKey) ?? []
     group.push({ row, record })
     groups.set(record.canonicalKey, group)

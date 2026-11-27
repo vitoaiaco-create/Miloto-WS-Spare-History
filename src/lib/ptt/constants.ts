@@ -138,6 +138,17 @@ export type PttReconciliationSummary = {
 export const PTT_GATE_NAMES = ["INCOMPLETE_SCAN", "TRUCK_MISMATCH"] as const
 export type PttGateName = (typeof PTT_GATE_NAMES)[number]
 
+/**
+ * One-tap reasons for overriding an INCOMPLETE_SCAN gate (dispatched / legacy
+ * trucks whose missing rows can no longer be captured). Each one is long
+ * enough to satisfy the minimum override-reason length and stays editable.
+ */
+export const PTT_INCOMPLETE_SCAN_OVERRIDE_PRESETS = [
+  "Top/bottom rows scrolled off photo; truck already dispatched",
+  "Hidden rows are non-critical / approved exceptions",
+  "PTT screen could not scroll further",
+] as const
+
 // Audit entry for a manager overriding an integrity gate.
 export type PttGateOverride = {
   gate: PttGateName

@@ -20,6 +20,7 @@ import {
   ShieldAlertIcon,
   SearchCheckIcon,
   Trash2Icon,
+  TriangleAlertIcon,
   WrenchIcon,
 } from "lucide-react"
 
@@ -468,6 +469,19 @@ function ModalBody({
             </span>
             <p className="mt-1 leading-relaxed whitespace-pre-line">
               {session.workshopContext.trim()}
+            </p>
+          </div>
+        )}
+
+        {session.scanCompletenessWarning && (
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+          >
+            <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
+            <p className="leading-relaxed">
+              {session.scanCompletenessWarning}. Capture every scroll page of
+              the DTC List while the truck is still in the workshop.
             </p>
           </div>
         )}

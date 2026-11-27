@@ -50,7 +50,12 @@ import {
   reconcileExistingCase,
 } from "@/lib/ptt/reconcile-existing"
 import type { PlanException } from "@/lib/ptt/reconcile-existing-plan"
-import { inferGenerationFromRecords, rekeyScanFaultRecord } from "@/lib/ptt/scan-faults"
+import {
+  buildScanKeyContext,
+  inferGenerationFromRecords,
+  rekeyScanFaultRecord,
+  scanRowTextOf,
+} from "@/lib/ptt/scan-faults"
 import {
   querySessionDetail,
   type PttSessionDetail,
@@ -359,6 +364,12 @@ async function approveExceptionsForCase(input: {
   // `UNVERIFIED|...` row is re-normalised first), so the exception matches the
   // key the re-reconciliation will assign.
   const effectiveKeys = new Set<string>()
+  const extractedContext = buildScanKeyContext(
+    latest.scanFaults
+      .filter((fault) => fault.isExtracted)
+      .map((fault) => scanRowTextOf(recordFromScanFaultRow(fault))),
+    generation
+  )
   for (const requested of new Set(input.canonicalKeys)) {
     const target = latest.scanFaults.find(
       (fault) => fault.canonicalKey === requested
@@ -373,8 +384,11 @@ async function approveExceptionsForCase(input: {
       )
     }
     effectiveKeys.add(
-      rekeyScanFaultRecord(recordFromScanFaultRow(target), generation)
-        .canonicalKey
+      rekeyScanFaultRecord(
+        recordFromScanFaultRow(target),
+        generation,
+        extractedContext
+      ).canonicalKey
     )
   }
 
@@ -641,13 +655,23 @@ export async function closeCaseWithAcceptedResidualsAction(
     }
 
     // The residuals being accepted, under their repaired canonical keys.
+    const extractedContext = buildScanKeyContext(
+      (latest?.scanFaults ?? [])
+        .filter((row) => row.isExtracted)
+        .map((row) => scanRowTextOf(recordFromScanFaultRow(row))),
+      generation
+    )
     const residuals = collectClosureResiduals(
       latest
         ? {
             reconciled: latest.scanFaults
               .filter((row) => row.isExtracted)
               .map((row) => ({
-                ...rekeyScanFaultRecord(recordFromScanFaultRow(row), generation),
+                ...rekeyScanFaultRecord(
+                  recordFromScanFaultRow(row),
+                  generation,
+                  extractedContext
+                ),
                 bucket: row.reconciliationBucket ?? ("CLEARED" as const),
               })),
             baseline: [],

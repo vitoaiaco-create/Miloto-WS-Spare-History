@@ -201,22 +201,17 @@ function residualCell(doc: jsPDF, row: WorksTrackerRow, width: number): RichLine
         )
       : bulletLines(doc, row.residualFaultItems, INK, width)
 
+  // `Note: <Reason Label> - <Closure Note>` (the data layer already joined the
+  // two with an ASCII hyphen), a single muted italic footer.
   if (row.closureNote) {
-    row.closureNote.split("\n").forEach((part, index) => {
-      lines.push(
-        ...wrapLines(
-          doc,
-          index === 0 ? `Note: ${part}` : part,
-          {
-            font: "italic",
-            size: 6.2,
-            color: MUTED,
-            gapBefore: index === 0 ? 1.4 : 0.3,
-          },
-          width
-        )
+    lines.push(
+      ...wrapLines(
+        doc,
+        `Note: ${row.closureNote}`,
+        { font: "italic", size: 6.2, color: MUTED, gapBefore: 1.4 },
+        width
       )
-    })
+    )
   }
   return lines
 }

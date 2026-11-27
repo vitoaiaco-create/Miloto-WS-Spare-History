@@ -6,7 +6,11 @@ import type {
 import { fallbackSeverityForUnit } from "../ptt-ocr-pipeline"
 import type { PttScanFaultStatus } from "./constants"
 import { matchesApprovedException, type ApprovedExceptionRule } from "./reconcile"
-import { canonicalKeyFor, toScanFaultStatus } from "./scan-faults"
+import {
+  buildScanKeyContext,
+  canonicalKeyFor,
+  toScanFaultStatus,
+} from "./scan-faults"
 
 // Deterministic severity + fleet-pattern engine. Runs between Pass 1 (vision
 // OCR) and Pass 2 (the LLM directive) on BOTH baseline scans and post-work
@@ -270,13 +274,23 @@ export function applyDeterministicSeverity(
   faults: readonly PttFault[],
   context: SeverityContext
 ): PttFault[] {
+  const scanContext = buildScanKeyContext(
+    faults.map((fault) => ({
+      controlUnit: fault.control_unit,
+      faultCode: fault.fault_code,
+      description: fault.component_description,
+    })),
+    context.generation
+  )
   return faults.map((fault) => {
     const decision = classifyFaultSeverity(
       {
         canonicalKey: canonicalKeyFor(
           fault.control_unit,
           fault.fault_code,
-          context.generation
+          context.generation,
+          fault.component_description,
+          scanContext
         ),
         pttStatus: toScanFaultStatus(fault.fault_state),
         ecuLabel: fault.control_unit,

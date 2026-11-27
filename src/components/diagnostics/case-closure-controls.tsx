@@ -22,7 +22,11 @@ import {
 } from "@/lib/ptt/closure-rules"
 import { PTT_CLOSURE_REASON_LABELS } from "@/lib/ptt/constants"
 import { matchesApprovedException } from "@/lib/ptt/reconcile"
-import { canonicalKeyFor, toScanFaultStatus } from "@/lib/ptt/scan-faults"
+import {
+  buildScanKeyContext,
+  canonicalKeyFor,
+  toScanFaultStatus,
+} from "@/lib/ptt/scan-faults"
 
 /** Reason / note / timestamp of a case closed with accepted residuals. */
 export function closureDetailsOf(
@@ -51,12 +55,22 @@ export function useClosureEligibility(
   return useMemo(() => {
     const generation = session.truckGeneration
     const fleetId = normalizeFleetId(session.fleetId)
+    const scanContext = buildScanKeyContext(
+      session.faults.map((fault) => ({
+        controlUnit: fault.controlUnit,
+        faultCode: fault.faultCode,
+        description: fault.componentDescription,
+      })),
+      generation
+    )
     const baselineActionableCount = countActionableBaselineFaults(
       session.faults.map((fault) => {
         const canonicalKey = canonicalKeyFor(
           fault.controlUnit,
           fault.faultCode,
-          generation
+          generation,
+          fault.componentDescription,
+          scanContext
         )
         return {
           pttStatus: toScanFaultStatus(fault.faultState),

@@ -57,6 +57,7 @@ import {
   runVisionOcr,
 } from "@/lib/ptt/extraction"
 import {
+  buildBaselineCompletenessWarning,
   checkScanCompleteness,
   checkSelectedFooterCoverage,
 } from "@/lib/ptt/gates"
@@ -64,6 +65,7 @@ import { planLedgerCommit, type LedgerScanFault } from "@/lib/ptt/ledger"
 import { matchesApprovedException } from "@/lib/ptt/reconcile"
 import {
   buildScanFaultRecords,
+  buildScanKeyContext,
   canonicalKeyFor,
   countExtractedDtcRows,
   inferGenerationFromRecords,
@@ -467,11 +469,23 @@ export async function POST(request: Request) {
       exceptions,
     }
 
+    // Scan-level key context (e.g. "this scan holds Retarder faults") is
+    // computed from the whole scan before any single row is keyed.
+    const scanKeyContext = buildScanKeyContext(
+      numberedRows.map((row) => ({
+        controlUnit: row.control_unit_verbatim,
+        faultCode: row.fault_code_verbatim,
+        description: row.description_verbatim,
+      })),
+      resolvedGeneration
+    )
     const classifiedRows = numberedRows.map((row) => {
       const canonicalKey = canonicalKeyFor(
         row.control_unit_verbatim,
         row.fault_code_verbatim,
-        resolvedGeneration
+        resolvedGeneration,
+        row.description_verbatim,
+        scanKeyContext
       )
       const pttStatus = toScanFaultStatus(row.fault_state)
       const decision = classifyFaultSeverity(
@@ -658,6 +672,17 @@ export async function POST(request: Request) {
       ocr.reported_dtc_list_count,
       extractedItemCount
     )
+    // Non-blocking: a baseline is never rejected for a short DTC List, but the
+    // case detail modal shows this note so a missing scroll page is spotted
+    // immediately (it would later force an INCOMPLETE_SCAN override).
+    const scanCompletenessWarning = buildBaselineCompletenessWarning(
+      ocr.reported_dtc_list_count,
+      extractedItemCount,
+      {
+        selectedFooterText: ocr.selected_footer_text,
+        rowDescriptions: numberedRows.map((row) => row.description_verbatim),
+      }
+    )
     const isException = (key: string) =>
       matchesApprovedException(exceptions, input.fleetId, truckGeneration, key)
     const now = new Date()
@@ -683,6 +708,7 @@ export async function POST(request: Request) {
         headerItemCount: ocr.reported_dtc_list_count,
         extractedItemCount,
         isCompleteScan: completeness.isComplete,
+        scanCompletenessWarning,
         chassisIdOcr: ocr.chassis_id_ocr,
         workOrderOcr: ocr.work_order_ocr,
         productTimeOcr: ocr.product_time_ocr,

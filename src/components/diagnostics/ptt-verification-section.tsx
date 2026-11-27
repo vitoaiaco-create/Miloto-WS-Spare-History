@@ -70,7 +70,11 @@ import type {
   PttSessionWithRelations,
 } from "@/lib/ptt-diagnostics-queries"
 import { formatPttVerificationAuditForWhatsApp } from "@/lib/ptt/audit-format"
-import { isClosedCaseStatus, type PttGateName } from "@/lib/ptt/constants"
+import {
+  PTT_INCOMPLETE_SCAN_OVERRIDE_PRESETS,
+  isClosedCaseStatus,
+  type PttGateName,
+} from "@/lib/ptt/constants"
 import type { PttVerificationAudit } from "@/lib/ptt/verification-audit-schema"
 import { cn } from "@/lib/utils"
 
@@ -830,6 +834,27 @@ function VerificationUploadForm({
                   <p className="text-xs text-muted-foreground">{copy.hint}</p>
                 </div>
               </div>
+              {state.enabled && gate === "INCOMPLETE_SCAN" && (
+                <div
+                  role="group"
+                  aria-label="Quick override reasons"
+                  className="flex flex-wrap gap-1.5"
+                >
+                  {PTT_INCOMPLETE_SCAN_OVERRIDE_PRESETS.map((preset) => (
+                    <Button
+                      key={preset}
+                      type="button"
+                      variant={state.reason === preset ? "secondary" : "outline"}
+                      size="xs"
+                      className="h-auto py-1 text-left whitespace-normal"
+                      disabled={busy}
+                      onClick={() => setOverride(gate, { reason: preset })}
+                    >
+                      {preset}
+                    </Button>
+                  ))}
+                </div>
+              )}
               {state.enabled && (
                 <Textarea
                   aria-label={`${copy.label}: reason`}

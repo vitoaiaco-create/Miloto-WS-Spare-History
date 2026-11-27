@@ -30,7 +30,11 @@ import {
   type PttScanFaultStatus,
 } from "./constants"
 import type { ApprovedExceptionRule } from "./reconcile"
-import { canonicalKeyFor, toScanFaultStatus } from "./scan-faults"
+import {
+  buildScanKeyContext,
+  canonicalKeyFor,
+  toScanFaultStatus,
+} from "./scan-faults"
 import { classifyFaultSeverity, resolveSeverity } from "./severity-and-patterns"
 import type { PttVerificationAudit } from "./verification-audit-schema"
 
@@ -601,8 +605,22 @@ function classifyCaseFaults(
 
   // Baseline rows by canonical key (ACTIVE beats INACTIVE, worse tier wins).
   const baselineByKey = new Map<string, PttReportBaselineFault>()
+  const baselineContext = buildScanKeyContext(
+    session.faults.map((fault) => ({
+      controlUnit: fault.controlUnit,
+      faultCode: fault.faultCode,
+      description: fault.componentDescription,
+    })),
+    generation
+  )
   for (const fault of session.faults) {
-    const key = canonicalKeyFor(fault.controlUnit, fault.faultCode, generation)
+    const key = canonicalKeyFor(
+      fault.controlUnit,
+      fault.faultCode,
+      generation,
+      fault.componentDescription,
+      baselineContext
+    )
     const existing = baselineByKey.get(key)
     if (!existing) {
       baselineByKey.set(key, fault)

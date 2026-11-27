@@ -88,7 +88,7 @@ export function ApproveExceptionDialog({
   // An OCR-garbled `UNVERIFIED|...` row is saved under its repaired key.
   const savedKey = (row: PttScanFaultRow) =>
     row.canonicalKey.startsWith("UNVERIFIED|")
-      ? canonicalKeyFor(row.ecuLabel, row.dtcRaw, generation)
+      ? canonicalKeyFor(row.ecuLabel, row.dtcRaw, generation, row.description)
       : row.canonicalKey
 
   async function handleApprove() {

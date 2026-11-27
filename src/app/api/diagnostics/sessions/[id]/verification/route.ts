@@ -275,9 +275,15 @@ export async function POST(request: Request, ctx: RouteContext) {
 
     // ---- Gate 2: header-count completeness ----------------------------------
     const extractedItemCount = countExtractedDtcRows(rawRecords)
+    // The selected-row footer title tells WHY rows are missing: when it is not
+    // among the extracted rows, the top of the PTT list was scrolled past.
     const completeness = checkScanCompleteness(
       ocr.reported_dtc_list_count,
-      extractedItemCount
+      extractedItemCount,
+      {
+        selectedFooterText: ocr.selected_footer_text,
+        rowDescriptions: numberedRows.map((row) => row.description_verbatim),
+      }
     )
     const gateOverrides: PttGateOverride[] = []
     if (!completeness.isComplete) {
@@ -291,12 +297,18 @@ export async function POST(request: Request, ctx: RouteContext) {
         : null
       if (!override) {
         throw new PttPipelineError(
-          `${completeness.message}. Automatic closure is blocked until the missing page(s) are uploaded, or a manager overrides with a reason.`,
+          // The scroll-hint message already names the way forward (scroll to
+          // the top, or tick Override); the generic one needs the suffix.
+          completeness.hiddenFooterText !== null
+            ? (completeness.message ?? "INCOMPLETE_SCAN")
+            : `${completeness.message}. Automatic closure is blocked until the missing page(s) are uploaded, or a manager overrides with a reason.`,
           422,
           "INCOMPLETE_SCAN",
           {
             capturedCount: completeness.extractedItemCount,
             headerItemCount: completeness.headerItemCount,
+            missingCount: completeness.missingCount,
+            hiddenFooterText: completeness.hiddenFooterText,
           }
         )
       }

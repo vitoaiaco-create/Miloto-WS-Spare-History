@@ -99,8 +99,9 @@ export type WorksTrackerRow = {
    */
   residualFaultCodes: string
   /**
-   * `Closure: <reason>`, then the manager's note on a second line; only on a
-   * COMPLETE row closed with accepted residuals.
+   * `<Reason label> - <manager's note>` (just the reason when there is no
+   * note), ASCII hyphen, on one line; only on a COMPLETE row closed with
+   * accepted residuals. The PDF prefixes it with a single `Note: `.
    */
   closureNote: string | null
 }
@@ -474,13 +475,10 @@ export function buildWorksTrackerData(
           : "Residual Faults"
     const closureNote =
       acceptedResiduals && finalTruck
-        ? [
-            `Closure: ${finalTruck.closureReasonLabel ?? ""}`.replace(/:\s*$/, ""),
-            finalTruck.closureNote ?? "",
-          ]
+        ? [finalTruck.closureReasonLabel ?? "", finalTruck.closureNote ?? ""]
+            .map((part) => asciiDashes(part).replace(/\s+/g, " ").trim())
             .filter(Boolean)
-            .map(asciiDashes)
-            .join("\n")
+            .join(" - ")
         : null
 
     rows.push({

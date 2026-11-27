@@ -3,7 +3,12 @@ import type {
   PttFaultState,
   PttTruckGeneration,
 } from "../ptt-diagnostics"
-import { buildCanonicalKey, validateCanonicalKey } from "./canonical-key"
+import {
+  EMPTY_SCAN_CONTEXT,
+  buildCanonicalKey,
+  validateCanonicalKey,
+  type CanonicalKeyScanContext,
+} from "./canonical-key"
 import type { PttScanFaultStatus } from "./constants"
 
 // Pure conversion of extracted PTT rows into the immutable `ptt_scan_faults`
@@ -67,21 +72,59 @@ export function isVcadsSuccessMessage(message: string): boolean {
 export function canonicalKeyFor(
   controlUnit: string,
   faultCode: string,
-  generation: PttTruckGeneration
+  generation: PttTruckGeneration,
+  /** The row's description; unlocks the description-guarded OCR rescues. */
+  description = "",
+  scanContext: CanonicalKeyScanContext = EMPTY_SCAN_CONTEXT
 ): string {
   const vcads = VCADS_CODE.exec(faultCode.trim().toUpperCase().replace(/\s+/g, ""))
   if (vcads) return `VCADS|OP${vcads[1]}`
   const built = buildCanonicalKey({
     controlUnit,
     faultCode,
+    description,
+    scanContext,
     generation: generation === "UNKNOWN" ? undefined : generation,
   })
   return built.ok ? built.key : built.fallbackKey
 }
 
+/** The printed fields of one row, as the scan-level normalisation needs them. */
+export type ScanRowText = {
+  controlUnit: string
+  faultCode: string
+  description: string
+}
+
+/**
+ * Scan-level normalisation context: facts about the OTHER rows of the same
+ * scan that a row-level rescue needs. Today that is "does this scan hold a
+ * Retarder (MID 222) fault", which resolves a cropped `Engine ECU` label on
+ * `PID 110 FMI 5` to `MID222|PID110|FMI5`. Must be computed from the whole
+ * scan (live extraction AND stored rows) BEFORE any row is keyed or diffed.
+ * Only FH V3 scans can have it.
+ */
+export function buildScanKeyContext(
+  rows: readonly ScanRowText[],
+  generation: PttTruckGeneration
+): CanonicalKeyScanContext {
+  if (generation !== "FH_V3") return EMPTY_SCAN_CONTEXT
+  const hasRetarderFault = rows.some((row) => {
+    const built = buildCanonicalKey({
+      controlUnit: row.controlUnit,
+      faultCode: row.faultCode,
+      description: row.description,
+      generation,
+    })
+    return built.ok && built.key.startsWith("MID222|")
+  })
+  return { hasRetarderFault }
+}
+
 function recordFor(
   input: ExtractedFaultInput,
-  generation: PttTruckGeneration
+  generation: PttTruckGeneration,
+  scanContext: CanonicalKeyScanContext
 ): ScanFaultRecord {
   const code = input.faultCode.trim().toUpperCase().replace(/\s+/g, "")
   const vcads = VCADS_CODE.exec(code)
@@ -109,6 +152,8 @@ function recordFor(
   const built = buildCanonicalKey({
     controlUnit: input.controlUnit,
     faultCode: input.faultCode,
+    description: input.description,
+    scanContext,
     generation: generation === "UNKNOWN" ? undefined : generation,
   })
   if (built.ok) {
@@ -138,7 +183,12 @@ function recordFor(
  */
 export function rekeyScanFaultRecord(
   record: ScanFaultRecord,
-  generation: PttTruckGeneration
+  generation: PttTruckGeneration,
+  /**
+   * Context of the scan the row belongs to (`buildScanKeyContext` over every
+   * row of that scan); without it only the row-level rescues can fire.
+   */
+  scanContext: CanonicalKeyScanContext = EMPTY_SCAN_CONTEXT
 ): ScanFaultRecord {
   const [rebuilt] = buildScanFaultRecords(
     [
@@ -150,10 +200,20 @@ export function rekeyScanFaultRecord(
         severity: record.severity,
       },
     ],
-    generation
+    generation,
+    scanContext
   )
   return rebuilt ?? record
 }
+
+/** The row text `buildScanKeyContext` needs from stored records. */
+export const scanRowTextOf = (
+  record: Pick<ScanFaultRecord, "ecuLabel" | "dtcRaw" | "description">
+): ScanRowText => ({
+  controlUnit: record.ecuLabel,
+  faultCode: record.dtcRaw,
+  description: record.description,
+})
 
 /**
  * Builds one snapshot record per canonical key. Rows that normalise to the
@@ -163,11 +223,20 @@ export function rekeyScanFaultRecord(
  */
 export function buildScanFaultRecords(
   inputs: readonly ExtractedFaultInput[],
-  generation: PttTruckGeneration
+  generation: PttTruckGeneration,
+  /** Defaults to the context of `inputs` themselves (the whole scan). */
+  scanContext: CanonicalKeyScanContext = buildScanKeyContext(
+    inputs.map((input) => ({
+      controlUnit: input.controlUnit,
+      faultCode: input.faultCode,
+      description: input.description,
+    })),
+    generation
+  )
 ): ScanFaultRecord[] {
   const byKey = new Map<string, ScanFaultRecord>()
   for (const input of inputs) {
-    const record = recordFor(input, generation)
+    const record = recordFor(input, generation, scanContext)
     const existing = byKey.get(record.canonicalKey)
     if (!existing) {
       byKey.set(record.canonicalKey, record)

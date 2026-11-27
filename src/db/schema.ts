@@ -740,6 +740,10 @@ export const pttDiagnosticSessionsTable = pgTable(
   extractedItemCount: integer("extracted_item_count").notNull().default(0),
   // headerItemCount === null || extractedItemCount >= headerItemCount.
   isCompleteScan: boolean("is_complete_scan").notNull().default(true),
+  // Non-blocking note on a BASELINE whose photos captured fewer rows than the
+  // DTC List header reports (e.g. the top of the list was scrolled off). Never
+  // gates anything; the case detail modal shows it as an amber notice.
+  scanCompletenessWarning: text("scan_completeness_warning"),
   // OCR of the PTT bottom status bar (chassis / work order) and top-right
   // product time.
   chassisIdOcr: text("chassis_id_ocr"),
