@@ -107,8 +107,12 @@ const SLATE: Look = { fill: "FFE2E8F0", font: "FF475569", bold: true }
 export const GREY: Look = { fill: "FFF3F4F6", font: "FF6B7280" }
 const ORANGE: Look = { fill: "FFFED7AA", font: "FF9A3412", bold: true }
 
+// Soft blue-green: closed by a manager release, not by a clean re-scan.
+const TEAL: Look = { fill: "FFCCFBF1", font: "FF115E59", bold: true }
+
 const CASE_STATUS_LOOK: Record<PttReportTruck["caseStatusLabel"], Look> = {
   "VERIFIED CLOSED": GREEN,
+  "CLOSED (ACCEPTED RESIDUALS)": TEAL,
   "PARTIAL / BLOCKED": SOFT_RED,
   "NO PROGRESS": SOFT_RED,
   OPEN: SOFT_AMBER,
@@ -134,9 +138,22 @@ const numbered = (items: readonly string[]) =>
 const bulleted = (items: readonly string[]) =>
   items.map((item) => `\u2022 ${item}`).join("\n")
 
+function closureAudit(truck: PttReportTruck): string {
+  if (truck.caseStatus !== "CLOSED_ACCEPTED_RESIDUALS") return ""
+  return [
+    "CLOSED (ACCEPTED RESIDUALS)",
+    truck.closureReasonLabel && `Reason: ${truck.closureReasonLabel}`,
+    truck.closureNote && `Note: ${truck.closureNote}`,
+    truck.closedDate && `Closed: ${truck.closedDate}`,
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
 function forensicAudit(truck: PttReportTruck): string {
-  if (!truck.isVerified) return ""
-  const parts: string[] = []
+  const closure = closureAudit(truck)
+  if (!truck.isVerified) return closure
+  const parts: string[] = closure ? [closure] : []
   if (truck.verdictHeadline) parts.push(truck.verdictHeadline)
   if (truck.collateralDamageAnalysis) {
     parts.push(`Collateral damage: ${truck.collateralDamageAnalysis}`)

@@ -20,8 +20,11 @@ import {
 } from "../ptt-diagnostics-report"
 import { validateCanonicalKey } from "./canonical-key"
 import {
+  PTT_CLOSURE_REASON_LABELS,
   PTT_EXCEPTION_REASON_LABELS,
+  isClosedCaseStatus,
   type PttCaseStatus,
+  type PttClosureReasonCategory,
   type PttLedgerStatus,
   type PttReconciliationBucket,
   type PttScanFaultStatus,
@@ -87,6 +90,10 @@ export type PttReportCase = {
   caseStatus: PttCaseStatus
   scannedAt: Date
   verifiedAt: Date | null
+  /** Controlled closure audit (CLOSED_ACCEPTED_RESIDUALS); absent on older rows. */
+  closureReasonCategory?: PttClosureReasonCategory | null
+  closureNote?: string | null
+  closedAt?: Date | null
   /** Set by the legacy AI re-scan flow (before reconciliation existed). */
   verificationSummary: unknown
   aiDirective: PttDirective | null
@@ -178,6 +185,7 @@ export const PTT_SEVERITY_DISPLAY: Record<PttOverallSeverity, string> = {
 
 export type PttReportCaseStatusLabel =
   | "VERIFIED CLOSED"
+  | "CLOSED (ACCEPTED RESIDUALS)"
   | "PARTIAL / BLOCKED"
   | "NO PROGRESS"
   | "OPEN"
@@ -185,6 +193,7 @@ export type PttReportCaseStatusLabel =
 const CASE_STATUS_REPORT_LABELS: Record<PttCaseStatus, PttReportCaseStatusLabel> =
   {
     VERIFIED_CLOSED: "VERIFIED CLOSED",
+    CLOSED_ACCEPTED_RESIDUALS: "CLOSED (ACCEPTED RESIDUALS)",
     PARTIAL_BLOCKED: "PARTIAL / BLOCKED",
     REJECTED_INCOMPLETE: "PARTIAL / BLOCKED",
     REJECTED_NO_PROGRESS: "NO PROGRESS",
@@ -240,6 +249,11 @@ export type PttReportTruck = {
   isVerified: boolean
   caseStatus: PttCaseStatus
   caseStatusLabel: PttReportCaseStatusLabel
+  /** Closure audit (CLOSED_ACCEPTED_RESIDUALS only; blank otherwise). */
+  closureReasonLabel: string
+  closureNote: string
+  /** `YYYY-MM-DD` the job was closed with accepted residuals. */
+  closedDate: string
   /** Worst severity among the outstanding actionable faults (`CLEAR` if none). */
   overallSeverity: PttOverallSeverity
 
@@ -490,7 +504,11 @@ export function newestVerificationFirst(
 }
 
 /** The case status the exports show (latest re-scan wins). */
-function effectiveCaseStatus(session: PttReportCase): PttCaseStatus {
+export function effectiveCaseStatus(session: PttReportCase): PttCaseStatus {
+  // A manager release outranks the re-scan's own verdict.
+  if (session.caseStatus === "CLOSED_ACCEPTED_RESIDUALS") {
+    return "CLOSED_ACCEPTED_RESIDUALS"
+  }
   const latest = newestVerificationFirst(session.verificationScans)[0]
   if (latest) return latest.caseStatus
   // Closed by the legacy AI re-scan flow.
@@ -812,6 +830,18 @@ function buildTruck(
     isVerified,
     caseStatus,
     caseStatusLabel: CASE_STATUS_REPORT_LABELS[caseStatus],
+    closureReasonLabel:
+      caseStatus === "CLOSED_ACCEPTED_RESIDUALS" && session.closureReasonCategory
+        ? PTT_CLOSURE_REASON_LABELS[session.closureReasonCategory]
+        : "",
+    closureNote:
+      caseStatus === "CLOSED_ACCEPTED_RESIDUALS"
+        ? (session.closureNote?.trim() ?? "")
+        : "",
+    closedDate:
+      caseStatus === "CLOSED_ACCEPTED_RESIDUALS" && session.closedAt
+        ? formatDate(session.closedAt)
+        : "",
     overallSeverity,
     clearedCount: clearedItems.length,
     outstandingCount: outstandingItems.length,
@@ -961,7 +991,7 @@ export function buildPttReportData(
     scoped =
       resolved.scope === "LATEST_OPEN"
         ? latest.filter(
-            (session) => effectiveCaseStatus(session) !== "VERIFIED_CLOSED"
+            (session) => !isClosedCaseStatus(effectiveCaseStatus(session))
           )
         : latest
   }
@@ -1037,8 +1067,9 @@ export function buildPttReportData(
 
   const kpis: PttReportKpis = {
     trucksCount: trucks.length,
+    // Neither a clean closure nor a manager release counts as open / blocked.
     openOrBlockedCount: trucks.filter(
-      (truck) => truck.caseStatus !== "VERIFIED_CLOSED"
+      (truck) => !isClosedCaseStatus(truck.caseStatus)
     ).length,
     verifiedClosedCount: trucks.filter(
       (truck) => truck.caseStatus === "VERIFIED_CLOSED"

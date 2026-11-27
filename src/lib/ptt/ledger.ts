@@ -199,6 +199,40 @@ export function planLedgerCommit(input: LedgerPlanInput): LedgerPlan {
   return { upserts: [...upserts.values()], bounceBackKeys }
 }
 
+/** Folds planned upserts into an in-memory ledger map (for chained plans). */
+export function applyUpserts(
+  ledger: ReadonlyMap<string, LedgerEntry>,
+  upserts: readonly LedgerEntry[]
+): Map<string, LedgerEntry> {
+  const next = new Map(ledger)
+  for (const entry of upserts) next.set(entry.canonicalKey, entry)
+  return next
+}
+
+/**
+ * Merges the history of a legacy ledger row (e.g. an `UNVERIFIED|...` key that
+ * was repaired) into the row of its repaired key: the earliest first sighting,
+ * the highest reopen count and the latest reopen date survive.
+ */
+export function mergeLedgerEntries(
+  target: LedgerEntry,
+  legacy: LedgerEntry
+): LedgerEntry {
+  const legacyIsEarlier = legacy.firstSeenAt.getTime() < target.firstSeenAt.getTime()
+  const latestReopen = [target.lastReopenedAt, legacy.lastReopenedAt]
+    .filter((date): date is Date => date !== null)
+    .sort((a, b) => b.getTime() - a.getTime())[0]
+  return {
+    ...target,
+    firstSeenAt: legacyIsEarlier ? legacy.firstSeenAt : target.firstSeenAt,
+    firstSeenScanId: legacyIsEarlier
+      ? legacy.firstSeenScanId
+      : target.firstSeenScanId,
+    reopenCount: Math.max(target.reopenCount, legacy.reopenCount),
+    lastReopenedAt: latestReopen ?? null,
+  }
+}
+
 /**
  * Whole days the fault has been (or was) open: first seen -> cleared for a
  * CLEARED row, otherwise since it was last reopened (or first seen).

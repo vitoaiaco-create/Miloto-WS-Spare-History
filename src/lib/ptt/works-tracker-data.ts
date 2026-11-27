@@ -45,6 +45,7 @@ export type WorksTrackerStatus = "COMPLETE" | "PARTIAL" | "PENDING"
 
 export type WorksTrackerOutcome =
   | "Clean Closure"
+  | "Closed (Accepted Residuals)"
   | "Residual Faults"
   | "No Progress"
   | "In Workshop"
@@ -56,6 +57,8 @@ export type WorksTrackerGeneration = "FH V3" | "FH V4" | "\u2014"
 export const PENDING_CLOSING_TEXT = "Pending baseline scan"
 export const PARTIAL_CLOSING_TEXT = "Awaiting final photo"
 export const NONE_CLEARED_TRACKER_TEXT = "None cleared"
+/** Closing Fault Codes placeholder when a manager closed the job with residuals accepted. */
+export const ACCEPTED_CLOSING_TEXT = "None \u2014 residuals accepted"
 /** One line of the Closing Fault Codes cell, with the flags the PDF styles. */
 export type WorksTrackerClosingFault = {
   /** `[NEW REGRESSION] [REPEAT x2] Code \u2014 Short Description`. */
@@ -89,6 +92,8 @@ export type WorksTrackerRow = {
   closingFaults: WorksTrackerClosingFault[]
   /** `+N approved exceptions excluded`; only on COMPLETE when excluding. */
   approvedExceptionsNote: string | null
+  /** `Closure: <reason> \u2014 <note>`; only on a COMPLETE row closed with accepted residuals. */
+  closureNote: string | null
   /** Newline-separated cleared faults (COMPLETE); `""` otherwise. */
   clearedFaultCodes: string
 }
@@ -101,7 +106,11 @@ export type WorksTrackerKpis = {
   partialPct: number
   pendingCount: number
   pendingPct: number
+  /** COMPLETE rows whose outcome is Clean Closure. */
   cleanClosureCount: number
+  /** COMPLETE rows a manager closed with accepted residual faults. */
+  closedAcceptedResidualsCount: number
+  /** COMPLETE rows still open with residual faults (never a manager release). */
   residualFaultsTrucksCount: number
   totalClearedFaults: number
   totalClosingActionableFaults: number
@@ -334,6 +343,7 @@ export function buildWorksTrackerData(
         closingFaultCodes: PENDING_CLOSING_TEXT,
         closingFaults: [],
         approvedExceptionsNote: null,
+        closureNote: null,
         clearedFaultCodes: "",
       })
       continue
@@ -363,6 +373,7 @@ export function buildWorksTrackerData(
         closingFaultCodes: PARTIAL_CLOSING_TEXT,
         closingFaults: [],
         approvedExceptionsNote: null,
+        closureNote: null,
         clearedFaultCodes: "",
       })
       continue
@@ -388,17 +399,32 @@ export function buildWorksTrackerData(
         })
       }
     }
+    const acceptedResiduals =
+      finalTruck?.caseStatus === "CLOSED_ACCEPTED_RESIDUALS"
     const closingLines =
       closingFaultsCount === 0
-        ? [ALL_CLEARED_TEXT, ...closingFaults.map((fault) => fault.text)]
+        ? [
+            acceptedResiduals ? ACCEPTED_CLOSING_TEXT : ALL_CLEARED_TEXT,
+            ...closingFaults.map((fault) => fault.text),
+          ]
         : closingFaults.map((fault) => fault.text)
 
-    const closureOutcome: WorksTrackerOutcome =
-      closingFaultsCount === 0 && newRegressionsCount === 0
+    // The tracker status stays COMPLETE (both photos exist); the outcome says
+    // HOW the job ended. A manager release is never a "Clean Closure", even
+    // when its residuals were saved as exceptions (closing faults = 0).
+    const closureOutcome: WorksTrackerOutcome = acceptedResiduals
+      ? "Closed (Accepted Residuals)"
+      : closingFaultsCount === 0 && newRegressionsCount === 0
         ? "Clean Closure"
         : finalTruck?.caseStatus === "REJECTED_NO_PROGRESS"
           ? "No Progress"
           : "Residual Faults"
+    const closureNote =
+      acceptedResiduals && finalTruck
+        ? `Closure: ${[finalTruck.closureReasonLabel, finalTruck.closureNote]
+            .filter(Boolean)
+            .join(" \u2014 ")}`.replace(/:\s*$/, "")
+        : null
 
     rows.push({
       fleetId,
@@ -422,6 +448,7 @@ export function buildWorksTrackerData(
         resolved.excludeApprovedExceptions && approvedExceptionsCount > 0
           ? `+${approvedExceptionsCount} approved ${approvedExceptionsCount === 1 ? "exception" : "exceptions"} excluded`
           : null,
+      closureNote,
       clearedFaultCodes:
         clearedFaultsCount === 0
           ? NONE_CLEARED_TRACKER_TEXT
@@ -449,10 +476,20 @@ export function buildWorksTrackerData(
     partialPct: percentOf(partialCount, totalFleet),
     pendingCount,
     pendingPct: percentOf(pendingCount, totalFleet),
-    cleanClosureCount: complete.filter((row) => row.closingFaultsCount === 0)
-      .length,
+    // Clean + Closed (Accepted Residuals) + Open with Residual Faults always
+    // add up to Complete (the Excel summary uses the same three criteria).
+    cleanClosureCount: complete.filter(
+      (row) =>
+        row.closingFaultsCount === 0 &&
+        row.closureOutcome !== "Closed (Accepted Residuals)"
+    ).length,
+    closedAcceptedResidualsCount: complete.filter(
+      (row) => row.closureOutcome === "Closed (Accepted Residuals)"
+    ).length,
     residualFaultsTrucksCount: complete.filter(
-      (row) => (row.closingFaultsCount ?? 0) >= 1
+      (row) =>
+        (row.closingFaultsCount ?? 0) >= 1 &&
+        row.closureOutcome !== "Closed (Accepted Residuals)"
     ).length,
     totalClearedFaults: sum((row) => row.clearedFaultsCount),
     totalClosingActionableFaults: sum((row) => row.closingFaultsCount),

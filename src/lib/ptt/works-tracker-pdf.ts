@@ -21,6 +21,7 @@ import {
 } from "./report-pdf"
 import { ALL_CLEARED_TEXT } from "./report-data"
 import {
+  ACCEPTED_CLOSING_TEXT,
   describeWorksTrackerFilters,
   pttWorksTrackerFileName,
   type WorksTrackerData,
@@ -58,6 +59,7 @@ const STATUS_BADGE_FILL: Record<WorksTrackerStatus, Rgb> = {
 
 const OUTCOME_COLOR: Record<WorksTrackerOutcome, Rgb> = {
   "Clean Closure": GREEN_DARK,
+  "Closed (Accepted Residuals)": [15, 118, 110],
   "Residual Faults": RED_DARK,
   "No Progress": RED_DARK,
   "In Workshop": [146, 64, 14],
@@ -135,8 +137,17 @@ function closingCell(
     lines.push(
       ...wrapLines(
         doc,
-        ALL_CLEARED_TEXT,
-        { font: "bold", size: 6.8, color: GREEN_DARK },
+        row.closureOutcome === "Closed (Accepted Residuals)"
+          ? ACCEPTED_CLOSING_TEXT
+          : ALL_CLEARED_TEXT,
+        {
+          font: "bold",
+          size: 6.8,
+          color:
+            row.closureOutcome === "Closed (Accepted Residuals)"
+              ? [15, 118, 110]
+              : GREEN_DARK,
+        },
         width
       )
     )
@@ -188,6 +199,16 @@ function closingCell(
         doc,
         row.approvedExceptionsNote,
         { font: "italic", size: 6.2, color: MUTED, gapBefore: 1.8 },
+        width
+      )
+    )
+  }
+  if (row.closureNote) {
+    lines.push(
+      ...wrapLines(
+        doc,
+        row.closureNote,
+        { font: "italic", size: 6.2, color: [15, 118, 110], gapBefore: 1.2 },
         width
       )
     )
@@ -264,6 +285,10 @@ export function buildWorksTrackerPdf(data: WorksTrackerData): PttPdfResult {
     highlightedKpi("Partial (Before Only)", kpis.partialCount, "MONITOR"),
     { label: "Pending (No Photos)", value: String(kpis.pendingCount) },
     highlightedKpi("Clean Closures", kpis.cleanClosureCount, "GREEN"),
+    {
+      label: "Closed (Accepted Residuals)",
+      value: String(kpis.closedAcceptedResidualsCount),
+    },
     highlightedKpi(
       "Complete w/ Residual Faults",
       kpis.residualFaultsTrucksCount,

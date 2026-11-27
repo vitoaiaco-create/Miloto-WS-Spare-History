@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   MANUAL_CLOSE_BLOCKED_MESSAGE,
   canManuallyMarkVerifiedClosed,
+  canSetWorkflowVerifiedClosed,
 } from "./closure-guard"
 import { PTT_CASE_STATUSES } from "./constants"
 
@@ -70,9 +71,50 @@ describe("canManuallyMarkVerifiedClosed", () => {
     }
   })
 
+  it("does not treat a manager release as a passing verification", () => {
+    expect(
+      canManuallyMarkVerifiedClosed({
+        caseStatus: "CLOSED_ACCEPTED_RESIDUALS",
+        latestVerificationCaseStatus: "PARTIAL_BLOCKED",
+      })
+    ).toBe(false)
+  })
+
   it("uses the agreed rejection message", () => {
     expect(MANUAL_CLOSE_BLOCKED_MESSAGE).toBe(
       "Cannot manually mark Verified Closed while blocking faults or regressions remain open. Upload a passing post-work PTT verification scan."
     )
+  })
+})
+
+describe("canSetWorkflowVerifiedClosed", () => {
+  it("keeps a case released with accepted residuals closed in the workflow", () => {
+    expect(
+      canSetWorkflowVerifiedClosed({
+        caseStatus: "CLOSED_ACCEPTED_RESIDUALS",
+        latestVerificationCaseStatus: "PARTIAL_BLOCKED",
+      })
+    ).toBe(true)
+    expect(
+      canSetWorkflowVerifiedClosed({
+        caseStatus: "CLOSED_ACCEPTED_RESIDUALS",
+        latestVerificationCaseStatus: null,
+      })
+    ).toBe(true)
+  })
+
+  it("otherwise follows the passing-scan rule", () => {
+    expect(
+      canSetWorkflowVerifiedClosed({
+        caseStatus: "PARTIAL_BLOCKED",
+        latestVerificationCaseStatus: "PARTIAL_BLOCKED",
+      })
+    ).toBe(false)
+    expect(
+      canSetWorkflowVerifiedClosed({
+        caseStatus: "VERIFIED_CLOSED",
+        latestVerificationCaseStatus: "VERIFIED_CLOSED",
+      })
+    ).toBe(true)
   })
 })

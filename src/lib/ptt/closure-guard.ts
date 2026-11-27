@@ -35,3 +35,19 @@ export function canManuallyMarkVerifiedClosed(
     input.latestVerificationCaseStatus === "VERIFIED_CLOSED"
   )
 }
+
+/**
+ * Whether the workflow dropdown may keep / set `Verified Closed`: either a
+ * passing scan closed the case, or a manager released it through "Close Job
+ * (Accept Residuals)" (its workflow stays VERIFIED_CLOSED although the scans
+ * still show residuals). Kept separate from `canManuallyMarkVerifiedClosed`,
+ * which is strictly about the passing-scan rule.
+ */
+export function canSetWorkflowVerifiedClosed(
+  input: ManualClosureInput
+): boolean {
+  return (
+    input.caseStatus === "CLOSED_ACCEPTED_RESIDUALS" ||
+    canManuallyMarkVerifiedClosed(input)
+  )
+}

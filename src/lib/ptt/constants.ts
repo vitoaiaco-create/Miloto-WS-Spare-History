@@ -16,6 +16,7 @@ export const PTT_CASE_STATUSES = [
   "VERIFIED_CLOSED",
   "REJECTED_INCOMPLETE",
   "REJECTED_NO_PROGRESS",
+  "CLOSED_ACCEPTED_RESIDUALS",
 ] as const
 export type PttCaseStatus = (typeof PTT_CASE_STATUSES)[number]
 
@@ -25,7 +26,45 @@ export const PTT_CASE_STATUS_LABELS: Record<PttCaseStatus, string> = {
   VERIFIED_CLOSED: "VERIFIED CLOSED",
   REJECTED_INCOMPLETE: "INCOMPLETE REJECTED",
   REJECTED_NO_PROGRESS: "NO PROGRESS REJECTED",
+  CLOSED_ACCEPTED_RESIDUALS: "CLOSED (ACCEPTED RESIDUALS)",
 }
+
+/** Case verdicts that count as finished: nothing is open or blocked any more. */
+export const PTT_CLOSED_CASE_STATUSES: readonly PttCaseStatus[] = [
+  "VERIFIED_CLOSED",
+  "CLOSED_ACCEPTED_RESIDUALS",
+]
+
+export function isClosedCaseStatus(status: PttCaseStatus): boolean {
+  return PTT_CLOSED_CASE_STATUSES.includes(status)
+}
+
+/** How a case was closed (`ptt_diagnostic_sessions.closure_mode`). */
+export const PTT_CLOSURE_MODES = ["CLEAN", "ACCEPTED_RESIDUALS"] as const
+export type PttClosureMode = (typeof PTT_CLOSURE_MODES)[number]
+
+/** Why a manager closed a job while faults were still open. */
+export const PTT_CLOSURE_REASON_CATEGORIES = [
+  "UNUSED_DISCONNECTED_SENSOR",
+  "HARDWARE_CONVERSION",
+  "DEFERRED_TO_PM",
+  "OCR_ARTIFACT",
+  "MANAGER_RELEASE",
+] as const
+export type PttClosureReasonCategory =
+  (typeof PTT_CLOSURE_REASON_CATEGORIES)[number]
+
+export const PTT_CLOSURE_REASON_LABELS: Record<PttClosureReasonCategory, string> =
+  {
+    UNUSED_DISCONNECTED_SENSOR: "Unused / disconnected sensor",
+    HARDWARE_CONVERSION: "Hardware conversion",
+    DEFERRED_TO_PM: "Deferred to PM service",
+    OCR_ARTIFACT: "OCR artifact",
+    MANAGER_RELEASE: "Manager release",
+  }
+
+/** Minimum length of the audit note on an accepted-residuals closure. */
+export const PTT_CLOSURE_NOTE_MIN_LENGTH = 5
 
 // Only ACTIVE / INACTIVE exist in the reconciliation model. A fault whose
 // state could not be read ("UNKNOWN" in the OCR output) is stored as ACTIVE so

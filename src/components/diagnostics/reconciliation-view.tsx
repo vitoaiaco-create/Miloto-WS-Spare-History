@@ -3,12 +3,14 @@
 import {
   BadgeCheckIcon,
   CircleHelpIcon,
+  ClipboardCheckIcon,
   RepeatIcon,
   ShieldCheckIcon,
   ShieldXIcon,
   TriangleAlertIcon,
   type LucideIcon,
 } from "lucide-react"
+import type { ReactNode } from "react"
 
 import { SeverityBadge } from "@/components/diagnostics/diagnostics-badges"
 import { Badge } from "@/components/ui/badge"
@@ -31,6 +33,10 @@ const CASE_STATUS_STYLE: Record<
   { className: string; icon: LucideIcon }
 > = {
   VERIFIED_CLOSED: { className: "bg-emerald-600", icon: BadgeCheckIcon },
+  CLOSED_ACCEPTED_RESIDUALS: {
+    className: "bg-teal-600",
+    icon: ClipboardCheckIcon,
+  },
   PARTIAL_BLOCKED: { className: "bg-amber-600", icon: TriangleAlertIcon },
   REJECTED_NO_PROGRESS: { className: "bg-red-600", icon: ShieldXIcon },
   REJECTED_INCOMPLETE: { className: "bg-red-600", icon: ShieldXIcon },
@@ -44,6 +50,8 @@ function caseStatusExplanation(
   switch (status) {
     case "VERIFIED_CLOSED":
       return "Every actionable fault is cleared and nothing new appeared."
+    case "CLOSED_ACCEPTED_RESIDUALS":
+      return "A manager closed this job and accepted the residual faults still shown by the re-scan."
     case "PARTIAL_BLOCKED": {
       const blocking =
         (summary?.persistingOpenCount ?? 0) + (summary?.newRegressionCount ?? 0)
@@ -58,31 +66,68 @@ function caseStatusExplanation(
   }
 }
 
+/** The audit trail of a controlled closure, shown inside the banner. */
+export type CaseClosureDetails = {
+  reasonLabel: string | null
+  note: string | null
+  /** Already formatted for display. */
+  closedAtLabel: string | null
+}
+
 export function CaseStatusBanner({
   status,
   summary,
+  closure,
+  actions,
 }: {
   status: PttCaseStatus
   summary: PttReconciliationSummary | null
+  closure?: CaseClosureDetails | null
+  /** Buttons shown on the right (Close Job / Reopen Case). */
+  actions?: ReactNode
 }) {
   const { className, icon: Icon } = CASE_STATUS_STYLE[status]
+  const showClosure = status === "CLOSED_ACCEPTED_RESIDUALS" && closure
   return (
     <div
       role="status"
       className={cn(
-        "flex items-start gap-3 rounded-lg px-4 py-3 text-white [&_svg]:mt-0.5 [&_svg]:size-5 [&_svg]:shrink-0",
+        "flex flex-wrap items-start gap-3 rounded-lg px-4 py-3 text-white [&_svg]:mt-0.5 [&_svg]:size-5 [&_svg]:shrink-0",
         className
       )}
     >
       <Icon />
-      <div className="flex flex-col gap-0.5">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="text-base font-bold tracking-wide uppercase">
           {PTT_CASE_STATUS_LABELS[status]}
         </span>
         <span className="text-sm opacity-95">
           {caseStatusExplanation(status, summary)}
         </span>
+        {showClosure && (
+          <dl className="mt-1 flex flex-col gap-0.5 text-sm">
+            {closure.reasonLabel && (
+              <div className="flex gap-1.5">
+                <dt className="font-semibold">Reason:</dt>
+                <dd>{closure.reasonLabel}</dd>
+              </div>
+            )}
+            {closure.note && (
+              <div className="flex gap-1.5">
+                <dt className="font-semibold">Note:</dt>
+                <dd className="break-words">{closure.note}</dd>
+              </div>
+            )}
+            {closure.closedAtLabel && (
+              <div className="flex gap-1.5">
+                <dt className="font-semibold">Closed:</dt>
+                <dd>{closure.closedAtLabel}</dd>
+              </div>
+            )}
+          </dl>
+        )}
       </div>
+      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>
   )
 }
@@ -311,7 +356,7 @@ export function ReconciliationBuckets({
   onApproveException,
 }: {
   faults: readonly PttScanFaultRow[]
-  /** Offered on "Still Open" rows only. */
+  /** Offered on "Still Open" and "New Regressions" rows. */
   onApproveException: (fault: PttScanFaultRow) => void
 }) {
   return (
@@ -345,7 +390,8 @@ export function ReconciliationBuckets({
                     key={fault.id}
                     fault={fault}
                     onApprove={
-                      section.bucket === "PERSISTING_OPEN"
+                      section.bucket === "PERSISTING_OPEN" ||
+                      section.bucket === "NEW_REGRESSION"
                         ? onApproveException
                         : undefined
                     }

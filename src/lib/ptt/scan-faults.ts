@@ -130,6 +130,32 @@ function recordFor(
 }
 
 /**
+ * Re-runs the canonical-key normaliser on a stored row (its printed ECU label
+ * and DTC), so rows written with an older / weaker normaliser (e.g. an
+ * `UNVERIFIED|...` stand-in for an OCR-garbled ECU) are repaired. Status,
+ * severity and description are carried over; only the key and its review flag
+ * can change.
+ */
+export function rekeyScanFaultRecord(
+  record: ScanFaultRecord,
+  generation: PttTruckGeneration
+): ScanFaultRecord {
+  const [rebuilt] = buildScanFaultRecords(
+    [
+      {
+        controlUnit: record.ecuLabel,
+        faultCode: record.dtcRaw,
+        description: record.description,
+        faultState: record.pttStatus,
+        severity: record.severity,
+      },
+    ],
+    generation
+  )
+  return rebuilt ?? record
+}
+
+/**
  * Builds one snapshot record per canonical key. Rows that normalise to the
  * same key are merged: ACTIVE wins, the worse severity wins and the fuller
  * description is kept, so a repeated screenshot row can never hide a live

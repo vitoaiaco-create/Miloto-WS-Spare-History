@@ -28,6 +28,7 @@ import {
   SEVERITY_LABELS,
   SeverityBadge,
 } from "@/components/diagnostics/diagnostics-badges"
+import { CloseJobButton } from "@/components/diagnostics/case-closure-controls"
 import { DeleteScanDialog } from "@/components/diagnostics/delete-scan-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -68,10 +69,13 @@ import {
   type PttFaultSeverity,
   type PttSessionStatus,
 } from "@/lib/ptt-diagnostics"
-import type { PttSessionWithRelations } from "@/lib/ptt-diagnostics-queries"
+import type {
+  PttApprovedExceptionRow,
+  PttSessionWithRelations,
+} from "@/lib/ptt-diagnostics-queries"
 import {
   MANUAL_CLOSE_HINT,
-  canManuallyMarkVerifiedClosed,
+  canSetWorkflowVerifiedClosed,
 } from "@/lib/ptt/closure-guard"
 import { cn } from "@/lib/utils"
 
@@ -178,6 +182,8 @@ export function PttDirectiveModal({
   onSelectSession,
   onClose,
   onSessionDeleted,
+  onSessionUpdate,
+  exceptions,
   verificationSlot,
 }: {
   /** The scan to show. `null` keeps the modal closed. */
@@ -188,6 +194,10 @@ export function PttDirectiveModal({
   onClose: () => void
   /** Called after a scan (the one shown) was deleted; the parent syncs state. */
   onSessionDeleted: (sessionId: number) => void
+  /** Called with the refreshed session after a case closure / reopen. */
+  onSessionUpdate: (session: PttSessionWithRelations) => void
+  /** Active approved exceptions (drive the Close Job eligibility). */
+  exceptions: readonly PttApprovedExceptionRow[]
   /** Slot for the Before/After Re-Scan Verification uploader and audit card. */
   verificationSlot?: ReactNode
 }) {
@@ -208,6 +218,8 @@ export function PttDirectiveModal({
             fleetSessions={fleetSessions}
             onSelectSession={onSelectSession}
             onSessionDeleted={onSessionDeleted}
+            onSessionUpdate={onSessionUpdate}
+            exceptions={exceptions}
             verificationSlot={verificationSlot}
           />
         )}
@@ -221,12 +233,16 @@ function ModalBody({
   fleetSessions,
   onSelectSession,
   onSessionDeleted,
+  onSessionUpdate,
+  exceptions,
   verificationSlot,
 }: {
   session: PttSessionWithRelations
   fleetSessions: PttSessionWithRelations[]
   onSelectSession: (sessionId: number) => void
   onSessionDeleted: (sessionId: number) => void
+  onSessionUpdate: (session: PttSessionWithRelations) => void
+  exceptions: readonly PttApprovedExceptionRow[]
   verificationSlot?: ReactNode
 }) {
   const router = useRouter()
@@ -242,7 +258,7 @@ function ModalBody({
   const [isStatusPending, startStatusTransition] = useTransition()
 
   // `Verified Closed` is only selectable once a verification scan passed.
-  const canClose = canManuallyMarkVerifiedClosed({
+  const canClose = canSetWorkflowVerifiedClosed({
     caseStatus: session.caseStatus,
     latestVerificationCaseStatus:
       session.verificationScans[0]?.caseStatus ?? null,
@@ -341,6 +357,11 @@ function ModalBody({
             {isStatusPending && (
               <Loader2Icon className="size-4 animate-spin text-muted-foreground" />
             )}
+            <CloseJobButton
+              session={session}
+              exceptions={exceptions}
+              onSessionUpdate={onSessionUpdate}
+            />
             <span className="text-xs text-muted-foreground">Workflow</span>
             <Select
               items={STATUS_ITEMS}

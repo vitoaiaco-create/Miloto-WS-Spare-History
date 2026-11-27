@@ -44,6 +44,8 @@ import {
 } from "../lib/ptt-diagnostics";
 import type {
   PttCaseStatus,
+  PttClosureMode,
+  PttClosureReasonCategory,
   PttExceptionScope,
   PttGateOverride,
   PttKnownGeneration,
@@ -753,6 +755,17 @@ export const pttDiagnosticSessionsTable = pgTable(
   reconciliationSummary: jsonb(
     "reconciliation_summary"
   ).$type<PttReconciliationSummary>(),
+  // Controlled closure (see `closeCaseWithAcceptedResidualsAction`). All null
+  // until a case is closed: CLEAN = reconciled with nothing blocking,
+  // ACCEPTED_RESIDUALS = a manager released the job with known residual faults.
+  closureMode: text("closure_mode").$type<PttClosureMode>(),
+  closureReasonCategory: text(
+    "closure_reason_category"
+  ).$type<PttClosureReasonCategory>(),
+  closureNote: text("closure_note"),
+  // Clerk userId of whoever closed the case (audit only, never a read filter).
+  closedBy: text("closed_by"),
+  closedAt: timestamp("closed_at"),
   // Forensic VERIFICATION_AUDIT (Pass 2, mode B) of a verification scan; null
   // on baselines, on older scans and when the audit call failed.
   verificationAudit: jsonb("verification_audit").$type<PttVerificationAudit>(),

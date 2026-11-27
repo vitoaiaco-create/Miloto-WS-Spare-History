@@ -55,13 +55,19 @@ const STATUS_LOOK: Record<WorksTrackerStatus, Look> = {
 
 const OUTCOME_LOOK: Partial<Record<WorksTrackerOutcome, Look>> = {
   "Clean Closure": GREEN,
+  // Soft blue-green, same as the Fault Report's case-status cell.
+  "Closed (Accepted Residuals)": {
+    fill: "FFCCFBF1",
+    font: "FF115E59",
+    bold: true,
+  },
   "Residual Faults": SOFT_RED,
   "No Progress": SOFT_RED,
 }
 
 /** Closing codes plus the muted exclusion note, as printed in the cell. */
 const closingCodesCell = (row: WorksTrackerRow): string =>
-  [row.closingFaultCodes, row.approvedExceptionsNote ?? ""]
+  [row.closingFaultCodes, row.approvedExceptionsNote ?? "", row.closureNote ?? ""]
     .filter(Boolean)
     .join("\n")
 
@@ -93,7 +99,15 @@ const trackerColumns: Column<WorksTrackerRow>[] = [
 ]
 
 // Column letters of the tracker sheet used by the summary formulas.
-const COL = { gen: "B", status: "C", cleared: "I", closing: "J", regressions: "K" }
+const COL = {
+  gen: "B",
+  status: "C",
+  outcome: "D",
+  cleared: "I",
+  closing: "J",
+  regressions: "K",
+}
+const ACCEPTED_OUTCOME = "Closed (Accepted Residuals)"
 const FIRST_DATA_ROW = 2
 const SUMMARY_SHEET = WORKS_TRACKER_SHEET_NAMES[0]
 
@@ -200,13 +214,20 @@ function buildSummarySheet(workbook: Workbook, data: WorksTrackerData): Workshee
       percent: true,
     },
     {
+      // Clean Closures + Closed (Accepted Residuals) + Complete with Residual
+      // Faults always add up to Complete.
       label: "Clean Closures",
-      formula: `COUNTIFS(${range(COL.status)},"COMPLETE",${range(COL.closing)},0)`,
+      formula: `COUNTIFS(${range(COL.status)},"COMPLETE",${range(COL.outcome)},"<>${ACCEPTED_OUTCOME}",${range(COL.closing)},0)`,
       result: kpis.cleanClosureCount,
     },
     {
+      label: "Closed (Accepted Residuals)",
+      formula: `COUNTIFS(${range(COL.status)},"COMPLETE",${range(COL.outcome)},"${ACCEPTED_OUTCOME}")`,
+      result: kpis.closedAcceptedResidualsCount,
+    },
+    {
       label: "Complete with Residual Faults",
-      formula: `COUNTIFS(${range(COL.status)},"COMPLETE",${range(COL.closing)},">0")`,
+      formula: `COUNTIFS(${range(COL.status)},"COMPLETE",${range(COL.outcome)},"<>${ACCEPTED_OUTCOME}",${range(COL.closing)},">0")`,
       result: kpis.residualFaultsTrucksCount,
     },
     {

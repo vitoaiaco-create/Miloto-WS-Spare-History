@@ -451,6 +451,8 @@ export const RED_DARK: Rgb = [153, 27, 27]
 
 const CASE_BADGE_FILL: Record<PttCaseStatus, Rgb> = {
   VERIFIED_CLOSED: [22, 163, 74],
+  // Teal: closed by a manager release, visibly different from a clean closure.
+  CLOSED_ACCEPTED_RESIDUALS: [13, 148, 136],
   PARTIAL_BLOCKED: [220, 38, 38],
   REJECTED_INCOMPLETE: [220, 38, 38],
   REJECTED_NO_PROGRESS: [185, 28, 28],
@@ -725,6 +727,30 @@ function diagnosisCell(
   width: number
 ): RichLine[] {
   const lines: RichLine[] = []
+  if (truck.caseStatus === "CLOSED_ACCEPTED_RESIDUALS") {
+    const detail = [
+      truck.closureReasonLabel && `Reason: ${truck.closureReasonLabel}`,
+      truck.closureNote && `Note: ${truck.closureNote}`,
+      truck.closedDate && `Closed: ${truck.closedDate}`,
+    ]
+      .filter(Boolean)
+      .join("  |  ")
+    lines.push(
+      ...callout(
+        doc,
+        "CLOSED (ACCEPTED RESIDUALS)",
+        detail || "Closed by a manager with residual faults accepted.",
+        width,
+        {
+          labelBg: [13, 148, 136],
+          labelText: [255, 255, 255],
+          bodyBg: [204, 251, 241],
+          bodyText: [19, 78, 74],
+          accent: [15, 118, 110],
+        }
+      )
+    )
+  }
   if (truck.collateralDamageAnalysis) {
     lines.push(
       ...callout(doc, "COLLATERAL DAMAGE", truck.collateralDamageAnalysis, width, {

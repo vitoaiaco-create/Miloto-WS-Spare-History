@@ -1,7 +1,10 @@
 "use client"
 
 import { useRouter } from "next/navigation"
+import { Loader2Icon, RefreshCwIcon } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
+
+import { reconcileAllOpenVerifiedCasesAction } from "@/actions/ptt-diagnostics"
 
 import { FleetCoverageView } from "@/components/diagnostics/fleet-coverage-view"
 import { FleetFaultIntelligence } from "@/components/diagnostics/fleet-fault-intelligence"
@@ -12,6 +15,8 @@ import { PttVerificationSection } from "@/components/diagnostics/ptt-verificatio
 import { TruckFaultLedger } from "@/components/diagnostics/truck-fault-ledger"
 import { WorkshopKpiBar } from "@/components/diagnostics/workshop-kpi-bar"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/toast"
 import {
   Card,
   CardContent,
@@ -204,6 +209,40 @@ export function DiagnosticsWorkspace({
     [router]
   )
 
+  // Toolbar: re-run the reconciliation over every open case that has an
+  // after-scan (repairs OCR keys, applies new exceptions, upgrades cases).
+  const [isReconcilingAll, setIsReconcilingAll] = useState(false)
+  async function reconcileAll() {
+    setIsReconcilingAll(true)
+    try {
+      const result = await reconcileAllOpenVerifiedCasesAction()
+      if (!result.success) {
+        toast.add({
+          title: "Could not re-reconcile after-scans",
+          description: result.error,
+          type: "error",
+        })
+        return
+      }
+      const { processedCount, upgradedToClosedCount, repairedKeysCount } =
+        result.data
+      toast.add({
+        title: `Re-reconciled ${processedCount} ${processedCount === 1 ? "case" : "cases"}`,
+        description: `${upgradedToClosedCount} upgraded to Verified Closed, ${repairedKeysCount} OCR ${repairedKeysCount === 1 ? "key" : "keys"} repaired${result.data.failedCount > 0 ? ` (${result.data.failedCount} could not be processed)` : ""}`,
+        type: result.data.failedCount > 0 ? "warning" : "success",
+      })
+      router.refresh()
+    } catch {
+      toast.add({
+        title: "Could not re-reconcile after-scans",
+        description: "Something went wrong. Please try again.",
+        type: "error",
+      })
+    } finally {
+      setIsReconcilingAll(false)
+    }
+  }
+
   const startScan = useCallback((fleetId: string | null) => {
     setScanFleetId(fleetId)
     setScanToken((token) => token + 1)
@@ -225,7 +264,20 @@ export function DiagnosticsWorkspace({
   return (
     <div className="flex flex-col gap-6">
       {/* Always accessible, whichever tab is open. */}
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={isReconcilingAll}
+          onClick={() => void reconcileAll()}
+        >
+          {isReconcilingAll ? (
+            <Loader2Icon data-icon="inline-start" className="animate-spin" />
+          ) : (
+            <RefreshCwIcon data-icon="inline-start" />
+          )}
+          Re-reconcile After-Scans
+        </Button>
         <PttExportDialogButton
           sessions={sessions}
           ledger={ledger}
@@ -349,11 +401,14 @@ export function DiagnosticsWorkspace({
         onSelectSession={setSelectedSessionId}
         onClose={closeDirective}
         onSessionDeleted={handleSessionDeleted}
+        onSessionUpdate={handleSessionVerified}
+        exceptions={exceptions}
         verificationSlot={
           selectedSession ? (
             <PttVerificationSection
               key={selectedSession.id}
               session={selectedSession}
+              exceptions={exceptions}
               onSessionUpdate={handleSessionVerified}
             />
           ) : undefined

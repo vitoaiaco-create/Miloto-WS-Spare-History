@@ -32,6 +32,7 @@ import {
   latestSessionByFleet,
 } from "@/lib/ptt-diagnostics"
 import type { PttSessionWithRelations } from "@/lib/ptt-diagnostics-queries"
+import { isBlockedWithAfterPhoto } from "@/lib/ptt/workshop-kpis"
 
 type FilterValue =
   | "all"
@@ -41,6 +42,7 @@ type FilterValue =
   | "monitor"
   | "negligible"
   | "open"
+  | "blocked_after"
 
 const FILTERS: { value: FilterValue; label: string }[] = [
   { value: "all", label: "All Trucks" },
@@ -50,6 +52,7 @@ const FILTERS: { value: FilterValue; label: string }[] = [
   { value: "monitor", label: "Monitor" },
   { value: "negligible", label: "Negligible / Clear" },
   { value: "open", label: "Open Directives" },
+  { value: "blocked_after", label: "Blocked (Has After Photo)" },
 ]
 
 type CoverageRow = {
@@ -92,6 +95,14 @@ function matchesFilter(row: CoverageRow, filter: FilterValue): boolean {
       return severity === "NEGLIGIBLE" || severity === "CLEAR"
     case "open":
       return row.latest !== null && isOpenDirective(row.latest)
+    case "blocked_after":
+      return (
+        row.latest !== null &&
+        isBlockedWithAfterPhoto({
+          caseStatus: row.latest.caseStatus,
+          hasVerificationScan: row.latest.verificationScans.length > 0,
+        })
+      )
   }
 }
 

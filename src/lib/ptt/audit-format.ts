@@ -37,10 +37,13 @@ export type PttVerificationAuditInput = {
     PttVerificationAudit,
     "verdictHeadline" | "collateralDamageAnalysis"
   > | null
+  /** Manager closure audit (CLOSED_ACCEPTED_RESIDUALS only). */
+  closure?: { reasonLabel: string | null; note: string | null } | null
 }
 
 const STATUS_EMOJI: Record<PttCaseStatus, string> = {
   VERIFIED_CLOSED: "✅",
+  CLOSED_ACCEPTED_RESIDUALS: "✅",
   PARTIAL_BLOCKED: "🟠",
   REJECTED_NO_PROGRESS: "⛔",
   REJECTED_INCOMPLETE: "⛔",
@@ -79,9 +82,19 @@ export function formatPttVerificationAuditForWhatsApp(
   lines.push("*🔍 PTT BEFORE/AFTER VERIFICATION*")
   lines.push(`*Fleet ID:* ${input.fleetId}`)
   lines.push(`*Re-scan:* ${format(input.scannedAt, "dd MMM yyyy, HH:mm")}`)
-  lines.push(
-    `*Case Status:* ${STATUS_EMOJI[input.caseStatus]} ${PTT_CASE_STATUS_LABELS[input.caseStatus]}`
-  )
+  if (input.caseStatus === "CLOSED_ACCEPTED_RESIDUALS") {
+    lines.push(
+      `*Case Status:* ${STATUS_EMOJI[input.caseStatus]} CLOSED (Accepted Residuals)`
+    )
+    const reason = input.closure?.reasonLabel?.trim()
+    const note = input.closure?.note?.trim()
+    if (reason) lines.push(`*Closure reason:* ${reason}`)
+    if (note) lines.push(`*Closure note:* ${note}`)
+  } else {
+    lines.push(
+      `*Case Status:* ${STATUS_EMOJI[input.caseStatus]} ${PTT_CASE_STATUS_LABELS[input.caseStatus]}`
+    )
+  }
 
   const audit = input.verificationAudit
   if (audit?.verdictHeadline.trim()) {

@@ -35,6 +35,7 @@ import {
   type PttExceptionReasonCategory,
   type PttExceptionScope,
 } from "@/lib/ptt/constants"
+import { canonicalKeyFor } from "@/lib/ptt/scan-faults"
 
 const MIN_PROOF_LENGTH = 10
 
@@ -84,6 +85,12 @@ export function ApproveExceptionDialog({
     setError(null)
   }
 
+  // An OCR-garbled `UNVERIFIED|...` row is saved under its repaired key.
+  const savedKey = (row: PttScanFaultRow) =>
+    row.canonicalKey.startsWith("UNVERIFIED|")
+      ? canonicalKeyFor(row.ecuLabel, row.dtcRaw, generation)
+      : row.canonicalKey
+
   async function handleApprove() {
     if (!fault) return
     if (!reason) {
@@ -112,12 +119,20 @@ export function ApproveExceptionDialog({
         setError(result.error)
         return
       }
+      const { session, cascadedClosedCount } = result.data
       toast.add({
         title: "Exception approved",
-        description: `${fault.canonicalKey} no longer blocks closure. The scan was re-evaluated.`,
+        description: [
+          `${savedKey(fault)} no longer blocks closure. The scan was re-evaluated.`,
+          cascadedClosedCount > 0
+            ? `${cascadedClosedCount} other ${cascadedClosedCount === 1 ? "case" : "cases"} closed by this fleet-wide exception.`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
         type: "success",
       })
-      onApproved(result.data)
+      onApproved(session)
       reset()
       onOpenChange(false)
     } catch {
@@ -155,6 +170,12 @@ export function ApproveExceptionDialog({
                 </code>
                 <SeverityBadge severity={shown.severity} />
               </div>
+              {savedKey(shown) !== shown.canonicalKey && (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  The ECU was misread by OCR. The exception will be saved under{" "}
+                  <code className="font-mono font-semibold">{savedKey(shown)}</code>.
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">
                 <span className="font-medium text-foreground">
                   {shown.ecuLabel}

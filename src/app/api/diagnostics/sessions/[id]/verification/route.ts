@@ -32,7 +32,7 @@ import {
   loadLedgerMap,
   toScanFaultRows,
 } from "@/lib/ptt/case-db"
-import type { PttGateOverride } from "@/lib/ptt/constants"
+import { isClosedCaseStatus, type PttGateOverride } from "@/lib/ptt/constants"
 import {
   PttPipelineError,
   loadPhotos,
@@ -168,9 +168,11 @@ export async function POST(request: Request, ctx: RouteContext) {
         400
       )
     }
-    if (baseline.caseStatus === "VERIFIED_CLOSED") {
+    if (isClosedCaseStatus(baseline.caseStatus)) {
       throw new PttPipelineError(
-        "This case is already VERIFIED CLOSED. Start a new baseline scan to open a new case.",
+        baseline.caseStatus === "CLOSED_ACCEPTED_RESIDUALS"
+          ? "This case is CLOSED (ACCEPTED RESIDUALS). Reopen it first, or start a new baseline scan to open a new case."
+          : "This case is already VERIFIED CLOSED. Start a new baseline scan to open a new case.",
         409,
         "CASE_CLOSED"
       )

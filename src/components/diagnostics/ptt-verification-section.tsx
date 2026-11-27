@@ -9,7 +9,9 @@ import {
   ImagePlus,
   Loader2Icon,
   MessageCircleIcon,
+  RefreshCwIcon,
   ScanSearchIcon,
+  ShieldCheckIcon,
   ShieldXIcon,
   TriangleAlertIcon,
   X,
@@ -36,7 +38,14 @@ import {
   readApiResponse,
   revivePttSession,
 } from "@/components/diagnostics/new-ptt-scan-panel"
+import { reconcileCaseAction } from "@/actions/ptt-diagnostics"
 import { ApproveExceptionDialog } from "@/components/diagnostics/approve-exception-dialog"
+import { BatchApproveExceptionsDialog } from "@/components/diagnostics/batch-approve-exceptions-dialog"
+import {
+  CloseJobButton,
+  ReopenCaseButton,
+  closureDetailsOf,
+} from "@/components/diagnostics/case-closure-controls"
 import {
   CaseStatusBanner,
   EquationStrip,
@@ -56,11 +65,12 @@ import {
   normalizeFleetId,
 } from "@/lib/ptt-diagnostics"
 import type {
+  PttApprovedExceptionRow,
   PttScanFaultRow,
   PttSessionWithRelations,
 } from "@/lib/ptt-diagnostics-queries"
 import { formatPttVerificationAuditForWhatsApp } from "@/lib/ptt/audit-format"
-import type { PttGateName } from "@/lib/ptt/constants"
+import { isClosedCaseStatus, type PttGateName } from "@/lib/ptt/constants"
 import type { PttVerificationAudit } from "@/lib/ptt/verification-audit-schema"
 import { cn } from "@/lib/utils"
 
@@ -956,13 +966,19 @@ function ForensicAuditCard({ audit }: { audit: PttVerificationAudit | null }) {
 
 function ReconciliationPanel({
   session,
+  exceptions,
   onSessionUpdate,
 }: {
   session: PttSessionWithRelations
+  exceptions: readonly PttApprovedExceptionRow[]
   onSessionUpdate: (session: PttSessionWithRelations) => void
 }) {
   const latest = session.verificationScans[0]
   const [approving, setApproving] = useState<PttScanFaultRow | null>(null)
+  const [batchOpen, setBatchOpen] = useState(false)
+  const [isReconciling, setIsReconciling] = useState(false)
+  const closure = closureDetailsOf(session)
+  const closed = isClosedCaseStatus(session.caseStatus)
 
   const message = useMemo(
     () =>
@@ -977,13 +993,59 @@ function ReconciliationPanel({
             gateOverrides: latest.gateOverrides,
             faults: latest.scanFaults,
             verificationAudit: latest.verificationAudit,
+            closure: closure
+              ? { reasonLabel: closure.reasonLabel, note: closure.note }
+              : null,
           })
         : "",
-    [session.fleetId, session.caseStatus, latest]
+    [session.fleetId, session.caseStatus, latest, closure]
   )
 
   if (!latest) return null
   const summary = latest.reconciliationSummary
+
+  // Remaining open faults: Still Open + New Regressions.
+  const remaining = latest.scanFaults.filter(
+    (fault) =>
+      fault.reconciliationBucket === "PERSISTING_OPEN" ||
+      fault.reconciliationBucket === "NEW_REGRESSION"
+  )
+
+  async function rerunReconciliation() {
+    setIsReconciling(true)
+    try {
+      const result = await reconcileCaseAction(session.id)
+      if (!result.success) {
+        toast.add({
+          title: "Could not re-run reconciliation",
+          description: result.error,
+          type: "error",
+        })
+        return
+      }
+      const { session: updated, upgradedToClean, repairedKeysCount } =
+        result.data
+      onSessionUpdate(updated)
+      toast.add({
+        title: upgradedToClean
+          ? "Case upgraded to Verified Closed"
+          : "Reconciliation re-run",
+        description:
+          repairedKeysCount > 0
+            ? `${repairedKeysCount} OCR ${repairedKeysCount === 1 ? "key was" : "keys were"} repaired.`
+            : "No OCR keys needed repair.",
+        type: "success",
+      })
+    } catch {
+      toast.add({
+        title: "Could not re-run reconciliation",
+        description: "Something went wrong. Please try again.",
+        type: "error",
+      })
+    } finally {
+      setIsReconciling(false)
+    }
+  }
 
   async function copyAudit() {
     try {
@@ -1016,7 +1078,26 @@ function ReconciliationPanel({
       icon={<ScanSearchIcon />}
       className="border-2"
     >
-      <CaseStatusBanner status={session.caseStatus} summary={summary} />
+      <CaseStatusBanner
+        status={session.caseStatus}
+        summary={summary}
+        closure={closure}
+        actions={
+          <>
+            <CloseJobButton
+              session={session}
+              exceptions={exceptions}
+              onSessionUpdate={onSessionUpdate}
+              className="bg-background text-foreground hover:bg-background/90"
+            />
+            <ReopenCaseButton
+              session={session}
+              onSessionUpdate={onSessionUpdate}
+              className="bg-background text-foreground hover:bg-background/90"
+            />
+          </>
+        }
+      />
 
       {summary && <EquationStrip summary={summary} />}
 
@@ -1061,6 +1142,31 @@ function ReconciliationPanel({
       />
 
       <div className="flex flex-wrap items-center justify-end gap-2">
+        {remaining.length >= 1 && !closed && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setBatchOpen(true)}
+          >
+            <ShieldCheckIcon data-icon="inline-start" />
+            Batch Approve Remaining ({remaining.length})
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={isReconciling}
+          onClick={() => void rerunReconciliation()}
+        >
+          {isReconciling ? (
+            <Loader2Icon data-icon="inline-start" className="animate-spin" />
+          ) : (
+            <RefreshCwIcon data-icon="inline-start" />
+          )}
+          Re-run Reconciliation
+        </Button>
         <Button type="button" variant="outline" size="sm" onClick={copyAudit}>
           <CopyIcon data-icon="inline-start" />
           Copy Audit for WhatsApp
@@ -1081,6 +1187,18 @@ function ReconciliationPanel({
         }}
         onApproved={onSessionUpdate}
       />
+
+      {batchOpen && (
+        <BatchApproveExceptionsDialog
+          open={batchOpen}
+          faults={remaining}
+          baselineId={session.id}
+          fleetId={normalizeFleetId(session.fleetId)}
+          generation={session.truckGeneration}
+          onOpenChange={setBatchOpen}
+          onApproved={onSessionUpdate}
+        />
+      )}
     </Panel>
   )
 }
@@ -1092,21 +1210,40 @@ function ReconciliationPanel({
  */
 export function PttVerificationSection({
   session,
+  exceptions,
   onSessionUpdate,
 }: {
   session: PttSessionWithRelations
+  /** Active approved exceptions (drive the Close Job eligibility). */
+  exceptions: readonly PttApprovedExceptionRow[]
   /** Called with the refreshed session so the UI updates immediately. */
   onSessionUpdate: (session: PttSessionWithRelations) => void
 }) {
   const hasReconciliation = session.verificationScans.length > 0
-  const closed = session.caseStatus === "VERIFIED_CLOSED"
+  const closed = isClosedCaseStatus(session.caseStatus)
 
   return (
     <div className="flex flex-col gap-4">
       {hasReconciliation ? (
         <ReconciliationPanel
           session={session}
+          exceptions={exceptions}
           onSessionUpdate={onSessionUpdate}
+        />
+      ) : session.caseStatus === "CLOSED_ACCEPTED_RESIDUALS" ? (
+        // Closed without an after-scan: no reconciliation panel, so the
+        // closure audit gets its own banner.
+        <CaseStatusBanner
+          status={session.caseStatus}
+          summary={null}
+          closure={closureDetailsOf(session)}
+          actions={
+            <ReopenCaseButton
+              session={session}
+              onSessionUpdate={onSessionUpdate}
+              className="bg-background text-foreground hover:bg-background/90"
+            />
+          }
         />
       ) : session.verificationSummary ? (
         // Cases verified by the earlier AI comparison keep their audit card.
@@ -1115,8 +1252,13 @@ export function PttVerificationSection({
       <PostRepairScreenshots session={session} />
       {closed ? (
         <p className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm dark:border-emerald-900 dark:bg-emerald-950/30">
-          This case is <strong>VERIFIED CLOSED</strong>. To track further work
-          on this truck, start a new baseline scan.
+          This case is{" "}
+          <strong>
+            {session.caseStatus === "CLOSED_ACCEPTED_RESIDUALS"
+              ? "CLOSED (ACCEPTED RESIDUALS)"
+              : "VERIFIED CLOSED"}
+          </strong>
+          . To track further work on this truck, start a new baseline scan.
         </p>
       ) : (
         <VerificationUploadForm session={session} onVerified={onSessionUpdate} />

@@ -22,6 +22,7 @@ import {
 import { trailerIdentityFilter } from "@/lib/fleet-identity"
 import { requireAdmin } from "@/lib/hr-admin-auth"
 import { queryBaselineSessions } from "@/lib/ptt/session-query"
+import { countOpenBlockingTrucks } from "@/lib/ptt/workshop-kpis"
 import {
   PTT_SEVERITY_RANK,
   compareFleetIds,
@@ -355,15 +356,8 @@ async function queryWorkshopKpis(): Promise<PttWorkshopKpis> {
     regressionScanCount,
     bounceBackCount,
     bounceBackRate: percent(Math.min(bounceBackCount, clearedEvents), clearedEvents),
-    openBlockingTrucks: latestBaselines.filter(
-      (truck) =>
-        (truck.caseStatus === "OPEN" ||
-          truck.caseStatus === "PARTIAL_BLOCKED" ||
-          truck.caseStatus === "REJECTED_NO_PROGRESS") &&
-        BLOCKING_SEVERITIES.includes(
-          truck.overallSeverity as PttFaultSeverity
-        )
-    ).length,
+    // Excludes both VERIFIED_CLOSED and CLOSED_ACCEPTED_RESIDUALS.
+    openBlockingTrucks: countOpenBlockingTrucks(latestBaselines),
   }
 }
 
