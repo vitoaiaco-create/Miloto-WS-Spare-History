@@ -18,7 +18,7 @@ import {
   type PttReportFilterOptions,
   type PttReportScope,
 } from "../ptt-diagnostics-report"
-import { validateCanonicalKey } from "./canonical-key"
+import { sanitizeFaultCode, validateCanonicalKey } from "./canonical-key"
 import {
   PTT_CLOSURE_REASON_LABELS,
   PTT_EXCEPTION_REASON_LABELS,
@@ -367,7 +367,11 @@ export function formatCodeLabel(
   dtcRaw: string
 ): string {
   if (canonicalKey.startsWith("UNVERIFIED|")) {
-    return `${ecuLabel} ${dtcRaw}`.replace(/\s+/g, " ").trim() || canonicalKey
+    // Never print the PTT DTC column's description text next to the code.
+    return (
+      `${ecuLabel} ${sanitizeFaultCode(dtcRaw)}`.replace(/\s+/g, " ").trim() ||
+      canonicalKey
+    )
   }
   return canonicalKey.split("|").join(" ")
 }

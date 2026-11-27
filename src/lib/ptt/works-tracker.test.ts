@@ -4,9 +4,11 @@ import { PTT_SEVERITY_RANK } from "../ptt-diagnostics"
 import type { PttReportLedgerRow } from "./report-data"
 import {
   FLEET_EXCEPTIONS,
+  baselineFault,
   baselineOnlyCase,
   closedCase,
   mtl41Case,
+  scanFault,
 } from "./report-fixtures"
 import {
   WORKS_TRACKER_SHEET_HEADERS,
@@ -18,6 +20,7 @@ import {
   buildWorksTrackerData,
   compareWorksTrackerFleetIds,
   describeWorksTrackerOrder,
+  stripLeadingCodePrefix,
   type PttWorksTrackerInput,
   type PttWorksTrackerRosterTruck,
   type WorksTrackerRow,
@@ -940,5 +943,106 @@ describe("Works tracker Excel workbook", () => {
       ...WORKS_TRACKER_SHEET_NAMES,
     ])
     expect(buildWorksTrackerPdf(empty).buffer.byteLength).toBeGreaterThan(1000)
+  })
+})
+
+describe("Works tracker clean fault lines", () => {
+  const KEY = "MID128|PID175|FMI5"
+  const DESCRIPTION =
+    "PID 175: Engine oil temperature, FMI 5: Current below normal or open circuit"
+
+  const clearedCase = () => {
+    const base = closedCase([KEY])
+    const [verification] = base.verificationScans
+    return {
+      ...base,
+      faults: [baselineFault(KEY, { componentDescription: DESCRIPTION })],
+      verificationScans: [
+        {
+          ...verification,
+          scanFaults: [
+            scanFault(KEY, {
+              description: DESCRIPTION,
+              pttStatus: "INACTIVE",
+              reconciliationBucket: "CLEARED",
+            }),
+          ],
+        },
+      ],
+    }
+  }
+
+  it("strips a redundant leading code prefix from the description", () => {
+    for (const [raw, clean] of [
+      ["PID 175: Engine oil temperature", "Engine oil temperature"],
+      ["PPID 3: Starter output", "Starter output"],
+      ["PSID 214: Data link", "Data link"],
+      ["SID 253: Calibration memory", "Calibration memory"],
+      ["C103715: Chassis Lubrication Motor", "Chassis Lubrication Motor"],
+      ["MID128 PID175 FMI5 - Engine oil", "Engine oil"],
+      ["Engine oil temperature, FMI 5: Low", "Engine oil temperature, FMI 5: Low"],
+    ]) {
+      expect(stripLeadingCodePrefix(raw)).toBe(clean)
+    }
+    // A description that is only a code is never emptied.
+    expect(stripLeadingCodePrefix("PID 175:")).toBe("PID 175:")
+  })
+
+  it("prints `MID128 PID175 FMI5 - Engine oil temperature, FMI 5: ...` with no PID 175 prefix", () => {
+    const data = buildWorksTrackerData(
+      { ...fourTruckInput(), sessions: [clearedCase()] },
+      undefined,
+      NOW
+    )
+    const row = rowOf(data.rows, "MTL02")
+    expect(row.clearedFaultItems).toHaveLength(1)
+    const [item] = row.clearedFaultItems
+    expect(item.codeLabel).toBe("MID128 PID175 FMI5")
+    expect(item.text).toBe(
+      "MID128 PID175 FMI5 - Engine oil temperature, FMI 5: Current below normal or open circuit"
+    )
+    expect(item.text).not.toContain("PID 175:")
+    expect(row.clearedFaultCodes).toBe(item.text)
+  })
+
+  it("never doubles the description (X - X) or prints an ECU CODE: Description string", () => {
+    const base = closedCase([KEY])
+    const [verification] = base.verificationScans
+    const description = "Chassis Lubrication Motor, Circuit Short To Battery or Open"
+    const unreadable = {
+      ...base,
+      faults: [],
+      verificationScans: [
+        {
+          ...verification,
+          scanFaults: [
+            scanFault(KEY, {
+              canonicalKey: "UNVERIFIED|MYSTERYBOX|C103715",
+              ecuLabel: "Mystery Box",
+              dtcRaw: `C103715: ${description}`,
+              description: `C103715: ${description}`,
+              pttStatus: "ACTIVE",
+              reconciliationBucket: "PERSISTING_OPEN",
+            }),
+          ],
+        },
+      ],
+    }
+    const data = buildWorksTrackerData(
+      { ...fourTruckInput(), sessions: [unreadable] },
+      undefined,
+      NOW
+    )
+    const items = [
+      ...rowOf(data.rows, "MTL02").residualFaultItems,
+      ...rowOf(data.rows, "MTL02").clearedFaultItems,
+    ]
+    expect(items.length).toBeGreaterThan(0)
+    for (const item of items) {
+      expect(item.text).toBe(`Mystery Box C103715 - ${description}`)
+      const [code, text] = item.text.split(" - ")
+      expect(code).not.toBe(text)
+      expect(item.text).not.toContain(":")
+    }
   })
 })

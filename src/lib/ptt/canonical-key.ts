@@ -55,6 +55,8 @@ const V4_ECU_TOKEN_ALIASES: Readonly<Record<string, V4EcuAcronym>> = {
   CCIOIM: "CCIOM",
   CC1OM: "CCIOM",
   CCI0M: "CCIOM",
+  // (becomes CIOM instead for "Cab I/O Module (CIM)" / a CIOM DTC; see
+  // `normalizeEcuAcronym`.)
   CIM: "CCIOM",
   // CIOM (cab I/O module)
   CIOIM: "CIOM",
@@ -196,12 +198,20 @@ export function normalizeEcuAcronym(
 ): V4EcuAcronym | null {
   const upper = label.toUpperCase()
 
+  // "CIM" is the usual truncation of CCIOM, but it is the Cab I/O Module's
+  // (CIOM) acronym when the label says "Cab I/O Module" (not "Cab Chassis ...")
+  // or the DTC belongs to the CIOM.
+  const cimIsCiom =
+    dtcOwnerHint === "CIOM" || /\bCAB\s+I\s*\/?\s*O\b/.test(upper)
+  const aliasOf = (token: string): V4EcuAcronym | undefined =>
+    token === "CIM" && cimIsCiom ? "CIOM" : V4_ECU_TOKEN_ALIASES[token]
+
   // A parenthesised acronym is what PTT prints, so it wins.
   for (const match of upper.matchAll(/\(\s*([A-Z0-9]+)\s*\)/g)) {
     if (V4_ECU_SET.has(match[1])) return match[1] as V4EcuAcronym
   }
   for (const match of upper.matchAll(/\(\s*([A-Z0-9]+)\s*\)/g)) {
-    const alias = V4_ECU_TOKEN_ALIASES[match[1]]
+    const alias = aliasOf(match[1])
     if (alias) return alias
   }
   const tokens = upper.match(/[A-Z0-9]+/g) ?? []
@@ -209,7 +219,7 @@ export function normalizeEcuAcronym(
     if (V4_ECU_SET.has(token)) return token as V4EcuAcronym
   }
   for (const token of tokens) {
-    const alias = V4_ECU_TOKEN_ALIASES[token]
+    const alias = aliasOf(token)
     if (alias) return alias
   }
   for (const [pattern, acronym] of V4_ECU_NAME_PATTERNS) {
@@ -219,7 +229,7 @@ export function normalizeEcuAcronym(
   const stripped = alnum(label)
   // Whole label with punctuation/spacing removed ("C-C-I-O-D-M", "CC IOM").
   if (V4_ECU_SET.has(stripped)) return stripped as V4EcuAcronym
-  const wholeAlias = V4_ECU_TOKEN_ALIASES[stripped]
+  const wholeAlias = aliasOf(stripped)
   if (wholeAlias) return wholeAlias
   const exact = V4_ECU_EXACT_NAME_ALIASES[stripped]
   if (exact) return exact
@@ -453,6 +463,82 @@ const V3_CODE_REGEX = /(PPID|PSID|PID|SID)(\d+)/g
 const V4_CODE_REGEX = /^[PCBU][0-9A-F]{6}$/
 
 // ---------------------------------------------------------------------------
+// Fault-code sanitiser
+//
+// Pass 1 sometimes returns the whole PTT DTC column in the code field, e.g.
+// "C103715: Chassis Lubrication Motor, Circuit Short To Battery or Open" or
+// "PSID 214: Data link, MID249, FMI 9: Abnormal update rate". Only the bare
+// code token (plus an FMI recovered from the trailing text) may reach the key.
+// ---------------------------------------------------------------------------
+
+/** A V3 code token as printed (`PSID 214`, `pid. 175`, `PPID3`). */
+const V3_TOKEN_PRINTED = /\b(?:PPID|PSID|PID|SID)\s*\.?\s*\d+/i
+const V4_TOKEN_PRINTED = /\b[PCBU][0-9A-F]{6}\b/gi
+const FMI_PRINTED = /\bFMI\s*[:.]?\s*(\d+)/i
+
+/** Bare, alphanumeric edges: drops trailing / leading punctuation noise. */
+const trimCodeNoise = (value: string): string =>
+  value.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "")
+
+/** A single V4 hex DTC embedded in `text` (with at least one digit), or null. */
+function embeddedV4Dtc(text: string): string | null {
+  const found = [...text.matchAll(V4_TOKEN_PRINTED)]
+    .map((match) => match[0].toUpperCase())
+    .filter((token) => /\d/.test(token))
+  return found.length === 1 ? found[0] : null
+}
+
+/**
+ * Reduces a printed fault code to its bare token: everything after the first
+ * `:` (the description / "MIDnnn" / "FMI n" text) is removed when the
+ * left-hand side is itself a complete code, trailing punctuation is trimmed,
+ * and a V4 DTC buried in a concatenated ECU label is extracted. On FH V3 an
+ * FMI that is not on the left-hand side is recovered from the dropped right
+ * half (or the description) so `PSID 214: ..., FMI 9: ...` -> `PSID 214 FMI 9`.
+ * Idempotent; a code with no recognisable token is returned only trimmed.
+ */
+export function sanitizeFaultCode(
+  faultCode: string,
+  options: { description?: string; generation?: PttKnownGeneration | "UNKNOWN" } = {}
+): string {
+  const original = faultCode.trim()
+  const colon = original.indexOf(":")
+  let left = original
+  let right = ""
+  if (colon >= 0) {
+    const head = original.slice(0, colon)
+    const headCompact = alnum(head)
+    // "PID: 175 FMI 5" keeps its colon (no number on the left of it).
+    if (V3_TOKEN_PRINTED.test(head) || V4_CODE_REGEX.test(headCompact)) {
+      left = head
+      right = original.slice(colon + 1)
+    }
+  }
+  left = trimCodeNoise(left)
+
+  // ECU label concatenated in front of / behind a V4 DTC.
+  if (
+    options.generation !== "FH_V3" &&
+    !V4_CODE_REGEX.test(alnum(left)) &&
+    !V3_TOKEN_PRINTED.test(left)
+  ) {
+    const embedded = embeddedV4Dtc(left)
+    if (embedded) left = embedded
+  }
+
+  const isV3 = V3_TOKEN_PRINTED.test(left) && !FMI_PRINTED.test(left)
+  if (isV3 && options.generation !== "FH_V4") {
+    const fmi =
+      FMI_PRINTED.exec(right)?.[1] ??
+      (options.generation === "FH_V3"
+        ? FMI_PRINTED.exec(options.description ?? "")?.[1]
+        : undefined)
+    if (fmi) left = `${left} FMI ${fmi}`
+  }
+  return left
+}
+
+// ---------------------------------------------------------------------------
 // FH V3 / FH V4 OCR rescues
 //
 // Surgical, DESCRIPTION-GUARDED repairs for OCR glitches seen on real fleet
@@ -522,6 +608,16 @@ const LIGHTING_DESCRIPTION =
 // PSID 68 is often printed with no usable text ("null") or as a circuit fault.
 const PSID68_DESCRIPTION = /^null$|circuit\s*open|open\s*circuit/
 
+// A description that is only the standard FMI wording (or empty / "null"):
+// it carries no component name.
+const FMI_ONLY_DESCRIPTION =
+  /^(?:null|(?:data\s+(?:valid|erratic|drifted)|voltage\s+(?:above|below)|current\s+(?:above|below)|abnormal\s|mechanical\s+system|bad\s+intelligent|root\s+cause|special\s+instructions|condition\s+exists|received\s+network|out\s+of\s+calibration|above\s+normal|below\s+normal|faulty\s+device|circuit\s+open|open\s+circuit|short\s+to)\b.*)$/
+
+function hasNoComponentText(description: string): boolean {
+  const text = description.trim()
+  return text === "" || FMI_ONLY_DESCRIPTION.test(text)
+}
+
 const VECU_DESCRIPTIONS: Readonly<Record<number, RegExp>> = {
   23: /regeneration\s*control/,
   24: /compressor\s*control/,
@@ -549,6 +645,13 @@ function resolveMissingMid(input: V3RescueInput): number | null {
   const { controlUnit, code, description, scanContext } = input
   const label = alnum(controlUnit)
   const blank = isBlankEcuLabel(controlUnit)
+  // Legacy scans stored only the FMI text in the description and the component
+  // name in the (hallucinated) ECU label, so the component guard also reads
+  // `${ecuLabel} ${description}` - but only when the description names no
+  // component of its own (a contradicting description must still block).
+  const componentText = hasNoComponentText(description)
+    ? `${controlUnit.toLowerCase()} ${description}`
+    : description
 
   // A.3 Retarder ECU printed without "(MID 222)".
   if (/RETARDERECU/.test(label)) return 222
@@ -558,7 +661,7 @@ function resolveMissingMid(input: V3RescueInput): number | null {
     if (
       (blank || HALLUCINATED_LAMP_ECUS.has(label)) &&
       LIGHTING_PSIDS.has(code.num) &&
-      (LIGHTING_DESCRIPTION.test(description) ||
+      (LIGHTING_DESCRIPTION.test(componentText) ||
         (code.num === 68 && PSID68_DESCRIPTION.test(description)))
     ) {
       return 216
@@ -567,7 +670,7 @@ function resolveMissingMid(input: V3RescueInput): number | null {
     const vecuDescription = VECU_DESCRIPTIONS[code.num]
     if (
       (blank || HALLUCINATED_VECU_ECUS.has(label)) &&
-      vecuDescription?.test(description)
+      vecuDescription?.test(componentText)
     ) {
       return 144
     }
@@ -690,6 +793,66 @@ function rescueV3(input: V3RescueInput): V3Rescue | null {
     /magnetic\s*clutch/.test(description)
   ) {
     move(146, "SID", 11)
+  } else if (
+    // Cropped label column: the Vehicle ECU (MID 144) read as the LCM (MID 216).
+    mid === 216 &&
+    type === "PID" &&
+    num === 84 &&
+    /road\s*speed/.test(description)
+  ) {
+    move(144, "PID", 84)
+  } else if (
+    // Genuine MID216 PSID 23 is "Parking light left rear" and stays put.
+    mid === 216 &&
+    type === "PSID" &&
+    num === 23 &&
+    /regeneration\s*control/.test(description)
+  ) {
+    move(144, "PSID", 23)
+  } else if (
+    mid === 216 &&
+    type === "PSID" &&
+    num === 39 &&
+    /rear\s*load\s*sensor/.test(description)
+  ) {
+    move(144, "PSID", 39)
+  } else if (
+    // Code / ECU OCR slips.
+    mid === 140 &&
+    type === "PID" &&
+    num === 177 &&
+    /ambient\s*air\s*temperature/.test(description)
+  ) {
+    retype("PID", 171)
+  } else if (
+    mid === 128 &&
+    type === "SID" &&
+    num === 16 &&
+    /water\s*in\s*fuel/.test(description)
+  ) {
+    retype("SID", 18)
+  } else if (
+    mid === 130 &&
+    type === "PSID" &&
+    num === 46 &&
+    /steering\s*wheel\s*buttons/.test(description)
+  ) {
+    move(140, "PSID", 46)
+  } else if (
+    // Genuine MID216 PSID 15 is "Turn signal lamp left rear" and stays put.
+    mid === 216 &&
+    type === "PSID" &&
+    num === 15 &&
+    /intermittent\s*wiping\s*relay/.test(description)
+  ) {
+    retype("PSID", 19)
+  } else if (
+    mid === 223 &&
+    type === "PSID" &&
+    num === 20 &&
+    /pto/.test(description)
+  ) {
+    move(130, "PSID", 20)
   }
 
   // "RID" is only valid as an input to the rescues above.
@@ -811,17 +974,39 @@ function rescueV4Dtc(
   ) {
     return "U115100"
   }
+  if (
+    ecu === "APM" &&
+    dtc === "U0028B8" &&
+    /can\s*communication\s*chassis\s*net/.test(text)
+  ) {
+    return "U002886"
+  }
+  if (ecu === "CIOM" && dtc === "U1148E7" && FLEXIBLE_SWITCH_PANEL.test(text)) {
+    return "U114E87"
+  }
   return dtc
 }
+
+const FLEXIBLE_SWITCH_PANEL = /flexible\s*switch\s*panel\s*link/
 
 function buildV4(input: CanonicalKeyInput): CanonicalKeyResult {
   const dtc = strip(input.faultCode)
   // DTC-owner rescue applies to FH V4 data only (never a V3-registered truck).
-  const { ecu, rescuedFrom } = resolveV4Ecu(
-    input.controlUnit,
-    dtc,
-    input.generation !== "FH_V3"
-  )
+  const allowRescue = input.generation !== "FH_V3"
+  let resolution = resolveV4Ecu(input.controlUnit, dtc, allowRescue)
+  // "CIM" + U1148E7 + "Flexible switch panel link" is the Cab I/O Module's
+  // U114E87: resolve the label as if the corrected DTC had been printed, and
+  // keep that reading only when it really lands on the CIOM.
+  if (
+    input.generation === "FH_V4" &&
+    dtc === "U1148E7" &&
+    FLEXIBLE_SWITCH_PANEL.test((input.description ?? "").toLowerCase())
+  ) {
+    if (normalizeEcuAcronym(input.controlUnit, "CIOM") === "CIOM") {
+      resolution = { ecu: "CIOM", rescuedFrom: null }
+    }
+  }
+  const { ecu, rescuedFrom } = resolution
   if (!ecu) {
     return failure(
       input,
@@ -862,7 +1047,16 @@ function buildV4(input: CanonicalKeyInput): CanonicalKeyResult {
  * failure with a deterministic fallback key when the row cannot be
  * normalised, so it is surfaced for review rather than silently mismatched.
  */
-export function buildCanonicalKey(input: CanonicalKeyInput): CanonicalKeyResult {
+export function buildCanonicalKey(rawInput: CanonicalKeyInput): CanonicalKeyResult {
+  // Only the bare code token (and its FMI) may reach the key: see
+  // `sanitizeFaultCode`. The clean code feeds matching AND the fallback key.
+  const input: CanonicalKeyInput = {
+    ...rawInput,
+    faultCode: sanitizeFaultCode(rawInput.faultCode, {
+      description: rawInput.description,
+      generation: rawInput.generation,
+    }),
+  }
   const code = strip(input.faultCode)
   const looksV4 = V4_CODE_REGEX.test(code)
   const looksV3 = /FMI\d+/.test(code)

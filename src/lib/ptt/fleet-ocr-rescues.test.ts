@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import { buildCanonicalKey, type CanonicalKeyInput } from "./canonical-key"
+import {
+  buildCanonicalKey,
+  normalizeEcuAcronym,
+  sanitizeFaultCode,
+  type CanonicalKeyInput,
+} from "./canonical-key"
 import { FLEET_WIDE_EXCEPTION_SEEDS } from "./exception-seed-data"
 import {
   buildBaselineCompletenessWarning,
@@ -22,6 +27,7 @@ import {
   mtl41Case,
   FLEET_EXCEPTIONS,
 } from "./report-fixtures"
+import { formatCodeLabel } from "./report-data"
 import { buildScanFaultRecords } from "./scan-faults"
 import { buildWorksTrackerData } from "./works-tracker-data"
 import { buildWorksTrackerPdf } from "./works-tracker-pdf"
@@ -896,5 +902,304 @@ describe("Works Tracker PDF: Note formatting", () => {
     )
     const bareSource = Buffer.from(buildWorksTrackerPdf(bare).buffer).toString("latin1")
     expect(bareSource).toContain("Note: Hardware conversion)")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. Colon-in-code stripping
+// ---------------------------------------------------------------------------
+
+const exceptionsFor = (
+  generation: "FH_V3" | "FH_V4",
+  keys: readonly string[]
+): PlanException[] =>
+  FLEET_WIDE_EXCEPTION_SEEDS.filter(
+    (seed) => seed.generation === generation && keys.includes(seed.canonicalKey)
+  ).map((seed) => ({
+    scope: "FLEET_GENERATION",
+    generation: seed.generation,
+    fleetId: null,
+    canonicalKey: seed.canonicalKey,
+    isActive: true,
+  }))
+
+describe("colon-in-code stripping", () => {
+  const CCIOM_CODE =
+    "C103715: Chassis Lubrication Motor, Circuit Short To Battery or Open"
+  const PSID214_CODE = "PSID 214: Data link, MID249, FMI 9: Abnormal update rate"
+  const PSID236_CODE =
+    "PSID 236: Data Link, MID179, FMI 12: Faulty device or component"
+
+  it("FH V4 CCIOIM + C103715 with the description in the code -> CCIOM|C103715", () => {
+    expect(
+      keyOf({
+        controlUnit: "Center Chassis I/O Module (CCIOIM)",
+        faultCode: CCIOM_CODE,
+        description: "Chassis Lubrication Motor",
+        generation: "FH_V4",
+      })
+    ).toBe("CCIOM|C103715")
+  })
+
+  it("FH V3 Vehicle ECU PSID 214 (empty FMI) recovers FMI 9 from the code text", () => {
+    expect(v3("Vehicle ECU (MID 144)", PSID214_CODE, "")).toBe("MID144|PSID214|FMI9")
+    expect(v3("Vehicle ECU (MID 144)", PSID214_CODE, "Data link")).toBe(
+      "MID144|PSID214|FMI9"
+    )
+  })
+
+  it("recovers the FMI from the description when the code has none", () => {
+    expect(
+      v3("Information display (MID 140)", "PSID 214:", "Data link, MID249, FMI 12: Faulty")
+    ).toBe("MID140|PSID214|FMI12")
+  })
+
+  it("FH V3 Information display PSID 236 -> MID140|PSID236|FMI12", () => {
+    expect(v3("Information display (MID 140)", PSID236_CODE, "")).toBe(
+      "MID140|PSID236|FMI12"
+    )
+  })
+
+  it("keeps an FMI printed on the left-hand side and ignores the rest", () => {
+    expect(
+      v3("Engine ECU (MID 128)", "PID 175 FMI 5: Engine oil temperature, FMI 3: x", "")
+    ).toBe("MID128|PID175|FMI5")
+    // "PID: 175" keeps its colon (nothing to split).
+    expect(v3("Engine ECU (MID 128)", "PID: 175 FMI 5", "")).toBe("MID128|PID175|FMI5")
+  })
+
+  it("trims trailing punctuation and extracts a V4 DTC from a concatenated label", () => {
+    expect(
+      keyOf({
+        controlUnit: "Air Production Module (APM)",
+        faultCode: "U002886;. ",
+        generation: "FH_V4",
+      })
+    ).toBe("APM|U002886")
+    expect(
+      keyOf({
+        controlUnit: "Center Chassis I/O Module (CCIOIM)",
+        faultCode: "Center Chassis I/O Module (CCIOIM) C103715",
+        generation: "FH_V4",
+      })
+    ).toBe("CCIOM|C103715")
+  })
+
+  it("sanitizeFaultCode is idempotent", () => {
+    const once = sanitizeFaultCode(PSID214_CODE, { generation: "FH_V3" })
+    expect(once).toBe("PSID 214 FMI 9")
+    expect(sanitizeFaultCode(once, { generation: "FH_V3" })).toBe(once)
+    expect(sanitizeFaultCode(CCIOM_CODE)).toBe("C103715")
+  })
+
+  it("stored colon rows are re-keyed and match the approved exceptions (V4 + V3)", () => {
+    const v4Row = storedRow(
+      "Center Chassis I/O Module (CCIOIM)",
+      CCIOM_CODE,
+      "Chassis Lubrication Motor, Circuit Short To Battery or Open"
+    )
+    const v4Result = plan("MTL22", "FH_V4", {
+      baselineRows: [v4Row],
+      verificationRows: [{ ...v4Row, id: nextId++ }],
+      exceptions: exceptionsFor("FH_V4", ["CCIOM|C103715"]),
+    })
+    const v4Faults = v4Result.result.faults
+    expect(v4Faults.map((fault) => fault.canonicalKey)).toEqual(["CCIOM|C103715"])
+    expect(v4Faults.every((fault) => fault.isApprovedException)).toBe(true)
+
+    const v3Row = storedRow("Vehicle ECU (MID 144)", PSID214_CODE, "")
+    const v3Result = plan("MTL10", "FH_V3", {
+      baselineRows: [v3Row],
+      verificationRows: [{ ...v3Row, id: nextId++ }],
+      exceptions: exceptionsFor("FH_V3", ["MID144|PSID214|FMI9"]),
+    })
+    const v3Faults = v3Result.result.faults
+    expect(v3Faults.map((fault) => fault.canonicalKey)).toEqual([
+      "MID144|PSID214|FMI9",
+    ])
+    expect(v3Faults.every((fault) => fault.isApprovedException)).toBe(true)
+    expect(v3Result.result.summary.clearedCount).toBe(0)
+  })
+
+  it("an unreadable colon code displays only the bare code, not the description", () => {
+    expect(
+      formatCodeLabel(
+        "UNVERIFIED|MYSTERYBOX|C103715",
+        "Mystery Box",
+        "C103715: Chassis Lubrication Motor, Circuit Short To Battery or Open"
+      )
+    ).toBe("Mystery Box C103715")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 8. MTL69 legacy rows: FMI-only description, component name in the ECU label
+// ---------------------------------------------------------------------------
+
+describe("MTL69 FMI-only description fixture", () => {
+  const FMI_ONLY = "Current below normal or open circuit"
+
+  it.each([
+    ["Brake Lamp ECU", "PSID 10 FMI 5", "MID216|PSID10|FMI5"],
+    ["Fog Lamp ECU", "PSID 5 FMI 5", "MID216|PSID5|FMI5"],
+    ["Campaign Lights ECU", "PSID 67 FMI 5", "MID216|PSID67|FMI5"],
+    ["Reverse Lights ECU", "PSID 8 FMI 6", "MID216|PSID8|FMI6"],
+    ["Regeneration Control ECU", "PSID 23 FMI 4", "MID144|PSID23|FMI4"],
+    ["Compressor Control ECU", "PSID 24 FMI 4", "MID144|PSID24|FMI4"],
+    ["Rear Load Sensor ECU", "PSID 39 FMI 4", "MID144|PSID39|FMI4"],
+  ])("%s %s with an FMI-only description -> %s", (label, code, expected) => {
+    expect(v3(label, code, FMI_ONLY)).toBe(expected)
+    expect(v3(label, code, "")).toBe(expected)
+  })
+
+  it("resolves all 7 rows in a live scan and keeps them out of review", () => {
+    const rows = [
+      ["Brake Lamp ECU", "PSID 10 FMI 5"],
+      ["Fog Lamp ECU", "PSID 5 FMI 5"],
+      ["Campaign Lights ECU", "PSID 67 FMI 5"],
+      ["Reverse Lights ECU", "PSID 8 FMI 6"],
+      ["Compressor Control ECU", "PSID 24 FMI 4"],
+      ["Regeneration Control ECU", "PSID 23 FMI 4"],
+      ["Rear Load Sensor ECU", "PSID 39 FMI 4"],
+    ] as const
+    const records = buildScanFaultRecords(
+      rows.map(([controlUnit, faultCode]) => ({
+        controlUnit,
+        faultCode,
+        description: FMI_ONLY,
+        faultState: "ACTIVE" as const,
+        severity: "CRITICAL" as const,
+      })),
+      "FH_V3"
+    )
+    expect(records.map((record) => record.canonicalKey).sort()).toEqual([
+      "MID144|PSID23|FMI4",
+      "MID144|PSID24|FMI4",
+      "MID144|PSID39|FMI4",
+      "MID216|PSID10|FMI5",
+      "MID216|PSID5|FMI5",
+      "MID216|PSID67|FMI5",
+      "MID216|PSID8|FMI6",
+    ])
+    expect(records.every((record) => !record.keyNeedsReview)).toBe(true)
+  })
+
+  it("a description that names a different component still blocks the rescue", () => {
+    expect(v3("Brake Lamp ECU", "PSID 10 FMI 5", "Parking brake switch")).toBeNull()
+    expect(v3("Regeneration Control ECU", "PSID 23 FMI 4", "Parking light")).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. MTL126 / MTL73 / MTL23 / MTL36 (FH V3) and MTL22 (FH V4)
+// ---------------------------------------------------------------------------
+
+describe("MTL126 / MTL73 / MTL23 / MTL36: remaining FH V3 rescues", () => {
+  it.each([
+    ["MID216 PID84 road speed", "Light Control Module (LCM) (MID 216)", "PID 84 FMI 2", "Road speed", "MID144|PID84|FMI2"],
+    ["MID216 PSID23 regeneration control", "Light Control Module (LCM) (MID 216)", "PSID 23 FMI 4", "Regeneration control", "MID144|PSID23|FMI4"],
+    ["MID216 PSID39 rear load sensor", "Light Control Module (LCM) (MID 216)", "PSID 39 FMI 4", "Rear load sensor", "MID144|PSID39|FMI4"],
+    ["MID140 PID177 ambient air temperature", "Instrument Cluster ECU (MID 140)", "PID 177 FMI 3", "Ambient air temperature", "MID140|PID171|FMI3"],
+    ["MID128 SID16 water in fuel", "Engine ECU (MID 128)", "SID 16 FMI 5", "Water in fuel indicator", "MID128|SID18|FMI5"],
+    ["MID130 PSID46 steering wheel buttons", "Gearbox ECU (MID 130)", "PSID 46 FMI 9", "Steering wheel buttons", "MID140|PSID46|FMI9"],
+    ["MID216 PSID15 intermittent wiping relay", "Light Control Module (LCM) (MID 216)", "PSID 15 FMI 3", "Intermittent wiping relay", "MID216|PSID19|FMI3"],
+    ["MID223 PSID20 PTO", "Power take-off ECU (MID 223)", "PSID 20 FMI 4", "PTO 1", "MID130|PSID20|FMI4"],
+  ])("%s", (_name, unit, code, description, expected) => {
+    expect(v3(unit, code, description)).toBe(expected)
+  })
+
+  it("never touches genuine rows (negative guards)", () => {
+    const lcm = "Light Control Module (LCM) (MID 216)"
+    expect(v3(lcm, "PSID 23 FMI 4", "Parking light left rear")).toBe("MID216|PSID23|FMI4")
+    expect(v3(lcm, "PSID 15 FMI 3", "Turn signal lamp left rear")).toBe("MID216|PSID15|FMI3")
+    expect(
+      v3("Instrument Cluster ECU (MID 140)", "PID 177 FMI 3", "Transmission oil temperature")
+    ).toBe("MID140|PID177|FMI3")
+    expect(v3(lcm, "PID 84 FMI 2", "Something else")).toBe("MID216|PID84|FMI2")
+    expect(v3("Engine ECU (MID 128)", "SID 16 FMI 5", "Injector")).toBe("MID128|SID16|FMI5")
+    expect(v3("Gearbox ECU (MID 130)", "PSID 46 FMI 9", "Gearbox oil")).toBe("MID130|PSID46|FMI9")
+    expect(v3("Power take-off ECU (MID 223)", "PSID 20 FMI 4", "Other")).toBe("MID223|PSID20|FMI4")
+  })
+
+  it("only fires on FH V3 trucks", () => {
+    expect(
+      keyOf({
+        controlUnit: "Instrument Cluster ECU (MID 140)",
+        faultCode: "PID 177 FMI 3",
+        description: "Ambient air temperature",
+        generation: "UNKNOWN",
+      })
+    ).toBe("MID140|PID177|FMI3")
+  })
+
+  it("re-keys both the baseline and the verification scan (Re-reconcile After-Scans)", () => {
+    const lcm = "Light Control Module (LCM) (MID 216)"
+    const baselineRows = [
+      storedRow(lcm, "PID 84 FMI 2", "Road speed"),
+      storedRow("Vehicle ECU (MID 144)", "PSID 39 FMI 4", "Rear load sensor", "MID144|PSID39|FMI4"),
+    ]
+    const verificationRows = [
+      storedRow("Vehicle ECU (MID 144)", "PID 84 FMI 2", "Road speed", "MID144|PID84|FMI2"),
+      storedRow(lcm, "PSID 39 FMI 4", "Rear load sensor"),
+    ]
+    const result = plan("MTL126", "FH_V3", { baselineRows, verificationRows })
+    const buckets = keysByBucket(result)
+    expect(buckets.get("CLEARED") ?? []).toEqual([])
+    expect(buckets.get("NEW_REGRESSION") ?? []).toEqual([])
+    expect(
+      [
+        ...(buckets.get("PERSISTING_OPEN") ?? []),
+        ...(buckets.get("PERSISTING_EXCEPTION") ?? []),
+      ].sort()
+    ).toEqual(["MID144|PID84|FMI2", "MID144|PSID39|FMI4"])
+    expect(
+      result.baseline.updates.map((update) => update.values.canonicalKey)
+    ).toContain("MID144|PID84|FMI2")
+    expect(
+      result.verification.updates.map((update) => update.values.canonicalKey)
+    ).toContain("MID144|PSID39|FMI4")
+    expect(result.repairedKeysCount).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe("MTL22: FH V4 CIM / APM / CIOM rescues", () => {
+  const v4 = (
+    controlUnit: string,
+    faultCode: string,
+    description: string,
+    generation: CanonicalKeyInput["generation"] = "FH_V4"
+  ) => keyOf({ controlUnit, faultCode, description, generation })
+
+  it("normalises Cab I/O Module (CIM) and bare CIM to CIOM on a CIOM DTC", () => {
+    expect(normalizeEcuAcronym("Cab I/O Module (CIM)")).toBe("CIOM")
+    expect(normalizeEcuAcronym("CIM", "CIOM")).toBe("CIOM")
+    // Existing behaviour is kept: a bare CIM stays the CCIOM truncation.
+    expect(normalizeEcuAcronym("CIM")).toBe("CCIOM")
+    expect(normalizeEcuAcronym("Cab Chassis I/O Module (CIM)")).toBe("CCIOM")
+    expect(v4("CIM", "C103715", "")).toBe("CCIOM|C103715")
+  })
+
+  it("APM U0028B8 (CAN communication chassis net) -> APM|U002886", () => {
+    expect(
+      v4("Air Production Module (APM)", "U0028B8", "CAN Communication Chassis Net")
+    ).toBe("APM|U002886")
+    expect(v4("APM", "U0028B8", "Something else")).toBe("APM|U0028B8")
+    expect(v4("APM", "U0028B8", "CAN Communication Chassis Net", "UNKNOWN")).toBe(
+      "APM|U0028B8"
+    )
+  })
+
+  it("CIOM / CIM U1148E7 (flexible switch panel link) -> CIOM|U114E87", () => {
+    const description = "Flexible Switch Panel Link"
+    expect(v4("Cab I/O Module (CIOM)", "U1148E7", description)).toBe("CIOM|U114E87")
+    expect(v4("Cab I/O Module (CIM)", "U1148E7", description)).toBe("CIOM|U114E87")
+    expect(v4("CIM", "U1148E7", description)).toBe("CIOM|U114E87")
+    // Guards: description and generation.
+    expect(v4("Cab I/O Module (CIOM)", "U1148E7", "Other")).toBe("CIOM|U1148E7")
+    expect(v4("CIOM", "U1148E7", description, "UNKNOWN")).toBe("CIOM|U1148E7")
+    // A different, recognised module is never reassigned.
+    expect(v4("Engine Control Module (EMS)", "U1148E7", description)).toBe(
+      "EMS|U1148E7"
+    )
   })
 })

@@ -14,6 +14,7 @@ import {
   latestScanAt,
   newestVerificationFirst,
   resolvePttReportOptions,
+  shortenDescription,
   startOfDay,
   type PttReportCase,
   type PttReportDataOptions,
@@ -253,10 +254,41 @@ const compareFaultItems = (
 const asciiDashes = (value: string): string =>
   value.replace(/[\u2013\u2014]/g, "-")
 
+// A code the description repeats at its start: `PID 175: `, `PSID 214 - `,
+// `MID128 PID175 FMI5: `, `C103715: `, `U002886 - `.
+const LEADING_CODE_PREFIX =
+  /^\s*(?:(?:MID\s*\d+\s*[,:]?\s*)?(?:PPID|PSID|PID|SID)\s*\.?\s*\d+(?:\s*FMI\s*\d+)?|[PCBU][0-9A-F]{6})\s*[:\u2013\u2014-]\s*/i
+
+/** The description without any redundant leading fault-code prefix. */
+export function stripLeadingCodePrefix(description: string): string {
+  let text = description.trim()
+  // At most two stacked prefixes (`MID128: PID 175: ...`), never the whole text.
+  for (let pass = 0; pass < 2; pass += 1) {
+    const stripped = text.replace(LEADING_CODE_PREFIX, "")
+    if (stripped === text || stripped.trim() === "") break
+    text = stripped
+  }
+  return text
+}
+
+const normalizeForCompare = (value: string): string =>
+  value.toLowerCase().replace(/[^a-z0-9]+/g, "")
+
 /** `Code - Short Description` (no repeat / regression / exception tags). */
 function faultItemOf(item: PttReportFaultItem): WorksTrackerFaultItem {
+  let shortDescription = shortenDescription(
+    stripLeadingCodePrefix(item.description),
+    item.ecuLabel
+  )
+  // Never `X - X`: a description that only repeats the code (or the ECU used
+  // as the empty-description fallback of an unreadable code) says nothing.
+  if (
+    normalizeForCompare(shortDescription) === normalizeForCompare(item.codeLabel)
+  ) {
+    shortDescription = "Description not captured"
+  }
   return {
-    text: asciiDashes(`${item.codeLabel} - ${item.shortDescription}`),
+    text: asciiDashes(`${item.codeLabel} - ${shortDescription}`),
     codeLabel: item.codeLabel,
     ecuLabel: item.ecuLabel,
     severity: item.severity,
