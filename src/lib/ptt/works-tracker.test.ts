@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import { PTT_SEVERITY_RANK } from "../ptt-diagnostics"
 import type { PttReportLedgerRow } from "./report-data"
 import {
   FLEET_EXCEPTIONS,
@@ -15,6 +16,8 @@ import {
 } from "./works-tracker-excel"
 import {
   buildWorksTrackerData,
+  compareWorksTrackerFleetIds,
+  describeWorksTrackerOrder,
   type PttWorksTrackerInput,
   type PttWorksTrackerRosterTruck,
   type WorksTrackerRow,
@@ -22,6 +25,7 @@ import {
 import {
   PTT_WORKS_TRACKER_TITLE,
   WORKS_TRACKER_COLUMN_RATIOS,
+  WORKS_TRACKER_PDF_HEADERS,
   buildWorksTrackerPdf,
 } from "./works-tracker-pdf"
 
@@ -82,32 +86,33 @@ describe("Works tracker data", () => {
     expect(pending).toMatchObject({
       trackerStatus: "PENDING",
       closureOutcome: "Not Scanned",
-      closingFaultCodes: "Pending baseline scan",
+      residualFaultCodes: "Pending baseline scan",
       beforePhotoDate: null,
       afterPhotoDate: null,
       turnaroundDays: null,
       openingFaultsCount: null,
       clearedFaultsCount: null,
-      closingFaultsCount: null,
-      newRegressionsCount: null,
-      approvedExceptionsCount: 0,
+      residualFaultsCount: null,
       clearedFaultCodes: "",
+      clearedFaultItems: [],
+      residualFaultItems: [],
       generation: "\u2014",
     })
 
     const partial = rowOf(data.rows, "MTL07")
     expect(partial).toMatchObject({
       trackerStatus: "PARTIAL",
-      closureOutcome: "In Workshop",
-      closingFaultCodes: "Awaiting final photo",
+      closureOutcome: "Fault Clearance Pending",
+      residualFaultCodes: "Awaiting final photo",
       beforePhotoDate: "2026-11-25",
       afterPhotoDate: null,
       turnaroundDays: 1,
       openingFaultsCount: 2,
       clearedFaultsCount: null,
-      closingFaultsCount: null,
-      newRegressionsCount: null,
+      residualFaultsCount: null,
       clearedFaultCodes: "",
+      clearedFaultItems: [],
+      residualFaultItems: [],
       generation: "FH V3",
     })
 
@@ -116,36 +121,71 @@ describe("Works tracker data", () => {
       trackerStatus: "COMPLETE",
       closureOutcome: "Residual Faults",
       clearedFaultsCount: 4,
-      closingFaultsCount: 5,
-      newRegressionsCount: 1,
-      approvedExceptionsCount: 9,
+      residualFaultsCount: 5,
       beforePhotoDate: "2026-11-20",
       afterPhotoDate: "2026-11-24",
       turnaroundDays: 4,
     })
-    const closing = mtl41.closingFaultCodes.split("\n")
-    expect(closing).toHaveLength(5)
-    expect(closing[0]).toMatch(/^\[NEW REGRESSION\] MID128 PID26 FMI3 \u2014 /)
-    expect(mtl41.closingFaultCodes.startsWith("[NEW REGRESSION]")).toBe(true)
-    // Repeat fault (ledger reopened once) is tagged; no exception is listed.
-    expect(closing.some((line) => line.startsWith("[REPEAT x1] MID144 PID84 FMI2"))).toBe(
+    const residual = mtl41.residualFaultCodes.split("\n")
+    expect(residual).toHaveLength(5)
+    // The newly appearing fault is listed like any other residual fault.
+    expect(residual.some((line) => line.startsWith("MID128 PID26 FMI3 - "))).toBe(
       true
     )
-    expect(mtl41.closingFaultCodes).not.toContain("APPROVED EXCEPTION")
-    expect(mtl41.approvedExceptionsNote).toBe("+9 approved exceptions excluded")
-    expect(mtl41.clearedFaultCodes.split("\n")).toHaveLength(4)
-    expect(mtl41.closingFaults[0]).toMatchObject({ isNewRegression: true })
+    expect(mtl41.residualFaultCodes).not.toContain("[NEW REGRESSION]")
+    expect(mtl41.residualFaultCodes).toContain("MID144 PID84 FMI2 - ")
+    expect(mtl41.residualFaultCodes).not.toMatch(/exception/i)
+    expect(mtl41.residualFaultItems).toHaveLength(5)
+
+    // The 4 cleared MID128 faults are listed on their own, `Code - Description`.
+    const cleared = mtl41.clearedFaultCodes.split("\n")
+    expect(cleared).toHaveLength(4)
+    expect(mtl41.clearedFaultItems).toHaveLength(4)
+    for (const line of cleared) expect(line).toMatch(/^MID128 [A-Z]+\d+ FMI5 - /)
+    // ASCII hyphens only: PDF safe.
+    for (const line of [...cleared, ...residual]) {
+      expect(line).not.toMatch(/[\u2013\u2014]/)
+    }
 
     const clean = rowOf(data.rows, "MTL02")
     expect(clean).toMatchObject({
       trackerStatus: "COMPLETE",
       closureOutcome: "Clean Closure",
-      closingFaultCodes: "None \u2014 All actionable faults cleared",
-      closingFaultsCount: 0,
-      newRegressionsCount: 0,
+      residualFaultCodes: "None - All actionable faults cleared",
+      residualFaultsCount: 0,
+      residualFaultItems: [],
       clearedFaultsCount: 1,
       turnaroundDays: 4,
-      approvedExceptionsNote: null,
+    })
+
+    // COMPLETE with nothing cleared prints "None cleared".
+    const none = buildWorksTrackerData(
+      {
+        sessions: [
+          closedCase(["MID128|PID94|FMI5"], {
+            verificationScans: closedCase(["MID128|PID94|FMI5"]).verificationScans.map(
+              (scan) => ({
+                ...scan,
+                scanFaults: scan.scanFaults.map((fault) => ({
+                  ...fault,
+                  pttStatus: "ACTIVE" as const,
+                  reconciliationBucket: "PERSISTING_OPEN" as const,
+                })),
+              })
+            ),
+          }),
+        ],
+        ledger: [],
+        exceptions: FLEET_EXCEPTIONS,
+        roster: [],
+      },
+      undefined,
+      NOW
+    )
+    expect(none.rows[0]).toMatchObject({
+      clearedFaultsCount: 0,
+      clearedFaultCodes: "None cleared",
+      residualFaultsCount: 1,
     })
   })
 
@@ -158,8 +198,7 @@ describe("Works tracker data", () => {
       cleanClosureCount: 1,
       residualFaultsTrucksCount: 1,
       totalClearedFaults: 5,
-      totalClosingActionableFaults: 5,
-      totalNewRegressions: 1,
+      totalResidualFaults: 5,
     })
   })
 
@@ -244,7 +283,7 @@ describe("Works tracker data", () => {
       NOW
     )
     expect(all.rows).toHaveLength(4)
-    expect(rowOf(all.rows, "MTL41").closingFaultsCount).toBe(5)
+    expect(rowOf(all.rows, "MTL41").residualFaultsCount).toBe(5)
   })
 
   it("evaluates each truck inside the date window, else PENDING", () => {
@@ -272,20 +311,164 @@ describe("Works tracker data", () => {
     expect(rowOf(early.rows, "MTL41").trackerStatus).toBe("PENDING")
   })
 
-  it("lists approved exceptions when they are not excluded", () => {
-    const included = buildWorksTrackerData(
-      fourTruckInput(),
-      { excludeApprovedExceptions: false },
+  it("always silently excludes approved exceptions (count = lines)", () => {
+    for (const excludeApprovedExceptions of [true, false]) {
+      const result = buildWorksTrackerData(
+        fourTruckInput(),
+        { excludeApprovedExceptions },
+        NOW
+      )
+      expect(result.options.excludeApprovedExceptions).toBe(true)
+      const mtl41 = rowOf(result.rows, "MTL41")
+      expect(mtl41.residualFaultsCount).toBe(5)
+      expect(mtl41.residualFaultCodes.split("\n")).toHaveLength(5)
+      expect(mtl41.residualFaultItems).toHaveLength(5)
+      expect(mtl41.clearedFaultsCount).toBe(4)
+      expect(mtl41.clearedFaultCodes.split("\n")).toHaveLength(4)
+      expect(mtl41.clearedFaultItems).toHaveLength(4)
+      expect(mtl41.residualFaultCodes).not.toMatch(/exception/i)
+      // Identical output whatever the toggle says.
+      expect(result.rows).toEqual(data.rows)
+      expect(result.kpis).toEqual(data.kpis)
+    }
+  })
+
+  it("lists residual and cleared faults by severity, then ECU, then code", () => {
+    const mtl41 = rowOf(data.rows, "MTL41")
+    for (const items of [mtl41.residualFaultItems, mtl41.clearedFaultItems]) {
+      const sorted = [...items].sort(
+        (a, b) =>
+          PTT_SEVERITY_RANK[b.severity] - PTT_SEVERITY_RANK[a.severity] ||
+          a.ecuLabel.localeCompare(b.ecuLabel)
+      )
+      // Severity and ECU order is stable; ties keep the canonical-key order.
+      expect(items.map((item) => [item.severity, item.ecuLabel])).toEqual(
+        sorted.map((item) => [item.severity, item.ecuLabel])
+      )
+    }
+    const ranks = mtl41.residualFaultItems.map(
+      (item) => PTT_SEVERITY_RANK[item.severity]
+    )
+    expect(ranks).toHaveLength(5)
+    expect(ranks).toEqual([...ranks].sort((a, b) => b - a))
+    // Cleared: the CRITICAL codes come before the CALIBRATION_ONLY one.
+    expect(mtl41.clearedFaultItems.map((item) => item.severity)).toEqual([
+      "CRITICAL",
+      "CRITICAL",
+      "CRITICAL",
+      "CALIBRATION_ONLY",
+    ])
+    expect(mtl41.residualFaultItems[0]?.text).not.toMatch(/^\[NEW REGRESSION\]/)
+  })
+  it("never prints regression / exception wording or the old outcome", () => {
+    for (const excludeApprovedExceptions of [true, false]) {
+      const result = buildWorksTrackerData(
+        fourTruckInput(),
+        { excludeApprovedExceptions },
+        NOW
+      )
+      const text = JSON.stringify(
+        result.rows.map((row) => [
+          row.closureOutcome,
+          row.clearedFaultCodes,
+          row.residualFaultCodes,
+        ])
+      )
+      for (const banned of [
+        "[NEW REGRESSION]",
+        "Reg ",
+        "approved exception",
+        "[APPROVED EXCEPTION]",
+        "In Workshop",
+      ]) {
+        expect(text.toLowerCase()).not.toContain(banned.toLowerCase())
+      }
+    }
+  })
+
+  it("marks PARTIAL trucks as Fault Clearance Pending", () => {
+    for (const row of data.rows.filter((r) => r.trackerStatus === "PARTIAL")) {
+      expect(row.closureOutcome).toBe("Fault Clearance Pending")
+    }
+  })
+})
+
+/** Mixed statuses: COMPLETE MTL100 + MTL41, PARTIAL MTL10, PENDING MTL01 + MTL145. */
+function mixedInput(): PttWorksTrackerInput {
+  return {
+    sessions: [
+      closedCase(["MID128|PID94|FMI5"], { id: 30, fleetId: "MTL100" }),
+      closedCase(["MID128|PID94|FMI5"], { id: 31, fleetId: "MTL41" }),
+      baselineOnlyCase(["MID128|PID94|FMI5"], { id: 32, fleetId: "MTL10" }),
+    ],
+    ledger: [],
+    exceptions: FLEET_EXCEPTIONS,
+    roster: roster("MTL145", "MTL01"),
+  }
+}
+
+describe("Works tracker sort order", () => {
+  it("sorts by Fleet No. regardless of status", () => {
+    const result = buildWorksTrackerData(
+      mixedInput(),
+      { sortBy: "FLEET_NO" },
       NOW
     )
-    const mtl41 = rowOf(included.rows, "MTL41")
-    expect(mtl41.closingFaultsCount).toBe(5)
-    expect(mtl41.approvedExceptionsNote).toBeNull()
-    expect(
-      mtl41.closingFaultCodes
-        .split("\n")
-        .filter((line) => line.startsWith("[APPROVED EXCEPTION]"))
-    ).toHaveLength(9)
+    expect(result.options.sortBy).toBe("FLEET_NO")
+    expect(result.rows.map((row) => row.fleetId)).toEqual([
+      "MTL01",
+      "MTL10",
+      "MTL41",
+      "MTL100",
+      "MTL145",
+    ])
+  })
+
+  it("defaults to status order with natural Fleet No. tie-breaking", () => {
+    for (const options of [undefined, { sortBy: "STATUS" as const }]) {
+      const result = buildWorksTrackerData(mixedInput(), options, NOW)
+      expect(result.options.sortBy).toBe("STATUS")
+      expect(
+        result.rows.map((row) => `${row.trackerStatus}:${row.fleetId}`)
+      ).toEqual([
+        "COMPLETE:MTL41",
+        "COMPLETE:MTL100",
+        "PARTIAL:MTL10",
+        "PENDING:MTL01",
+        "PENDING:MTL145",
+      ])
+    }
+  })
+
+  it("compares numeric suffixes with or without leading zeros", () => {
+    const ids = ["MTL145", "MTL100", "MTL41", "MTL10", "MTL09", "MTL2", "MTL01"]
+    expect([...ids].sort(compareWorksTrackerFleetIds)).toEqual([
+      "MTL01",
+      "MTL2",
+      "MTL09",
+      "MTL10",
+      "MTL41",
+      "MTL100",
+      "MTL145",
+    ])
+    expect(compareWorksTrackerFleetIds("MTL01", "MTL02")).toBeLessThan(0)
+    expect(compareWorksTrackerFleetIds("MTL09", "MTL10")).toBeLessThan(0)
+    expect(compareWorksTrackerFleetIds("MTL10", "MTL100")).toBeLessThan(0)
+    // Same numeric value: deterministic, never 0 for different strings.
+    expect(compareWorksTrackerFleetIds("MTL01", "MTL1")).not.toBe(0)
+  })
+
+  it("describes the active order for the header", () => {
+    const byStatus = buildWorksTrackerData(mixedInput(), undefined, NOW)
+    expect(describeWorksTrackerOrder(byStatus)).toBe("Order: By Status")
+    const byFleet = buildWorksTrackerData(
+      mixedInput(),
+      { sortBy: "FLEET_NO" },
+      NOW
+    )
+    expect(describeWorksTrackerOrder(byFleet)).toBe(
+      "Order: Fleet No. (MTL01\u2013MTL145)"
+    )
   })
 })
 
@@ -310,15 +493,21 @@ describe("Works tracker PDF", () => {
     expect(Number(box?.[1])).toBeGreaterThan(Number(box?.[2]))
   })
 
-  it("prints the 8 columns, KPI strip and the closing fault codes", () => {
+  it("prints the 6 side-by-side columns, KPI strip and both fault lists", () => {
     const source = pdfSource(pdf.buffer)
     for (const label of [
-      "Tracker Status",
-      "Before Photo",
-      "After Photo",
+      "Fleet & Gen",
+      "Status & Outcome",
+      "Before / After",
       "Fault Tally",
-      "Closure Outcome",
-      "Closing Fault Codes",
+      "Cleared Faults",
+      "Residual Faults",
+      "Cleared: 4",
+      "Residual: 5",
+      `Before: ${rowOf(data.rows, "MTL41").openingFaultsCount}`,
+      "Before: 2026-11-20",
+      "After: 2026-11-24",
+      "After: -",
       "Total Fleet",
       "Clean Closures",
       "Complete w/ Residual Faults",
@@ -327,14 +516,100 @@ describe("Works tracker PDF", () => {
       "COMPLETE",
       "Pending baseline scan",
       "Awaiting final photo",
-      "[NEW REGRESSION] MID128 PID26 FMI3",
-      "+9 approved exceptions excluded",
+      "None - All actionable faults cleared",
       "Clean Closure",
-      "Residual Faults",
+      "Fault Clearance",
+      "Order: By Status",
     ]) {
       expect(source).toContain(label)
     }
+    // The retired 8-column headers are gone.
+    for (const old of [
+      "Tracker Status",
+      "Closure Outcome",
+      "Closing Fault Codes",
+      "Before Photo",
+    ]) {
+      expect(source).not.toContain(old)
+    }
+    expect(WORKS_TRACKER_PDF_HEADERS).toHaveLength(6)
+    expect(WORKS_TRACKER_COLUMN_RATIOS).toEqual([8, 13, 11, 10, 29, 29])
     expect(WORKS_TRACKER_COLUMN_RATIOS.reduce((a, b) => a + b, 0)).toBe(100)
+  })
+
+  it("renders both the 4 cleared and the 5 residual MTL41 faults", () => {
+    const source = pdfSource(pdf.buffer)
+    const mtl41 = rowOf(data.rows, "MTL41")
+    expect(mtl41.clearedFaultItems).toHaveLength(4)
+    expect(mtl41.residualFaultItems).toHaveLength(5)
+    // jsPDF wraps long lines, so every fault is matched by its code.
+    for (const key of [
+      "MID128 PID153 FMI5",
+      "MID128 PID175 FMI5",
+      "MID128 PID94 FMI5",
+      "MID128 SID18 FMI5",
+    ]) {
+      expect(source).toContain(key)
+    }
+    for (const item of [...mtl41.clearedFaultItems, ...mtl41.residualFaultItems]) {
+      expect(source).toContain(item.codeLabel)
+    }
+    expect(source).toContain("MID128 PID26 FMI3")
+    expect(source).toContain("MID144 PID84 FMI2")
+  })
+
+  it("has zero regression / exception wording or the old outcome", () => {
+    for (const excludeApprovedExceptions of [true, false]) {
+      const source = pdfSource(
+        buildWorksTrackerPdf(
+          buildWorksTrackerData(
+            fourTruckInput(),
+            { excludeApprovedExceptions },
+            NOW
+          )
+        ).buffer
+      )
+      for (const banned of [
+        "[NEW REGRESSION]",
+        "Reg ",
+        "approved exception",
+        "[APPROVED EXCEPTION]",
+        "In Workshop",
+      ]) {
+        expect(source.toLowerCase()).not.toContain(banned.toLowerCase())
+      }
+    }
+  })
+
+  it("prints the fleet rows in the selected order", () => {
+    const rowOrder = (sortBy: "STATUS" | "FLEET_NO") => {
+      const source = pdfSource(
+        buildWorksTrackerPdf(
+          buildWorksTrackerData(mixedInput(), { sortBy }, NOW)
+        ).buffer
+      )
+      return [...source.matchAll(/\((MTL\d+)\) Tj/g)].map((match) => match[1])
+    }
+    expect(rowOrder("FLEET_NO")).toEqual([
+      "MTL01",
+      "MTL10",
+      "MTL41",
+      "MTL100",
+      "MTL145",
+    ])
+    expect(rowOrder("STATUS")).toEqual([
+      "MTL41",
+      "MTL100",
+      "MTL10",
+      "MTL01",
+      "MTL145",
+    ])
+    const source = pdfSource(
+      buildWorksTrackerPdf(
+        buildWorksTrackerData(mixedInput(), { sortBy: "FLEET_NO" }, NOW)
+      ).buffer
+    )
+    expect(source).toContain("Order: Fleet No. \\(MTL01-MTL145\\)")
   })
 
   it("repeats the header across pages for a large fleet", () => {
@@ -382,7 +657,7 @@ describe("Works tracker PDF", () => {
       undefined,
       NOW
     )
-    expect(rowOf(result.rows, "MTL41").closingFaultsCount).toBe(70)
+    expect(rowOf(result.rows, "MTL41").residualFaultsCount).toBe(70)
     const tallPdf = buildWorksTrackerPdf(result)
     expect(tallPdf.pageCount).toBeGreaterThan(1)
     expect(pdfSource(tallPdf.buffer)).toContain("MTL41 \\(cont.\\)")
@@ -414,18 +689,44 @@ describe("Works tracker Excel workbook", () => {
     ])
   })
 
-  it("has the 14 headers, frozen row 1, filter and wrapped text on tab 1", async () => {
+  it("has the 12 headers, frozen row 1, filter and wrapped text on tab 1", async () => {
     const { workbook } = await reload()
     const sheet = workbook.getWorksheet("Works Tracker")
     if (!sheet) throw new Error("Missing Works Tracker sheet")
     const header = (sheet.getRow(1).values as unknown[]).slice(1).map(String)
+    expect(header).toEqual([
+      "Fleet No.",
+      "Gen",
+      "Tracker Status",
+      "Closure Outcome",
+      "Before Photo Date",
+      "After Photo Date",
+      "Turnaround / Open Days",
+      "Before Faults",
+      "Cleared Faults",
+      "Residual Faults",
+      "Cleared Fault Codes",
+      "Residual Fault Codes",
+    ])
     expect(header).toEqual([...WORKS_TRACKER_SHEET_HEADERS])
-    expect(header).toHaveLength(14)
+    expect(header).toHaveLength(12)
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 })
     // exceljs reads a stored filter back as an A1 range.
-    expect(sheet.autoFilter).toBe("A1:N1")
-    expect(sheet.getRow(2).getCell(13).alignment?.wrapText).toBe(true)
-    expect(sheet.getRow(2).height).toBeGreaterThan(18)
+    expect(sheet.autoFilter).toBe("A1:L1")
+    // Column letters: H/I/J = Before/Cleared/Residual, K/L = the fault codes.
+    const letter = (column: string) => sheet.getCell(`${column}1`).value
+    expect(letter("A")).toBe("Fleet No.")
+    expect(letter("H")).toBe("Before Faults")
+    expect(letter("I")).toBe("Cleared Faults")
+    expect(letter("J")).toBe("Residual Faults")
+    expect(letter("K")).toBe("Cleared Fault Codes")
+    expect(letter("L")).toBe("Residual Fault Codes")
+    expect(sheet.getColumn("K").width).toBeGreaterThanOrEqual(50)
+    expect(sheet.getColumn("L").width).toBeGreaterThanOrEqual(50)
+    expect(sheet.getRow(2).getCell(11).alignment?.wrapText).toBe(true)
+    expect(sheet.getRow(2).getCell(12).alignment?.wrapText).toBe(true)
+    // MTL41 (row 3) lists 5 residual lines: its row is tall.
+    expect(sheet.getRow(3).height).toBeGreaterThan(60)
   })
 
   it("tab 1 carries the tracker numbers, statuses and fills", async () => {
@@ -453,29 +754,35 @@ describe("Works tracker Excel workbook", () => {
       "Before Photo Date": "2026-11-20",
       "After Photo Date": "2026-11-24",
       "Turnaround / Open Days": 4,
+      "Before Faults": rowOf(data.rows, "MTL41").openingFaultsCount,
       "Cleared Faults": 4,
-      "Closing Faults": 5,
-      "New Regressions": 1,
-      "Approved Exceptions": 9,
+      "Residual Faults": 5,
     })
-    expect(String(mtl41?.["Closing Fault Codes"])).toMatch(
-      /^\[NEW REGRESSION\] MID128 PID26 FMI3 \u2014 /
+    const text = (value: unknown) => String(value ?? "")
+    const residualCodes = text(mtl41?.["Residual Fault Codes"])
+    const clearedCodes = text(mtl41?.["Cleared Fault Codes"])
+    expect(residualCodes).toContain("MID128 PID26 FMI3 - ")
+    expect(residualCodes).not.toContain("[NEW REGRESSION]")
+    expect(residualCodes.split("\n")).toHaveLength(5)
+    expect(clearedCodes.split("\n")).toHaveLength(4)
+    expect(clearedCodes.split("\n").every((line) => line.startsWith("MID128 "))).toBe(
+      true
     )
-    expect(String(mtl41?.["Cleared Fault Codes"]).split("\n")).toHaveLength(4)
-    expect(rows.get("MTL02")?.["Closing Fault Codes"]).toBe(
-      "None \u2014 All actionable faults cleared"
+    expect(rows.get("MTL02")?.["Residual Fault Codes"]).toBe(
+      "None - All actionable faults cleared"
     )
+    expect(text(rows.get("MTL07")?.["Cleared Fault Codes"])).toBe("")
     expect(rows.get("MTL07")).toMatchObject({
       "Tracker Status": "PARTIAL",
-      "Closure Outcome": "In Workshop",
-      "Closing Fault Codes": "Awaiting final photo",
+      "Closure Outcome": "Fault Clearance Pending",
+      "Residual Fault Codes": "Awaiting final photo",
       "Turnaround / Open Days": 1,
     })
+    expect(text(rows.get("MTL99")?.["Cleared Fault Codes"])).toBe("")
     expect(rows.get("MTL99")).toMatchObject({
       "Tracker Status": "PENDING",
-      "Closing Fault Codes": "Pending baseline scan",
+      "Residual Fault Codes": "Pending baseline scan",
     })
-
     const argb = (rowNumber: number, column: number) =>
       (
         sheet.getRow(rowNumber).getCell(column).fill as
@@ -488,8 +795,56 @@ describe("Works tracker Excel workbook", () => {
     expect(argb(5, 3)).toBe("FFF3F4F6") // PENDING soft grey
     expect(argb(3, 4)).toBe("FFFECACA") // Residual Faults soft red
     expect(argb(2, 4)).toBe("FFD1FAE5") // Clean Closure green
-    expect(argb(3, 11)).toBe("FFDC2626") // regressions bold red
-    expect(argb(2, 11)).toBeUndefined()
+    expect(argb(4, 4)).toBe("FFFDE68A") // Fault Clearance Pending amber
+    // No red fill is left on the count / fault code cells.
+    for (const column of [8, 9, 10, 11, 12]) {
+      expect(argb(3, column)).toBeUndefined()
+    }
+  })
+
+  it("has zero regression / exception wording or the old outcome in any cell", async () => {
+    for (const excludeApprovedExceptions of [true, false]) {
+      const file = await buildWorksTrackerWorkbook(
+        buildWorksTrackerData(fourTruckInput(), { excludeApprovedExceptions }, NOW)
+      )
+      const cells: string[] = []
+      for (const sheet of file.worksheets) {
+        sheet.eachRow((row) => {
+          row.eachCell((cell) => {
+            const value = cell.value
+            cells.push(
+              typeof value === "object" && value !== null
+                ? JSON.stringify(value)
+                : String(value)
+            )
+          })
+        })
+      }
+      const text = cells.join("\n").toLowerCase()
+      for (const banned of [
+        "[new regression]",
+        "reg ",
+        "approved exception",
+        "[approved exception]",
+        "in workshop",
+        "new regressions",
+      ]) {
+        expect(text).not.toContain(banned)
+      }
+    }
+  })
+
+  it("orders the Excel rows by Fleet No. when asked", async () => {
+    const workbook = await buildWorksTrackerWorkbook(
+      buildWorksTrackerData(mixedInput(), { sortBy: "FLEET_NO" }, NOW)
+    )
+    const sheet = workbook.getWorksheet("Works Tracker")
+    if (!sheet) throw new Error("Missing Works Tracker sheet")
+    const ids: string[] = []
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) ids.push(String(row.getCell(1).value))
+    })
+    expect(ids).toEqual(["MTL01", "MTL10", "MTL41", "MTL100", "MTL145"])
   })
 
   it("tab 2 uses live formulas over tab 1", async () => {
@@ -525,11 +880,11 @@ describe("Works tracker Excel workbook", () => {
     )
     expectFormula("Total Cleared Faults", /^SUM\('Works Tracker'!\$I\$2:\$I\$5\)$/, 5)
     expectFormula(
-      "Total Closing Actionable Faults",
+      "Total Residual Faults",
       /^SUM\('Works Tracker'!\$J\$2:\$J\$5\)$/,
       5
     )
-    expectFormula("Total New Regressions", /^SUM\('Works Tracker'!\$K\$2:\$K\$5\)$/, 1)
+    expect(lookup.has("Total New Regressions")).toBe(false)
 
     // The "% Complete" cell references the Total / Complete cells above it.
     const total = lookup.get("Total Fleet")

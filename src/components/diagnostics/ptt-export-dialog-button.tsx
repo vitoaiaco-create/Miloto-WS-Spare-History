@@ -56,8 +56,15 @@ import {
 import {
   buildWorksTrackerData,
   type PttWorksTrackerRosterTruck,
+  type WorksTrackerBuildOptions,
+  type WorksTrackerSortBy,
 } from "@/lib/ptt/works-tracker-data"
 import { cn } from "@/lib/utils"
+
+const TRACKER_SORT_LABELS: Record<WorksTrackerSortBy, string> = {
+  STATUS: "By Status (Complete \u2192 Partial \u2192 Pending)",
+  FLEET_NO: "By Fleet No. (MTL01 \u2192 MTL149)",
+}
 
 const SEVERITY_PILL_ACTIVE: Record<PttFaultSeverity, string> = {
   CRITICAL:
@@ -141,6 +148,8 @@ export function PttExportDialogButton({
   // Checked by default: approved fleet exceptions are not workshop work.
   const [excludeApprovedExceptions, setExcludeApprovedExceptions] =
     useState(true)
+  const [trackerSortBy, setTrackerSortBy] =
+    useState<WorksTrackerSortBy>("STATUS")
   const [generating, setGenerating] = useState<
     PttReportKind | `TRACKER_${PttWorksTrackerFormat}` | null
   >(null)
@@ -191,11 +200,16 @@ export function PttExportDialogButton({
   const rowCount = matching.faultRows.length
   const truckCount = matching.trucks.length
 
+  const trackerOptions = useMemo<WorksTrackerBuildOptions>(
+    () => ({ ...options, sortBy: trackerSortBy }),
+    [options, trackerSortBy]
+  )
+
   // Same builder the tracker PDF / workbook render. Ignores the severity
   // filter on purpose: PENDING trucks have no faults yet.
   const tracker = useMemo(
-    () => buildWorksTrackerData(trackerInput, options).kpis,
-    [trackerInput, options]
+    () => buildWorksTrackerData(trackerInput, trackerOptions).kpis,
+    [trackerInput, trackerOptions]
   )
 
   const allSelected = severities.length === PTT_FAULT_SEVERITIES.length
@@ -245,7 +259,7 @@ export function PttExportDialogButton({
       const result = await downloadPttWorksTracker(
         format,
         trackerInput,
-        options
+        trackerOptions
       )
       toast.add({
         title: TRACKER_COPY[format].success,
@@ -479,6 +493,29 @@ export function PttExportDialogButton({
                 ). Uses the Truck, date and exception options above; the
                 severity filter does not apply.
               </p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="ptt-export-tracker-sort">Sort Order</Label>
+              <Select
+                items={TRACKER_SORT_LABELS}
+                value={trackerSortBy}
+                onValueChange={(value) => {
+                  if (value && value in TRACKER_SORT_LABELS) {
+                    setTrackerSortBy(value as WorksTrackerSortBy)
+                  }
+                }}
+              >
+                <SelectTrigger id="ptt-export-tracker-sort" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(TRACKER_SORT_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             {(["PDF", "EXCEL"] as const).map((format) => (
               <Button

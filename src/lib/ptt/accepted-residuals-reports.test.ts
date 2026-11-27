@@ -148,8 +148,13 @@ describe("works tracker: Closed (Accepted Residuals)", () => {
     expect(row.closureNote).toContain(REASON)
     expect(row.closureNote).toContain(NOTE)
     // The residuals the manager accepted are still listed.
-    expect(row.closingFaultsCount).toBe(5)
-    expect(row.closingFaultCodes).toContain("[NEW REGRESSION]")
+    expect(row.residualFaultsCount).toBe(5)
+    expect(row.residualFaultItems).toHaveLength(5)
+    expect(row.residualFaultCodes).toContain("MID128 PID26 FMI3")
+    expect(row.residualFaultCodes).not.toContain("[NEW REGRESSION]")
+    // The 4 cleared faults sit next to the residuals, 1-for-1 with the count.
+    expect(row.clearedFaultsCount).toBe(4)
+    expect(row.clearedFaultItems).toHaveLength(4)
   })
 
   it("splits Clean / Closed / Residual KPIs that add up to Complete", () => {
@@ -169,8 +174,11 @@ describe("works tracker: Closed (Accepted Residuals)", () => {
   it("prints the outcome in the tracker PDF", () => {
     const source = pdfSource(buildWorksTrackerPdf(data).buffer)
     expect(source).toContain("Closed \\(Accepted Residuals\\)")
-    expect(source).toContain(`Closure: ${REASON}`)
+    // The closure context is a muted footer under the residual faults.
+    expect(source).toContain(`Note: Closure: ${REASON}`)
     expect(source).toContain(NOTE)
+    expect(source).toContain("MID128 PID26 FMI3")
+    expect(source.toLowerCase()).not.toContain("approved exception")
   })
 
   it("reconciles Clean + Closed + Open-with-Residual = Complete in tab 2", async () => {

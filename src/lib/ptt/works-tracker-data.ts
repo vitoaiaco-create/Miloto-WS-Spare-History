@@ -3,15 +3,14 @@ import { format } from "date-fns"
 import {
   compareFleetIds,
   normalizeFleetId,
+  PTT_SEVERITY_RANK,
+  type PttFaultSeverity,
   type PttTruckGeneration,
 } from "../ptt-diagnostics"
 import {
-  ALL_CLEARED_TEXT,
   buildPttReportData,
   daysBetween,
   endOfDay,
-  formatFaultLine,
-  formatOutstandingLine,
   latestScanAt,
   newestVerificationFirst,
   resolvePttReportOptions,
@@ -48,26 +47,26 @@ export type WorksTrackerOutcome =
   | "Closed (Accepted Residuals)"
   | "Residual Faults"
   | "No Progress"
-  | "In Workshop"
+  | "Fault Clearance Pending"
   | "Not Scanned"
 
 /** `FH V3` / `FH V4` / `\u2014` (not yet identified). */
 export type WorksTrackerGeneration = "FH V3" | "FH V4" | "\u2014"
 
-export const PENDING_CLOSING_TEXT = "Pending baseline scan"
-export const PARTIAL_CLOSING_TEXT = "Awaiting final photo"
+export const PENDING_RESIDUAL_TEXT = "Pending baseline scan"
+export const PARTIAL_RESIDUAL_TEXT = "Awaiting final photo"
 export const NONE_CLEARED_TRACKER_TEXT = "None cleared"
-/** Closing Fault Codes placeholder when a manager closed the job with residuals accepted. */
-export const ACCEPTED_CLOSING_TEXT = "None \u2014 residuals accepted"
-/** One line of the Closing Fault Codes cell, with the flags the PDF styles. */
-export type WorksTrackerClosingFault = {
-  /** `[NEW REGRESSION] [REPEAT x2] Code \u2014 Short Description`. */
+/** Residual Fault Codes placeholder when every actionable fault was cleared. */
+export const NONE_RESIDUAL_TRACKER_TEXT = "None - All actionable faults cleared"
+
+/** One cleared / residual fault line of a tracker row. */
+export type WorksTrackerFaultItem = {
+  /** `Code - Short Description` (ASCII hyphen, PDF safe). */
   text: string
-  isNewRegression: boolean
-  /** `N` of `[REPEAT xN]`; 0 when the fault is not a repeat. */
-  repeatCount: number
-  /** Only listed when approved exceptions are NOT excluded. */
-  isApprovedException: boolean
+  /** `MID128 PID94 FMI5` (FH V3) / `EMS P255800` (FH V4). */
+  codeLabel: string
+  ecuLabel: string
+  severity: PttFaultSeverity
 }
 
 export type WorksTrackerRow = {
@@ -81,21 +80,29 @@ export type WorksTrackerRow = {
   afterPhotoDate: string | null
   /** COMPLETE: baseline -> final photo. PARTIAL: days in the workshop. */
   turnaroundDays: number | null
+  /** Actionable faults on the BEFORE photo; `null` when PENDING. */
   openingFaultsCount: number | null
   clearedFaultsCount: number | null
-  closingFaultsCount: number | null
-  newRegressionsCount: number | null
-  approvedExceptionsCount: number
-  /** Newline-separated `Code \u2014 Short Description`, or a status placeholder. */
-  closingFaultCodes: string
-  /** Structured lines behind `closingFaultCodes` (COMPLETE with faults only). */
-  closingFaults: WorksTrackerClosingFault[]
-  /** `+N approved exceptions excluded`; only on COMPLETE when excluding. */
-  approvedExceptionsNote: string | null
-  /** `Closure: <reason> \u2014 <note>`; only on a COMPLETE row closed with accepted residuals. */
-  closureNote: string | null
-  /** Newline-separated cleared faults (COMPLETE); `""` otherwise. */
+  residualFaultsCount: number | null
+  /** Structured cleared faults (COMPLETE only), severity -> ECU -> code. */
+  clearedFaultItems: WorksTrackerFaultItem[]
+  /**
+   * Newline-separated `Code - Short Description` (COMPLETE), `None cleared`
+   * when nothing was cleared, `""` for PARTIAL / PENDING.
+   */
   clearedFaultCodes: string
+  /** Structured residual faults of the final photo (COMPLETE only). */
+  residualFaultItems: WorksTrackerFaultItem[]
+  /**
+   * Newline-separated `Code - Short Description` (COMPLETE with residuals),
+   * or a placeholder (none left / awaiting final photo / pending baseline).
+   */
+  residualFaultCodes: string
+  /**
+   * `Closure: <reason>`, then the manager's note on a second line; only on a
+   * COMPLETE row closed with accepted residuals.
+   */
+  closureNote: string | null
 }
 
 export type WorksTrackerKpis = {
@@ -113,16 +120,28 @@ export type WorksTrackerKpis = {
   /** COMPLETE rows still open with residual faults (never a manager release). */
   residualFaultsTrucksCount: number
   totalClearedFaults: number
-  totalClosingActionableFaults: number
-  totalNewRegressions: number
+  totalResidualFaults: number
 }
+
+/** `STATUS`: Complete -> Partial -> Pending; `FLEET_NO`: strictly by Fleet No. */
+export type WorksTrackerSortBy = "STATUS" | "FLEET_NO"
 
 export type WorksTrackerOptions = {
   /** `ALL` or one normalized fleet number. */
   fleetId: string
   fromDate?: string
   toDate?: string
+  /**
+   * Always `true`: the director-facing tracker silently excludes approved
+   * exceptions, whatever the UI toggle says.
+   */
   excludeApprovedExceptions: boolean
+  sortBy: WorksTrackerSortBy
+}
+
+/** The shared report options plus the tracker's row order. */
+export type WorksTrackerBuildOptions = PttReportDataOptions & {
+  sortBy?: WorksTrackerSortBy
 }
 
 export type WorksTrackerData = {
@@ -175,8 +194,30 @@ export function describeWorksTrackerFilters(
   return [
     `Date scope: ${scope}`,
     `Truck: ${options.fleetId === "ALL" ? "All active trucks" : options.fleetId}`,
-    `Approved exceptions: ${options.excludeApprovedExceptions ? "excluded" : "included"}`,
   ].join("  |  ")
+}
+
+/** `Order: By Status` / `Order: Fleet No. (MTL01\u2013MTL149)`. */
+export function describeWorksTrackerOrder(data: {
+  options: Pick<WorksTrackerOptions, "sortBy">
+  rows: readonly Pick<WorksTrackerRow, "fleetId">[]
+}): string {
+  if (data.options.sortBy === "STATUS") return "Order: By Status"
+  const first = data.rows[0]
+  const last = data.rows[data.rows.length - 1]
+  return first && last
+    ? `Order: Fleet No. (${first.fleetId}\u2013${last.fleetId})`
+    : "Order: Fleet No."
+}
+
+/**
+ * Natural Fleet No. comparator: numeric suffixes compare by value, with or
+ * without leading zeros (`MTL01` < `MTL02` < `MTL09` < `MTL10` < `MTL100`).
+ * Equal-valued ids (`MTL01` vs `MTL1`) fall back to the raw text so the order
+ * is always deterministic.
+ */
+export function compareWorksTrackerFleetIds(a: string, b: string): number {
+  return compareFleetIds(a, b) || (a < b ? -1 : a > b ? 1 : 0)
 }
 
 /** Compares by status priority, then natural Fleet No. (`MTL10` < `MTL100`). */
@@ -186,18 +227,48 @@ export function compareWorksTrackerRows(
 ): number {
   return (
     STATUS_PRIORITY[a.trackerStatus] - STATUS_PRIORITY[b.trackerStatus] ||
-    compareFleetIds(a.fleetId, b.fleetId)
+    compareWorksTrackerFleetIds(a.fleetId, b.fleetId)
   )
 }
 
-function closingFaultOf(item: PttReportFaultItem): WorksTrackerClosingFault {
+/** Strictly by natural Fleet No., whatever the tracker status. */
+export function compareWorksTrackerRowsByFleetNo(
+  a: Pick<WorksTrackerRow, "fleetId">,
+  b: Pick<WorksTrackerRow, "fleetId">
+): number {
+  return compareWorksTrackerFleetIds(a.fleetId, b.fleetId)
+}
+
+/** CRITICAL -> CALIBRATION_ONLY -> MONITOR, then ECU, then code. */
+const compareFaultItems = (
+  a: PttReportFaultItem,
+  b: PttReportFaultItem
+): number =>
+  PTT_SEVERITY_RANK[b.severity] - PTT_SEVERITY_RANK[a.severity] ||
+  a.ecuLabel.localeCompare(b.ecuLabel) ||
+  a.canonicalKey.localeCompare(b.canonicalKey)
+
+/** Typographic dashes -> ASCII hyphen, so the text is safe in any PDF font. */
+const asciiDashes = (value: string): string =>
+  value.replace(/[\u2013\u2014]/g, "-")
+
+/** `Code - Short Description` (no repeat / regression / exception tags). */
+function faultItemOf(item: PttReportFaultItem): WorksTrackerFaultItem {
   return {
-    text: formatOutstandingLine(item),
-    isNewRegression: item.status === "NEW_REGRESSION",
-    repeatCount: item.repeatCount,
-    isApprovedException: false,
+    text: asciiDashes(`${item.codeLabel} - ${item.shortDescription}`),
+    codeLabel: item.codeLabel,
+    ecuLabel: item.ecuLabel,
+    severity: item.severity,
   }
 }
+
+const sortedFaultItems = (
+  items: readonly PttReportFaultItem[]
+): WorksTrackerFaultItem[] =>
+  [...items].sort(compareFaultItems).map(faultItemOf)
+
+const joinLines = (items: readonly WorksTrackerFaultItem[]): string =>
+  items.map((item) => item.text).join("\n")
 
 /** The same case with its re-scans removed: what the BASELINE photo showed. */
 function baselineView(session: PttReportCase): PttReportCase {
@@ -218,12 +289,18 @@ function baselineView(session: PttReportCase): PttReportCase {
  * - The `severity` filter never applies: PENDING trucks have no faults yet.
  * - With a date window, a truck's session is its newest one whose baseline OR
  *   latest verification scan falls inside it; none -> PENDING.
- * - `excludeApprovedExceptions` (default `true`) keeps approved exceptions out
- *   of the Closing Fault Codes and counts them for the muted footer note.
+ * - Approved exceptions are ALWAYS silently excluded, whatever
+ *   `excludeApprovedExceptions` says, so every count equals the number of
+ *   fault lines printed next to it (never annotated).
+ * - Residual faults are every active actionable fault of the final photo
+ *   (regressions included, never labelled); cleared faults are the ones the
+ *   final photo no longer shows. Both are sorted by severity, ECU, code.
+ * - `sortBy` (default `STATUS`): status priority then natural Fleet No., or
+ *   strictly natural Fleet No.
  */
 export function buildWorksTrackerData(
   input: PttWorksTrackerInput,
-  options?: PttReportDataOptions,
+  options?: WorksTrackerBuildOptions,
   now: Date = new Date()
 ): WorksTrackerData {
   const resolved = resolvePttReportOptions(options)
@@ -231,7 +308,8 @@ export function buildWorksTrackerData(
     fleetId: resolved.fleetId,
     fromDate: resolved.fromDate,
     toDate: resolved.toDate,
-    excludeApprovedExceptions: resolved.excludeApprovedExceptions,
+    excludeApprovedExceptions: true,
+    sortBy: options?.sortBy ?? "STATUS",
   }
   const fromMs = startOfDay(resolved.fromDate)
   const toMs = endOfDay(resolved.toDate)
@@ -300,7 +378,7 @@ export function buildWorksTrackerData(
   const engineOptions: PttReportDataOptions = {
     scope: "ALL_SCANS",
     fleetId: "ALL",
-    excludeApprovedExceptions: resolved.excludeApprovedExceptions,
+    excludeApprovedExceptions: true,
   }
   const finalTrucks = new Map<number, PttReportTruck>(
     buildPttReportData(
@@ -337,14 +415,12 @@ export function buildWorksTrackerData(
         turnaroundDays: null,
         openingFaultsCount: null,
         clearedFaultsCount: null,
-        closingFaultsCount: null,
-        newRegressionsCount: null,
-        approvedExceptionsCount: 0,
-        closingFaultCodes: PENDING_CLOSING_TEXT,
-        closingFaults: [],
-        approvedExceptionsNote: null,
-        closureNote: null,
+        residualFaultsCount: null,
+        clearedFaultItems: [],
         clearedFaultCodes: "",
+        residualFaultItems: [],
+        residualFaultCodes: PENDING_RESIDUAL_TEXT,
+        closureNote: null,
       })
       continue
     }
@@ -360,70 +436,51 @@ export function buildWorksTrackerData(
         fleetId,
         generation,
         trackerStatus: "PARTIAL",
-        closureOutcome: "In Workshop",
+        closureOutcome: "Fault Clearance Pending",
         beforePhotoDate,
         afterPhotoDate: null,
         turnaroundDays: Math.max(0, daysBetween(session.scannedAt, now)),
         openingFaultsCount,
         clearedFaultsCount: null,
-        closingFaultsCount: null,
-        newRegressionsCount: null,
-        approvedExceptionsCount:
-          baselineTrucks.get(session.id)?.approvedExceptionsCount ?? 0,
-        closingFaultCodes: PARTIAL_CLOSING_TEXT,
-        closingFaults: [],
-        approvedExceptionsNote: null,
-        closureNote: null,
+        residualFaultsCount: null,
+        clearedFaultItems: [],
         clearedFaultCodes: "",
+        residualFaultItems: [],
+        residualFaultCodes: PARTIAL_RESIDUAL_TEXT,
+        closureNote: null,
       })
       continue
     }
 
     // COMPLETE: the latest verification scan is the final photo.
-    const closingFaultsCount = finalTruck?.outstandingCount ?? 0
-    const newRegressionsCount = finalTruck?.newRegressionsCount ?? 0
-    const clearedFaultsCount = finalTruck?.clearedCount ?? 0
-    const approvedExceptionsCount = finalTruck?.approvedExceptionsCount ?? 0
-
-    const closingFaults = (finalTruck?.outstandingItems ?? []).map(
-      closingFaultOf
-    )
-    if (!resolved.excludeApprovedExceptions) {
-      for (const item of finalTruck?.faults ?? []) {
-        if (item.status !== "APPROVED_EXCEPTION") continue
-        closingFaults.push({
-          text: `[APPROVED EXCEPTION] ${formatFaultLine(item)}`,
-          isNewRegression: false,
-          repeatCount: 0,
-          isApprovedException: true,
-        })
-      }
-    }
+    // Counts are the lengths of the printed lists, so a number never
+    // disagrees with the lines next to it (approved exceptions never appear).
+    const clearedFaultItems = sortedFaultItems(finalTruck?.clearedItems ?? [])
+    const residualFaultItems = sortedFaultItems(finalTruck?.outstandingItems ?? [])
+    const clearedFaultsCount = clearedFaultItems.length
+    const residualFaultsCount = residualFaultItems.length
     const acceptedResiduals =
       finalTruck?.caseStatus === "CLOSED_ACCEPTED_RESIDUALS"
-    const closingLines =
-      closingFaultsCount === 0
-        ? [
-            acceptedResiduals ? ACCEPTED_CLOSING_TEXT : ALL_CLEARED_TEXT,
-            ...closingFaults.map((fault) => fault.text),
-          ]
-        : closingFaults.map((fault) => fault.text)
 
     // The tracker status stays COMPLETE (both photos exist); the outcome says
     // HOW the job ended. A manager release is never a "Clean Closure", even
-    // when its residuals were saved as exceptions (closing faults = 0).
+    // when its residuals were saved as exceptions (residual faults = 0).
     const closureOutcome: WorksTrackerOutcome = acceptedResiduals
       ? "Closed (Accepted Residuals)"
-      : closingFaultsCount === 0 && newRegressionsCount === 0
+      : residualFaultsCount === 0
         ? "Clean Closure"
         : finalTruck?.caseStatus === "REJECTED_NO_PROGRESS"
           ? "No Progress"
           : "Residual Faults"
     const closureNote =
       acceptedResiduals && finalTruck
-        ? `Closure: ${[finalTruck.closureReasonLabel, finalTruck.closureNote]
+        ? [
+            `Closure: ${finalTruck.closureReasonLabel ?? ""}`.replace(/:\s*$/, ""),
+            finalTruck.closureNote ?? "",
+          ]
             .filter(Boolean)
-            .join(" \u2014 ")}`.replace(/:\s*$/, "")
+            .map(asciiDashes)
+            .join("\n")
         : null
 
     rows.push({
@@ -439,24 +496,26 @@ export function buildWorksTrackerData(
       ),
       openingFaultsCount,
       clearedFaultsCount,
-      closingFaultsCount,
-      newRegressionsCount,
-      approvedExceptionsCount,
-      closingFaultCodes: closingLines.join("\n"),
-      closingFaults,
-      approvedExceptionsNote:
-        resolved.excludeApprovedExceptions && approvedExceptionsCount > 0
-          ? `+${approvedExceptionsCount} approved ${approvedExceptionsCount === 1 ? "exception" : "exceptions"} excluded`
-          : null,
-      closureNote,
+      residualFaultsCount,
+      clearedFaultItems,
       clearedFaultCodes:
         clearedFaultsCount === 0
           ? NONE_CLEARED_TRACKER_TEXT
-          : (finalTruck?.clearedItems ?? []).map(formatFaultLine).join("\n"),
+          : joinLines(clearedFaultItems),
+      residualFaultItems,
+      residualFaultCodes:
+        residualFaultsCount === 0
+          ? NONE_RESIDUAL_TRACKER_TEXT
+          : joinLines(residualFaultItems),
+      closureNote,
     })
   }
 
-  rows.sort(compareWorksTrackerRows)
+  rows.sort(
+    trackerOptions.sortBy === "FLEET_NO"
+      ? compareWorksTrackerRowsByFleetNo
+      : compareWorksTrackerRows
+  )
 
   const count = (status: WorksTrackerStatus) =>
     rows.filter((row) => row.trackerStatus === status).length
@@ -480,7 +539,7 @@ export function buildWorksTrackerData(
     // add up to Complete (the Excel summary uses the same three criteria).
     cleanClosureCount: complete.filter(
       (row) =>
-        row.closingFaultsCount === 0 &&
+        row.residualFaultsCount === 0 &&
         row.closureOutcome !== "Closed (Accepted Residuals)"
     ).length,
     closedAcceptedResidualsCount: complete.filter(
@@ -488,12 +547,11 @@ export function buildWorksTrackerData(
     ).length,
     residualFaultsTrucksCount: complete.filter(
       (row) =>
-        (row.closingFaultsCount ?? 0) >= 1 &&
+        (row.residualFaultsCount ?? 0) >= 1 &&
         row.closureOutcome !== "Closed (Accepted Residuals)"
     ).length,
     totalClearedFaults: sum((row) => row.clearedFaultsCount),
-    totalClosingActionableFaults: sum((row) => row.closingFaultsCount),
-    totalNewRegressions: sum((row) => row.newRegressionsCount),
+    totalResidualFaults: sum((row) => row.residualFaultsCount),
   }
 
   return { options: trackerOptions, generatedAt: now, rows, kpis }

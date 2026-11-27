@@ -6,7 +6,6 @@ import {
   GREY,
   SOFT_AMBER,
   SOFT_RED,
-  STRONG_RED,
   addSheet,
   applyLook,
   type Column,
@@ -14,6 +13,7 @@ import {
 } from "./report-excel"
 import {
   describeWorksTrackerFilters,
+  describeWorksTrackerOrder,
   pttWorksTrackerFileName,
   type WorksTrackerData,
   type WorksTrackerOutcome,
@@ -38,13 +38,11 @@ export const WORKS_TRACKER_SHEET_HEADERS = [
   "Before Photo Date",
   "After Photo Date",
   "Turnaround / Open Days",
-  "Opening Faults",
+  "Before Faults",
   "Cleared Faults",
-  "Closing Faults",
-  "New Regressions",
-  "Approved Exceptions",
-  "Closing Fault Codes",
+  "Residual Faults",
   "Cleared Fault Codes",
+  "Residual Fault Codes",
 ] as const
 
 const STATUS_LOOK: Record<WorksTrackerStatus, Look> = {
@@ -63,13 +61,8 @@ const OUTCOME_LOOK: Partial<Record<WorksTrackerOutcome, Look>> = {
   },
   "Residual Faults": SOFT_RED,
   "No Progress": SOFT_RED,
+  "Fault Clearance Pending": SOFT_AMBER,
 }
-
-/** Closing codes plus the muted exclusion note, as printed in the cell. */
-const closingCodesCell = (row: WorksTrackerRow): string =>
-  [row.closingFaultCodes, row.approvedExceptionsNote ?? "", row.closureNote ?? ""]
-    .filter(Boolean)
-    .join("\n")
 
 const trackerColumns: Column<WorksTrackerRow>[] = [
   { header: "Fleet No.", width: 11, value: (r) => r.fleetId },
@@ -84,18 +77,11 @@ const trackerColumns: Column<WorksTrackerRow>[] = [
     center: true,
     value: (r) => r.turnaroundDays,
   },
-  { header: "Opening Faults", width: 10, center: true, value: (r) => r.openingFaultsCount },
+  { header: "Before Faults", width: 10, center: true, value: (r) => r.openingFaultsCount },
   { header: "Cleared Faults", width: 10, center: true, value: (r) => r.clearedFaultsCount },
-  { header: "Closing Faults", width: 10, center: true, value: (r) => r.closingFaultsCount },
-  { header: "New Regressions", width: 11, center: true, value: (r) => r.newRegressionsCount },
-  {
-    header: "Approved Exceptions",
-    width: 12,
-    center: true,
-    value: (r) => r.approvedExceptionsCount,
-  },
-  { header: "Closing Fault Codes", width: 60, value: closingCodesCell },
-  { header: "Cleared Fault Codes", width: 52, value: (r) => r.clearedFaultCodes },
+  { header: "Residual Faults", width: 10, center: true, value: (r) => r.residualFaultsCount },
+  { header: "Cleared Fault Codes", width: 56, value: (r) => r.clearedFaultCodes },
+  { header: "Residual Fault Codes", width: 56, value: (r) => r.residualFaultCodes },
 ]
 
 // Column letters of the tracker sheet used by the summary formulas.
@@ -104,8 +90,7 @@ const COL = {
   status: "C",
   outcome: "D",
   cleared: "I",
-  closing: "J",
-  regressions: "K",
+  residual: "J",
 }
 const ACCEPTED_OUTCOME = "Closed (Accepted Residuals)"
 const FIRST_DATA_ROW = 2
@@ -162,7 +147,7 @@ function buildSummarySheet(workbook: Workbook, data: WorksTrackerData): Workshee
   sheet.getRow(1).height = 26
 
   sheet.mergeCells("A2:F2")
-  sheet.getCell("A2").value = describeWorksTrackerFilters(data.options)
+  sheet.getCell("A2").value = `${describeWorksTrackerFilters(data.options)}  |  ${describeWorksTrackerOrder(data)}`
   sheet.mergeCells("A3:F3")
   sheet.getCell("A3").value =
     `Generated ${format(data.generatedAt, "dd MMM yyyy, HH:mm:ss")}. Every figure below is a live formula over the "${SUMMARY_SHEET}" tab.`
@@ -217,7 +202,7 @@ function buildSummarySheet(workbook: Workbook, data: WorksTrackerData): Workshee
       // Clean Closures + Closed (Accepted Residuals) + Complete with Residual
       // Faults always add up to Complete.
       label: "Clean Closures",
-      formula: `COUNTIFS(${range(COL.status)},"COMPLETE",${range(COL.outcome)},"<>${ACCEPTED_OUTCOME}",${range(COL.closing)},0)`,
+      formula: `COUNTIFS(${range(COL.status)},"COMPLETE",${range(COL.outcome)},"<>${ACCEPTED_OUTCOME}",${range(COL.residual)},0)`,
       result: kpis.cleanClosureCount,
     },
     {
@@ -227,7 +212,7 @@ function buildSummarySheet(workbook: Workbook, data: WorksTrackerData): Workshee
     },
     {
       label: "Complete with Residual Faults",
-      formula: `COUNTIFS(${range(COL.status)},"COMPLETE",${range(COL.outcome)},"<>${ACCEPTED_OUTCOME}",${range(COL.closing)},">0")`,
+      formula: `COUNTIFS(${range(COL.status)},"COMPLETE",${range(COL.outcome)},"<>${ACCEPTED_OUTCOME}",${range(COL.residual)},">0")`,
       result: kpis.residualFaultsTrucksCount,
     },
     {
@@ -236,14 +221,9 @@ function buildSummarySheet(workbook: Workbook, data: WorksTrackerData): Workshee
       result: kpis.totalClearedFaults,
     },
     {
-      label: "Total Closing Actionable Faults",
-      formula: `SUM(${range(COL.closing)})`,
-      result: kpis.totalClosingActionableFaults,
-    },
-    {
-      label: "Total New Regressions",
-      formula: `SUM(${range(COL.regressions)})`,
-      result: kpis.totalNewRegressions,
+      label: "Total Residual Faults",
+      formula: `SUM(${range(COL.residual)})`,
+      result: kpis.totalResidualFaults,
     },
   ]
   lines.forEach((line, index) => {
@@ -334,10 +314,6 @@ export async function buildWorksTrackerWorkbook(
       const outcome = cellOf("Closure Outcome")
       const outcomeLook = OUTCOME_LOOK[row.closureOutcome]
       if (outcome && outcomeLook) applyLook(outcome, outcomeLook)
-      const regressions = cellOf("New Regressions")
-      if (regressions && (row.newRegressionsCount ?? 0) > 0) {
-        applyLook(regressions, STRONG_RED)
-      }
     }
   )
   buildSummarySheet(workbook, data)

@@ -9,6 +9,7 @@ import {
 import {
   buildWorksTrackerData,
   type PttWorksTrackerInput,
+  type WorksTrackerBuildOptions,
 } from "./works-tracker-data"
 
 // Browser download of the Fleet Diagnostics exports: builds the shared report
@@ -74,12 +75,13 @@ export type PttWorksTrackerDownload = {
 /**
  * Browser download of the Fleet Diagnostic Works Tracker (standalone PDF or
  * Excel workbook). Honours the dialog's Truck, date window and
- * `excludeApprovedExceptions` options; the severity filter never applies.
+ * `excludeApprovedExceptions` options plus the `sortBy` row order; the severity
+ * filter never applies.
  */
 export async function downloadPttWorksTracker(
   format: PttWorksTrackerFormat,
   input: PttWorksTrackerInput,
-  options: PttReportDataOptions
+  options: WorksTrackerBuildOptions
 ): Promise<PttWorksTrackerDownload> {
   const data = buildWorksTrackerData(input, options)
 

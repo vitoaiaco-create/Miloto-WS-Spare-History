@@ -182,9 +182,15 @@ export function drawKpiStrip(doc: jsPDF, top: number, kpis: readonly Kpi[]): num
     doc.setTextColor(...(kpi.text ?? KPI_DEFAULT_TEXT))
     doc.text(kpi.value, x + 3, top + 8)
 
+    // Shrink long labels (down to 6pt) so they never spill out of the card.
     doc.setFont("helvetica", "normal")
-    doc.setFontSize(8)
     doc.setTextColor(90, 90, 90)
+    let labelSize = 8
+    doc.setFontSize(labelSize)
+    while (labelSize > 6 && doc.getTextWidth(kpi.label) > width - 6) {
+      labelSize -= 0.25
+      doc.setFontSize(labelSize)
+    }
     doc.text(kpi.label, x + 3, top + 13)
   })
   return top + height
