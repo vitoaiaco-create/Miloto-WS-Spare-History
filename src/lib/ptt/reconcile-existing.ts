@@ -85,6 +85,7 @@ const toStoredRow = (row: ScanFaultRow): StoredFaultRow => ({
 
 function scanFaultStatements(
   scanId: number,
+  scannedAt: Date,
   plan: ScanFaultPlan
 ): BatchItem<"pg">[] {
   const statements: BatchItem<"pg">[] = []
@@ -107,7 +108,14 @@ function scanFaultStatements(
     statements.push(
       db
         .insert(pttScanFaultsTable)
-        .values(plan.inserts.map((insert) => ({ ...insert, scanId })))
+        // Rebuilt rows keep the owning scan's date, never "today".
+        .values(
+          plan.inserts.map((insert) => ({
+            ...insert,
+            scanId,
+            createdAt: scannedAt,
+          }))
+        )
     )
   }
   return statements
@@ -212,6 +220,10 @@ export async function prepareCaseReconciliation(
   ]
 
   const ledger = await loadLedgerMap(baseline.fleetId)
+  // Only `updatedAt` (the audit "last modified") takes the wall clock. The
+  // scans' `scannedAt` and the case's `verifiedAt` / `closedAt` are never
+  // rewritten with it: the plan anchors any date it must fill in to when the
+  // verification photos were uploaded.
   const now = new Date()
   const plan: ReconcileExistingPlan = planReconcileExistingCase({
     fleetId: baseline.fleetId,
@@ -224,12 +236,16 @@ export async function prepareCaseReconciliation(
     exceptions,
     ledger,
     session: sessionState,
-    now,
+    verificationScannedAt: verification.scannedAt,
   })
 
   const statements: BatchItem<"pg">[] = [
-    ...scanFaultStatements(baseline.id, plan.baseline),
-    ...scanFaultStatements(verification.id, plan.verification),
+    ...scanFaultStatements(baseline.id, baseline.scannedAt, plan.baseline),
+    ...scanFaultStatements(
+      verification.id,
+      verification.scannedAt,
+      plan.verification
+    ),
   ]
 
   const upsert = ledgerUpsertStatement(plan.ledgerUpserts)

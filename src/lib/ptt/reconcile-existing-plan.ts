@@ -42,7 +42,9 @@ import {
 // case (baseline + latest verification scan, their fault rows, the active
 // exceptions, the truck ledger) it returns every write needed to bring the
 // case in line with the current key normaliser, severity engine and
-// reconciliation rules. No I/O and no clock (`now` is passed in), so the whole
+// reconciliation rules. No I/O and no clock: the only dates it writes are the
+// stored ones (`baselineScannedAt` / `verificationScannedAt`), so a
+// re-reconcile never moves a scan's history to "today" and the whole
 // retrospective repair is unit-testable.
 
 /** A `ptt_scan_faults` row; `id` is null for a row that is not stored yet. */
@@ -87,7 +89,13 @@ export type ReconcileExistingInput = {
   exceptions: readonly PlanException[]
   ledger: ReadonlyMap<string, LedgerEntry>
   session: CaseSessionState
-  now: Date
+  /**
+   * When the verification scan's photos were actually uploaded
+   * (`scannedAt`). Every date the plan has to fill in (first-time `verifiedAt`
+   * / `closedAt`, ledger sightings and clearances) is anchored to it, never to
+   * the wall clock: re-reconciling must not move history to "today".
+   */
+  verificationScannedAt: Date
 }
 
 export type ScanFaultValues = {
@@ -380,7 +388,7 @@ function planScanFaults(
 export function planReconcileExistingCase(
   input: ReconcileExistingInput
 ): ReconcileExistingPlan {
-  const { now, session } = input
+  const { verificationScannedAt, session } = input
   const baselineMerged = rekeyAndMerge(input.baselineRows, input.generation)
   // Synthetic "absent from the screenshots" rows are rebuilt from the diff.
   const extractedVerificationRows = input.verificationRows.filter(
@@ -563,7 +571,7 @@ export function planReconcileExistingCase(
   const verificationPlan = planLedgerCommit({
     fleetId: input.fleetId,
     scanId: input.verificationScanId,
-    now,
+    now: verificationScannedAt,
     activeFaults: activeVerification.map(toLedgerFault),
     clearedFaults,
     existing: ledger,
@@ -600,14 +608,16 @@ export function planReconcileExistingCase(
       : session.workflowStatus === "VERIFIED_CLOSED"
         ? "IN_PROGRESS"
         : session.workflowStatus,
-    verifiedAt: closed ? (session.verifiedAt ?? now) : null,
+    // An existing `verifiedAt` is never overwritten; a first-time closure is
+    // dated by the verification photos, not by the moment of the re-run.
+    verifiedAt: closed ? (session.verifiedAt ?? verificationScannedAt) : null,
     ...(cleanlyClosed
       ? {
           closureMode: "CLEAN" as const,
           closureReasonCategory: null,
           closureNote: null,
           closedBy: session.closedBy,
-          closedAt: session.closedAt ?? now,
+          closedAt: session.closedAt ?? verificationScannedAt,
         }
       : keepsAcceptedResiduals
         ? {

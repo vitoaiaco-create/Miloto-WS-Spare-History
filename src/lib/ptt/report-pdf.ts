@@ -724,6 +724,17 @@ function outstandingCell(
       )
     )
   }
+  // Only filled when the exceptions are NOT excluded: print them (as plain,
+  // muted lines - they are never outstanding work) so the header's
+  // "Approved exceptions: included" is true.
+  if (truck.approvedExceptionLines.length > 0) {
+    lines.push(
+      ...sectionLabel(doc, "Approved exceptions (not outstanding)", width),
+      ...listLines(doc, truck.approvedExceptionLines, width, false, {
+        color: MUTED,
+      })
+    )
+  }
   return lines
 }
 

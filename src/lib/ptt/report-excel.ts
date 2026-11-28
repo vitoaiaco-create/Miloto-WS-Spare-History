@@ -4,6 +4,7 @@ import type { PttOverallSeverity } from "../ptt-diagnostics"
 import {
   PTT_REPORT_FAULT_STATUS_LABELS,
   PTT_SEVERITY_DISPLAY,
+  describePttReportFilters,
   pttReportFileName,
   type PttReportData,
   type PttReportFaultRow,
@@ -209,7 +210,11 @@ const executiveColumns: Column<PttReportTruck>[] = [
     header: "Outstanding Fault Codes",
     width: 56,
     value: (t) =>
-      [...t.outstandingFaultCodes, t.approvedExceptionsNote ?? ""]
+      [
+        ...t.outstandingFaultCodes,
+        t.approvedExceptionsNote ?? "",
+        ...t.approvedExceptionLines.map((line) => `[APPROVED EXCEPTION] ${line}`),
+      ]
         .filter(Boolean)
         .join("\n"),
   },
@@ -385,6 +390,12 @@ export async function buildPttWorkbook(data: PttReportData): Promise<Workbook> {
   const workbook = new ExcelJS.Workbook()
   workbook.creator = "Miloto Transport Limited"
   workbook.created = data.generatedAt
+  // The sheets start straight with their header row (frozen + auto-filter), so
+  // the active filters (incl. `Baseline date:` / `Activity date:` and the
+  // approved-exception mode) are recorded in the file properties, matching
+  // the PDF header lines.
+  workbook.title = "Fleet Diagnostics (PTT Intel) - Diagnostics Workbook"
+  workbook.description = describePttReportFilters(data.options).join("\n")
 
   addSheet(
     workbook,

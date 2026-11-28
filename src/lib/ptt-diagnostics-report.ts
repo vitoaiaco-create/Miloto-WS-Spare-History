@@ -37,6 +37,32 @@ export const PTT_REPORT_SCOPE_LABELS: Record<PttReportScope, string> = {
   ALL_SCANS: "All Historical Scans",
 }
 
+/**
+ * Which date a `fromDate` / `toDate` range is matched against.
+ * `BASELINE_DATE` (default): only the case's baseline scan date.
+ * `ANY_ACTIVITY`: the baseline scan date OR a verification (after-scan) date.
+ * Never `updatedAt`: a background re-reconcile is not workshop activity.
+ */
+export const PTT_REPORT_DATE_BASES = ["BASELINE_DATE", "ANY_ACTIVITY"] as const
+export type PttReportDateBasis = (typeof PTT_REPORT_DATE_BASES)[number]
+
+export const DEFAULT_PTT_REPORT_DATE_BASIS: PttReportDateBasis = "BASELINE_DATE"
+
+/** Dialog labels of the "Date matches" selector. */
+export const PTT_REPORT_DATE_BASIS_LABELS: Record<PttReportDateBasis, string> = {
+  BASELINE_DATE: "Baseline scan date",
+  ANY_ACTIVITY: "Any scan (baseline or after-scan)",
+}
+
+/** Prefix of the date range in the PDF / Excel header line. */
+export const PTT_REPORT_DATE_BASIS_HEADER_LABELS: Record<
+  PttReportDateBasis,
+  string
+> = {
+  BASELINE_DATE: "Baseline date",
+  ANY_ACTIVITY: "Activity date",
+}
+
 export type PttReportFilterOptions = {
   /**
    * `LATEST_OPEN` (default): each truck's latest scan, unless it is already
@@ -50,9 +76,11 @@ export type PttReportFilterOptions = {
   severities: PttFaultSeverity[]
   /** A specific normalized fleet number, or `'ALL'`. */
   fleetId: string | "ALL"
-  /** `YYYY-MM-DD` (from <input type="date">), filtering on the scan date. */
+  /** `YYYY-MM-DD` (from <input type="date">), matched per `dateBasis`. */
   fromDate?: string
   toDate?: string
+  /** What the date range matches (default `BASELINE_DATE`). */
+  dateBasis?: PttReportDateBasis
 }
 
 export const DEFAULT_PTT_REPORT_OPTIONS: PttReportFilterOptions = {

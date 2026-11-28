@@ -13,8 +13,11 @@ import {
   type PttTruckGeneration,
 } from "../ptt-diagnostics"
 import {
+  DEFAULT_PTT_REPORT_DATE_BASIS,
+  PTT_REPORT_DATE_BASIS_HEADER_LABELS,
   PTT_REPORT_SCOPE_LABELS,
   PTT_SEVERITY_FILTER_LABELS,
+  type PttReportDateBasis,
   type PttReportFilterOptions,
   type PttReportScope,
 } from "../ptt-diagnostics-report"
@@ -143,6 +146,7 @@ export type PttReportDataOptions = Partial<PttReportFilterOptions> & {
 }
 
 export type ResolvedPttReportOptions = PttReportFilterOptions & {
+  dateBasis: PttReportDateBasis
   excludeApprovedExceptions: boolean
   caseStatuses: readonly PttCaseStatus[]
 }
@@ -157,6 +161,7 @@ export function resolvePttReportOptions(
     fleetId: !fleetId || fleetId === "ALL" ? "ALL" : normalizeFleetId(fleetId),
     fromDate: options?.fromDate || undefined,
     toDate: options?.toDate || undefined,
+    dateBasis: options?.dateBasis ?? DEFAULT_PTT_REPORT_DATE_BASIS,
     excludeApprovedExceptions: options?.excludeApprovedExceptions ?? true,
     caseStatuses: options?.caseStatuses ?? [],
   }
@@ -274,8 +279,18 @@ export type PttReportTruck = {
   clearedFaultCodes: string[]
   /** `[NEW REGRESSION]` first, `[REPEAT xN]` tagged; never exceptions. */
   outstandingFaultCodes: string[]
-  /** `+N approved exceptions excluded`, or null when there are none. */
+  /**
+   * `+N approved exceptions excluded` when the exceptions are filtered out
+   * (`excludeApprovedExceptions`); null when there are none or when they are
+   * printed (see `approvedExceptionLines`).
+   */
   approvedExceptionsNote: string | null
+  /**
+   * `Code \u2014 Short Name` lines of the approved exceptions, only filled when
+   * `excludeApprovedExceptions` is `false` (they are printed, never counted as
+   * outstanding). Empty when they are excluded.
+   */
+  approvedExceptionLines: string[]
 
   /** Every classified fault of the case after the severity filter. */
   faults: PttReportFaultItem[]
@@ -470,7 +485,11 @@ export function describePttReportFilters(
     `Truck: ${options.fleetId === "ALL" ? "All trucks" : options.fleetId}`,
   ]
   const range = formatRange(options.fromDate, options.toDate)
-  if (range) filters.push(`Scan date: ${range}`)
+  if (range) {
+    filters.push(
+      `${PTT_REPORT_DATE_BASIS_HEADER_LABELS[options.dateBasis]}: ${range}`
+    )
+  }
   filters.push(
     `Approved exceptions: ${options.excludeApprovedExceptions ? "excluded" : "included"}`
   )
@@ -775,7 +794,8 @@ function buildTruck(
   session: PttReportCase,
   input: PttReportInput,
   ledgerByKey: ReadonlyMap<string, PttReportLedgerRow>,
-  severitySet: ReadonlySet<PttFaultSeverity>
+  severitySet: ReadonlySet<PttFaultSeverity>,
+  excludeApprovedExceptions: boolean
 ): { truck: PttReportTruck; firstFix: { cleared: number; total: number } } | null {
   const verificationScans = newestVerificationFirst(session.verificationScans)
   const latestVerification = verificationScans[0] ?? null
@@ -875,9 +895,14 @@ function buildTruck(
     clearedFaultCodes,
     outstandingFaultCodes,
     approvedExceptionsNote:
-      approvedExceptionsCount > 0
+      excludeApprovedExceptions && approvedExceptionsCount > 0
         ? `+${approvedExceptionsCount} approved ${approvedExceptionsCount === 1 ? "exception" : "exceptions"} excluded`
         : null,
+    approvedExceptionLines: excludeApprovedExceptions
+      ? []
+      : faults
+          .filter((item) => item.status === "APPROVED_EXCEPTION")
+          .map(formatFaultLine),
     faults,
     verdictHeadline: audit?.verdictHeadline.trim() ?? "",
     collateralDamageAnalysis: audit?.collateralDamageAnalysis?.trim() ?? "",
@@ -980,12 +1005,49 @@ export const startOfDay = (value?: string): number | null =>
 export const endOfDay = (value?: string): number | null =>
   value ? new Date(`${value}T23:59:59.999`).getTime() : null
 
+/**
+ * Whether a case belongs to a `fromDate` / `toDate` range (inclusive local
+ * days, the same convention the report dates are printed in).
+ *
+ * - `BASELINE_DATE`: only the baseline scan date counts, so a truck baselined
+ *   before the range is never pulled in by a later after-scan.
+ * - `ANY_ACTIVITY`: the baseline scan date OR a verification (after-scan)
+ *   date. A legacy case without verification scans uses its `verifiedAt`.
+ *   `updatedAt` never counts: background re-reconciliation is not activity.
+ */
+export function sessionMatchesDateRange(
+  session: PttReportCase,
+  dateBasis: PttReportDateBasis,
+  fromDate?: string,
+  toDate?: string
+): boolean {
+  const fromMs = startOfDay(fromDate)
+  const toMs = endOfDay(toDate)
+  const inRange = (date: Date): boolean => {
+    const time = date.getTime()
+    return (fromMs === null || time >= fromMs) && (toMs === null || time <= toMs)
+  }
+
+  if (inRange(session.scannedAt)) return true
+  if (dateBasis === "BASELINE_DATE") return false
+
+  if (session.verificationScans.some((scan) => inRange(scan.scannedAt))) {
+    return true
+  }
+  return (
+    session.verificationScans.length === 0 &&
+    session.verifiedAt !== null &&
+    inRange(session.verifiedAt)
+  )
+}
+
 const percent = (part: number, whole: number): number | null =>
   whole === 0 ? null : Math.round((part / whole) * 1000) / 10
 
 /**
  * Builds everything the two PDFs and the workbook print. `scope`, `fleetId`,
- * `severities`, `fromDate` / `toDate` (on the case's latest scan date) and the
+ * `severities`, `fromDate` / `toDate` (matched per `dateBasis`: the baseline
+ * scan date by default, or any baseline / after-scan date) and the
  * optional `caseStatuses` pick the cases; `excludeApprovedExceptions` (default
  * `true`) only removes exception rows from the fault tables / register - the
  * exception counts always stay in the KPIs and per-truck notes.
@@ -997,8 +1059,6 @@ export function buildPttReportData(
 ): PttReportData {
   const resolved = resolvePttReportOptions(options)
   const severitySet = new Set<PttFaultSeverity>(resolved.severities)
-  const fromMs = startOfDay(resolved.fromDate)
-  const toMs = endOfDay(resolved.toDate)
 
   const ledgerByKey = new Map<string, PttReportLedgerRow>()
   for (const row of input.ledger) {
@@ -1031,10 +1091,12 @@ export function buildPttReportData(
     ) {
       return false
     }
-    const scannedMs = latestScanAt(session).getTime()
-    if (fromMs !== null && scannedMs < fromMs) return false
-    if (toMs !== null && scannedMs > toMs) return false
-    return true
+    return sessionMatchesDateRange(
+      session,
+      resolved.dateBasis,
+      resolved.fromDate,
+      resolved.toDate
+    )
   })
 
   const built: {
@@ -1043,7 +1105,13 @@ export function buildPttReportData(
     scannedMs: number
   }[] = []
   for (const session of matched) {
-    const result = buildTruck(session, input, ledgerByKey, severitySet)
+    const result = buildTruck(
+      session,
+      input,
+      ledgerByKey,
+      severitySet,
+      resolved.excludeApprovedExceptions
+    )
     if (result) {
       built.push({ ...result, scannedMs: latestScanAt(session).getTime() })
     }

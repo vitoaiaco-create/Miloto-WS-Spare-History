@@ -115,7 +115,7 @@ function plan(
     exceptions: [],
     ledger: new Map(),
     session: openSession,
-    now: NOW,
+    verificationScannedAt: NOW,
     ...overrides,
   })
 }

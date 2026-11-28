@@ -36,8 +36,11 @@ import {
   type PttFaultSeverity,
 } from "@/lib/ptt-diagnostics"
 import {
+  DEFAULT_PTT_REPORT_DATE_BASIS,
+  PTT_REPORT_DATE_BASIS_LABELS,
   PTT_REPORT_SCOPE_LABELS,
   PTT_SEVERITY_FILTER_LABELS,
+  type PttReportDateBasis,
   type PttReportScope,
 } from "@/lib/ptt-diagnostics-report"
 import {
@@ -145,6 +148,9 @@ export function PttExportDialogButton({
   const [fleetId, setFleetId] = useState("ALL")
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
+  const [dateBasis, setDateBasis] = useState<PttReportDateBasis>(
+    DEFAULT_PTT_REPORT_DATE_BASIS
+  )
   // Checked by default: approved fleet exceptions are not workshop work.
   const [excludeApprovedExceptions, setExcludeApprovedExceptions] =
     useState(true)
@@ -177,9 +183,18 @@ export function PttExportDialogButton({
       fleetId: effectiveFleetId,
       fromDate: from || undefined,
       toDate: to || undefined,
+      dateBasis,
       excludeApprovedExceptions,
     }),
-    [scope, severities, effectiveFleetId, from, to, excludeApprovedExceptions]
+    [
+      scope,
+      severities,
+      effectiveFleetId,
+      from,
+      to,
+      dateBasis,
+      excludeApprovedExceptions,
+    ]
   )
 
   const reportInput = useMemo(
@@ -421,9 +436,42 @@ export function PttExportDialogButton({
               />
             </div>
           </div>
-          <p className="-mt-2 text-xs text-muted-foreground">
-            Dates filter on each truck&apos;s latest scan date.
-          </p>
+          {(from || to) && (
+            <div className="-mt-1 flex flex-col gap-1.5">
+              <Label htmlFor="ptt-export-date-basis">Date matches</Label>
+              <Select
+                items={PTT_REPORT_DATE_BASIS_LABELS}
+                value={dateBasis}
+                onValueChange={(value) => {
+                  if (value && value in PTT_REPORT_DATE_BASIS_LABELS) {
+                    setDateBasis(value as PttReportDateBasis)
+                  }
+                }}
+              >
+                <SelectTrigger
+                  id="ptt-export-date-basis"
+                  size="sm"
+                  className="w-full"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(PTT_REPORT_DATE_BASIS_LABELS).map(
+                    ([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    )
+                  )}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {dateBasis === "BASELINE_DATE"
+                  ? "Only trucks first scanned (baselined) in this range."
+                  : "Trucks baselined or re-scanned (after-scan) in this range."}
+              </p>
+            </div>
+          )}
 
           <div className="flex items-start gap-2">
             <Checkbox

@@ -91,7 +91,7 @@ function plan(overrides: Partial<ReconcileExistingInput>) {
     exceptions: [],
     ledger: new Map(),
     session: openSession,
-    now: NOW,
+    verificationScannedAt: NOW,
     ...overrides,
   })
 }
